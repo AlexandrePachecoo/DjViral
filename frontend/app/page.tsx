@@ -68,7 +68,12 @@ export default function Home() {
         headers: { "content-type": file.type || "video/mp4" },
         body: file,
       });
-      if (!upRes.ok) throw new Error("Falha no upload do vídeo");
+      if (!upRes.ok) {
+        const detail = await upRes.text().catch(() => "");
+        throw new Error(
+          `Falha no upload do vídeo (HTTP ${upRes.status})${detail ? `: ${detail}` : ""}`
+        );
+      }
 
       // 3. Dispara o worker
       setMessage("Analisando o áudio e gerando cortes...");
