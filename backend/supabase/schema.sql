@@ -1,6 +1,9 @@
 -- Schema do MVP DjViral (subconjunto do modelo em CLAUDE.md, sem `users`).
--- Rode no SQL editor do Supabase. Crie também um bucket de Storage chamado
--- `clips` (público) no painel ou via API.
+-- Rode no SQL editor do Supabase. Crie também dois buckets de Storage:
+--   - `clips`   (público)  → clipes gerados
+--   - `sources` (privado)  → vídeos originais enviados pelo navegador
+-- Lembre de aumentar o limite de tamanho de upload do projeto para comportar
+-- vídeos longos (o default do plano free é baixo, ~50 MB).
 
 create extension if not exists "pgcrypto";
 

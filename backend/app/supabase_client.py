@@ -1,4 +1,6 @@
 """Cliente Supabase compartilhado (Postgres + Storage)."""
+import os
+import tempfile
 from functools import lru_cache
 
 from supabase import Client, create_client
@@ -31,3 +33,17 @@ def upload_clip(local_path: str, dest_name: str) -> str:
             file_options={"content-type": "video/mp4", "upsert": "true"},
         )
     return client.storage.from_(bucket).get_public_url(dest_name)
+
+
+def download_source(storage_path: str) -> str:
+    """Baixa o vídeo original do bucket `sources` para um arquivo temporário.
+
+    Retorna o caminho local. O chamador é responsável por remover o arquivo.
+    """
+    client = get_client()
+    data = client.storage.from_(settings.sources_bucket).download(storage_path)
+    suffix = os.path.splitext(storage_path)[1] or ".mp4"
+    fd, local_path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    return local_path

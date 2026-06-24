@@ -5,20 +5,36 @@ import tempfile
 
 from . import analyzer, clipper
 from .config import settings
-from .supabase_client import get_client, upload_clip
+from .supabase_client import download_source, get_client, upload_clip
 
 logger = logging.getLogger("djviral.pipeline")
 
 
-def process_project(project_id: str, video_path: str) -> None:
+def process_project(project_id: str) -> None:
     """Pipeline completo, rodado em background.
 
-    Analisa o áudio, corta os top picos em clipes de vídeo, sobe cada clipe no
-    Supabase Storage e grava os registros ``cuts``. Em caso de erro, marca o
-    projeto como ``error``. Sempre remove o arquivo temporário ao final.
+    Busca o vídeo original no Supabase Storage (a partir da linha ``source`` do
+    projeto), baixa-o, analisa o áudio, corta os top picos em clipes de vídeo,
+    sobe cada clipe no Storage e grava os registros ``cuts``. Em caso de erro,
+    marca o projeto como ``error``. Sempre remove o arquivo temporário ao final.
     """
     client = get_client()
+    video_path: str | None = None
     try:
+        source = (
+            client.table("sources")
+            .select("url")
+            .eq("project_id", project_id)
+            .limit(1)
+            .execute()
+        )
+        if not source.data or not source.data[0].get("url"):
+            raise RuntimeError(
+                f"Nenhum source com caminho de Storage para o projeto {project_id}"
+            )
+        video_path = download_source(source.data[0]["url"])
+        logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
+
         peaks = analyzer.analyze(video_path, top_n=settings.top_n)
         logger.info("Projeto %s: %d picos encontrados", project_id, len(peaks))
 
@@ -64,5 +80,5 @@ def process_project(project_id: str, video_path: str) -> None:
             "id", project_id
         ).execute()
     finally:
-        if os.path.exists(video_path):
+        if video_path and os.path.exists(video_path):
             os.remove(video_path)
