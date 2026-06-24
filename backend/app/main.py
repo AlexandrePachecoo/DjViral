@@ -1,0 +1,37 @@
+"""Worker FastAPI do DjViral — processa um set já enviado ao Supabase Storage.
+
+Este serviço roda fora da Vercel (ex.: Railway), onde há FFmpeg, memória e tempo
+suficientes. A Vercel (orquestração) dispara o processamento via POST /process,
+autenticando com o header X-Worker-Secret. O vídeo já foi enviado pelo navegador
+direto ao Supabase Storage; aqui apenas baixamos e processamos.
+"""
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+
+from .config import settings
+from .pipeline import process_project
+from .schemas import ProcessRequest, ProjectCreated
+
+app = FastAPI(title="DjViral Worker", description="Gera cortes virais de sets de DJ")
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/process", response_model=ProjectCreated, status_code=202)
+def process(
+    body: ProcessRequest,
+    background_tasks: BackgroundTasks,
+    x_worker_secret: str = Header(default=""),
+) -> ProjectCreated:
+    """Dispara o processamento de um projeto cujo vídeo já está no Storage.
+
+    Exige o header ``X-Worker-Secret`` (segredo compartilhado com a Vercel).
+    Responde 202 imediatamente e processa em background.
+    """
+    if not settings.worker_secret or x_worker_secret != settings.worker_secret:
+        raise HTTPException(status_code=401, detail="Segredo inválido")
+
+    background_tasks.add_task(process_project, body.project_id)
+    return ProjectCreated(project_id=body.project_id, status="processing")
