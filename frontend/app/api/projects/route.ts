@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
+import { getSessionUser } from "@/lib/auth";
 
 // Cria um projeto + source e devolve uma signed upload URL para o navegador
 // enviar o vídeo DIRETO ao Supabase Storage (sem passar pela Vercel).
 export async function POST(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ error: "não autenticado" }, { status: 401 });
+  }
+
   const { name, filename } = await req.json();
   if (!name || !filename) {
     return NextResponse.json(
@@ -12,10 +18,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 1. Cria o projeto
+  // 1. Cria o projeto (vinculado ao usuário autenticado)
   const { data: project, error: projErr } = await supabaseAdmin
     .from("projects")
-    .insert({ name, status: "processing" })
+    .insert({ name, status: "processing", user_id: user.id })
     .select("id")
     .single();
   if (projErr || !project) {

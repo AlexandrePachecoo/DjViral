@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type SessionUser = { id: string; name: string; email: string; plan: string };
 
 type Cut = {
   titulo: string;
@@ -14,6 +17,8 @@ type Cut = {
 type Status = "idle" | "uploading" | "processing" | "done" | "error";
 
 export default function Home() {
+  const router = useRouter();
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -21,6 +26,20 @@ export default function Home() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cuts, setCuts] = useState<Cut[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Carrega o usuário da sessão.
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setUser(d.user))
+      .catch(() => {});
+  }, []);
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
 
   // Polling do status enquanto o worker processa.
   useEffect(() => {
@@ -92,9 +111,21 @@ export default function Home() {
 
   return (
     <main style={mainStyle}>
-      <a href="/" style={backLink}>
-        ← DJviral
-      </a>
+      <div style={topBar}>
+        <a href="/" style={backLink}>
+          ← DJviral
+        </a>
+        {user && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 14, opacity: 0.7 }}>
+              {user.name} · {user.plan}
+            </span>
+            <button type="button" onClick={handleLogout} style={logoutButton}>
+              Sair
+            </button>
+          </div>
+        )}
+      </div>
       <h1>🎧 DjViral</h1>
       <p style={{ opacity: 0.7 }}>
         Envie seu set e receba os cortes mais virais automaticamente.
@@ -152,12 +183,28 @@ const mainStyle: React.CSSProperties = {
   padding: "2rem 1rem",
 };
 
+const topBar: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 16,
+};
+
 const backLink: React.CSSProperties = {
   display: "inline-block",
-  marginBottom: 16,
   fontSize: 14,
   color: "#9d8cff",
   textDecoration: "none",
+};
+
+const logoutButton: React.CSSProperties = {
+  padding: "6px 12px",
+  borderRadius: 8,
+  border: "1px solid #2a2a35",
+  background: "transparent",
+  color: "#e9e9f0",
+  cursor: "pointer",
+  fontSize: 14,
 };
 
 const inputStyle: React.CSSProperties = {
