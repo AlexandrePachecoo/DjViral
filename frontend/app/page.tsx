@@ -42,7 +42,7 @@ function Logo({ className }: { className: string }) {
   );
 }
 
-const TRIAL_HREF = "/app";
+const TRIAL_HREF = "/login";
 
 export default function Landing() {
   return (
@@ -60,6 +60,9 @@ export default function Landing() {
             </a>
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="#precos">
               Preços
+            </a>
+            <a className={`${styles.navLink} ${styles.navLinksText}`} href="/login">
+              Entrar
             </a>
             <a className={styles.navCta} href={TRIAL_HREF}>
               Testar grátis

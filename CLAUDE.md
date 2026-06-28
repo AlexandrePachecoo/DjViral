@@ -69,7 +69,7 @@ Navegador (Vercel UI)
   e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`.
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
-  `WORKER_URL`, `WORKER_SECRET`.
+  `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão).
 
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
 consegue disparar `POST /process` no worker.
@@ -81,7 +81,25 @@ consegue disparar `POST /process` no worker.
 - **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
   escala real.
 - **Score mais rico:** detecção de BPM, contraste de energia pré/pós drop.
-- **Autenticação de usuário** (tabela `Usuário` abaixo ainda não usada no MVP).
+- **Pagamento / planos:** ainda não implementado. Todo usuário nasce no plano
+  `free`; falta cobrança e limites por plano.
+
+## Autenticação
+
+Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
+
+- Tabela `users` (`backend/supabase/schema.sql`) com senha em hash scrypt
+  (`salt:hash`). `projects.user_id` referencia o dono.
+- `frontend/lib/auth.ts` — hash/verify de senha (scrypt), token de sessão
+  assinado por HMAC (`AUTH_SECRET`) e `getSessionUser()` que lê o cookie
+  `djviral_session` (httpOnly).
+- Rotas: `POST /api/auth/register`, `POST /api/auth/login`,
+  `POST /api/auth/logout`, `GET /api/auth/me`. Página `/login` (login +
+  cadastro). A área `/app` é protegida por `app/app/layout.tsx` (redireciona
+  pra `/login` sem sessão); as rotas de `/api/projects` exigem sessão e
+  checam o dono do projeto.
+- **Pagamento ainda não implementado:** o cadastro é livre e todo usuário
+  entra no plano `free`.
 
 ## Modelo de dados
 
