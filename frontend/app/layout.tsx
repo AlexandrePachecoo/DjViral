@@ -1,26 +1,29 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DjViral",
-  description: "Gera cortes virais a partir de sets de DJ",
+  title: "DJviral — Seu set vira 30 cortes virais. Sem editar nada.",
+  description:
+    "Suba um set de até 3 horas. A DJviral encontra os melhores momentos e te entrega 30 vídeos verticais prontos pro TikTok e Reels.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
-      <body
-        style={{
-          fontFamily: "system-ui, sans-serif",
-          maxWidth: 720,
-          margin: "0 auto",
-          padding: "2rem 1rem",
-          background: "#0b0b10",
-          color: "#e9e9f0",
-        }}
-      >
-        {children}
-      </body>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin=""
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Outfit:wght@200;300;400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,0 +1,72 @@
+/* Global base + brand motion for DJviral.
+   Keyframes live here (global scope) so inline styles and CSS-module classes
+   can both reference them by name. */
+
+:root {
+  --dj-purple: #a855f7;
+  --dj-magenta: #d946ef;
+  --dj-pink: #ec4899;
+  --dj-cyan: #22d3ee;
+  --dj-bg: #08080d;
+  --dj-panel: #15151f;
+  --dj-ink: #0d0d12;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: "Outfit", system-ui, sans-serif;
+  background: var(--dj-bg);
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Logo equalizer bars — scale from the center. */
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Waveform bars — anchored at the bottom like a real equalizer. */
+@keyframes wavemove {
+  0%,
+  100% {
+    transform: scaleY(0.42);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .eqbar,
+  .wvb,
+  [data-anim] {
+    animation: none !important;
+  }
+}
