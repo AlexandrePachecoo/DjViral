@@ -47,7 +47,7 @@ const TRIAL_HREF = "/app";
 export default function Landing() {
   return (
     <div className={styles.page}>
-      <div className={styles.glowTop} />
+      <div className={styles.glowTop} data-anim />
       <div className={styles.glowBottom} />
 
       <div className={styles.shell}>
