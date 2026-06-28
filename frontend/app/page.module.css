@@ -1,5 +1,40 @@
 /* ============ DJviral — Versão A · Neon Club ============ */
 
+/* Keyframes are defined in this module so the CSS-Modules-scoped
+   `animation-name` references below resolve to the same hashed name. */
+
+/* Logo equalizer bars — scale from the center. */
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Waveform bars — anchored at the bottom like a real equalizer. */
+@keyframes wavemove {
+  0%,
+  100% {
+    transform: scaleY(0.42);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
 .page {
   position: relative;
   overflow: hidden;

@@ -28,44 +28,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Logo equalizer bars — scale from the center. */
-@keyframes eq {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-/* Waveform bars — anchored at the bottom like a real equalizer. */
-@keyframes wavemove {
-  0%,
-  100% {
-    transform: scaleY(0.42);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-@keyframes glow {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 0.9;
-  }
-}
+/* Keyframes for the landing-page motion live in app/page.module.css so the
+   CSS-Modules-scoped `animation-name` references resolve correctly. */
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
-  .eqbar,
-  .wvb,
+  /* Belt-and-suspenders: kill motion on any element opted into animation,
+     regardless of CSS-Modules class hashing. */
   [data-anim] {
     animation: none !important;
   }
