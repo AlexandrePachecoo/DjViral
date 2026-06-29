@@ -7,12 +7,26 @@
 
 create extension if not exists "pgcrypto";
 
+-- Usuários. Autenticação por email + senha (hash scrypt salvo em `password`).
+-- Pagamento ainda não implementado: todo mundo nasce no plano 'free'.
+create table if not exists users (
+    id          uuid primary key default gen_random_uuid(),
+    name        text not null,
+    email       text not null unique,
+    password    text not null,            -- hash scrypt no formato salt:hash
+    plan        text not null default 'free',
+    date_create timestamptz not null default now()
+);
+
 create table if not exists projects (
     id          uuid primary key default gen_random_uuid(),
+    user_id     uuid references users (id) on delete cascade,
     name        text not null,
     status      text not null default 'processing', -- processing | done | error
     date_create timestamptz not null default now()
 );
+
+create index if not exists idx_projects_user on projects (user_id);
 
 create table if not exists sources (
     id              uuid primary key default gen_random_uuid(),

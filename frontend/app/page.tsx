@@ -1,139 +1,289 @@
-"use client";
+import styles from "./page.module.css";
 
-import { useEffect, useRef, useState } from "react";
+// Deterministic waveform bars (layered sines) so the equalizers read like a
+// real audio waveform instead of random noise. `h` = base height, `d` = delay.
+const wave = Array.from({ length: 56 }, (_, i) => {
+  const v = Math.abs(
+    Math.sin(i * 0.5) * 0.6 + Math.sin(i * 0.17) * 0.4 + Math.sin(i * 1.1) * 0.22
+  );
+  return { h: 14 + Math.round(v * 92), d: +((i * 0.05) % 1.1).toFixed(2) };
+});
 
-type Cut = {
-  titulo: string;
-  inicio: number;
-  fim: number;
-  duracao: number;
-  score: number;
-  url: string;
-};
+const waveBg = Array.from({ length: 30 }, (_, i) => {
+  const v = Math.abs(Math.sin(i * 0.6 + 1) * 0.7 + Math.sin(i * 0.23) * 0.4);
+  return { h: 34 + Math.round(v * 130), d: +((i * 0.08) % 1.1).toFixed(2) };
+});
 
-type Status = "idle" | "uploading" | "processing" | "done" | "error";
+const markers = Array.from({ length: 14 }, (_, i) => ({
+  h: 5 + Math.round(Math.abs(Math.sin(i * 0.9)) * 15),
+  d: +((i * 0.09) % 1.1).toFixed(2),
+}));
 
-export default function Home() {
-  const [name, setName] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<Status>("idle");
-  const [message, setMessage] = useState("");
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [cuts, setCuts] = useState<Cut[]>([]);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+const EQ_COLORS = ["#a855f7", "#d946ef", "#ec4899", "#22d3ee"];
 
-  // Polling do status enquanto o worker processa.
-  useEffect(() => {
-    if (!projectId || (status !== "processing" && status !== "uploading")) return;
-    pollRef.current = setInterval(async () => {
-      const res = await fetch(`/api/projects/${projectId}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.status === "done") {
-        setCuts(data.cuts ?? []);
-        setStatus("done");
-        setMessage(`${data.cuts?.length ?? 0} clipes gerados!`);
-      } else if (data.status === "error") {
-        setStatus("error");
-        setMessage("O processamento falhou. Confira os logs do worker.");
-      }
-    }, 5000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [projectId, status]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!file || !name) return;
-    setCuts([]);
-
-    try {
-      // 1. Cria projeto + signed upload URL
-      setStatus("uploading");
-      setMessage("Criando projeto...");
-      const createRes = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, filename: file.name }),
-      });
-      if (!createRes.ok) throw new Error((await createRes.json()).error);
-      const { project_id, signedUrl } = await createRes.json();
-      setProjectId(project_id);
-
-      // 2. Upload direto pro Supabase Storage (não passa pela Vercel)
-      setMessage("Enviando vídeo...");
-      const upRes = await fetch(signedUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "video/mp4" },
-        body: file,
-      });
-      if (!upRes.ok) throw new Error("Falha no upload do vídeo");
-
-      // 3. Dispara o worker
-      setMessage("Analisando o áudio e gerando cortes...");
-      setStatus("processing");
-      const procRes = await fetch(`/api/projects/${project_id}/process`, {
-        method: "POST",
-      });
-      if (!procRes.ok) throw new Error((await procRes.json()).error);
-    } catch (err) {
-      setStatus("error");
-      setMessage(err instanceof Error ? err.message : "Erro inesperado");
-    }
-  }
-
-  const busy = status === "uploading" || status === "processing";
-
+function Logo({ className }: { className: string }) {
   return (
-    <main>
-      <h1>🎧 DjViral</h1>
-      <p className="subtitle">
-        Envie seu set e receba os cortes mais virais automaticamente.
-      </p>
+    <div className={styles.logo}>
+      <div className={styles.eq}>
+        {EQ_COLORS.map((c, i) => (
+          <span
+            key={c}
+            className={styles.eqbar}
+            data-anim
+            style={{ background: c, animationDelay: `${i * 0.2}s` }}
+          />
+        ))}
+      </div>
+      <span className={className}>
+        <span className="wmDj">DJ</span>
+        <span className="wmViral">viral</span>
+      </span>
+    </div>
+  );
+}
 
-      <form onSubmit={handleSubmit} className="form">
-        <input
-          placeholder="Nome do set"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          disabled={busy}
-          className="input"
-        />
-        <input
-          type="file"
-          accept="video/mp4,video/*"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          disabled={busy}
-          className="input"
-        />
-        <button type="submit" disabled={busy || !file || !name} className="button">
-          {busy ? "Processando..." : "Gerar cortes"}
-        </button>
-      </form>
+const TRIAL_HREF = "/login";
 
-      {message && (
-        <p className={status === "error" ? "status status--error" : "status"}>
-          {message}
-        </p>
-      )}
+export default function Landing() {
+  return (
+    <div className={styles.page}>
+      <div className={styles.glowTop} data-anim />
+      <div className={styles.glowBottom} />
 
-      {cuts.length > 0 && (
-        <section className="cuts">
-          {cuts.map((c, i) => (
-            <div key={i} className="card">
-              <div className="card__header">
-                <strong className="card__title">{c.titulo}</strong>
-                <span className="card__score">score {c.score.toFixed(2)}</span>
-              </div>
-              <video src={c.url} controls playsInline preload="metadata" />
-              <small className="card__meta">
-                {Math.round(c.inicio)}s – {Math.round(c.fim)}s
-              </small>
+      <div className={styles.shell}>
+        {/* nav */}
+        <nav className={styles.nav}>
+          <Logo className={styles.wordmark} />
+          <div className={styles.navLinks}>
+            <a className={`${styles.navLink} ${styles.navLinksText}`} href="#como-funciona">
+              Como funciona
+            </a>
+            <a className={`${styles.navLink} ${styles.navLinksText}`} href="#precos">
+              Preços
+            </a>
+            <a className={`${styles.navLink} ${styles.navLinksText}`} href="/login">
+              Entrar
+            </a>
+            <a className={styles.navCta} href={TRIAL_HREF}>
+              Testar grátis
+            </a>
+          </div>
+        </nav>
+
+        {/* hero */}
+        <section className={styles.hero}>
+          <div>
+            <div className={styles.eyebrow}>
+              <span className={styles.eyebrowDot} />
+              FEITO PRA DJS QUE QUEREM BOMBAR
             </div>
-          ))}
+            <h1 className={styles.h1}>
+              Seu set vira{" "}
+              <span className={styles.gradientText}>30 cortes virais</span>. Sem
+              editar nada.
+            </h1>
+            <p className={styles.sub}>
+              Suba um set de até 3 horas. A DJviral encontra os melhores momentos
+              e te entrega 30 vídeos verticais prontos pro TikTok e Reels.
+            </p>
+            <div className={styles.heroButtons}>
+              <a className={styles.btnPrimary} href={TRIAL_HREF}>
+                Testar grátis — 1h vira 10 cortes
+              </a>
+              <a className={styles.btnGhost} href="#como-funciona">
+                ▸ Ver como funciona
+              </a>
+            </div>
+            <div className={styles.microcopy}>
+              Sem cartão de crédito · Primeiros cortes em minutos
+            </div>
+            <div className={styles.stats}>
+              <div>
+                <div className={styles.statNum}>3h</div>
+                <div className={styles.statLabel}>de set por upload</div>
+              </div>
+              <div>
+                <div className={styles.statNum}>30</div>
+                <div className={styles.statLabel}>cortes prontos</div>
+              </div>
+              <div>
+                <div className={styles.statNum}>9:16</div>
+                <div className={styles.statLabel}>vertical pra postar</div>
+              </div>
+            </div>
+          </div>
+
+          {/* analyzer visual */}
+          <div className={styles.analyzerWrap}>
+            <div className={styles.ambientWave} aria-hidden="true">
+              {waveBg.map((b, i) => (
+                <div
+                  key={i}
+                  className={`${styles.ambientBar} ${styles.wvb}`}
+                  data-anim
+                  style={{ height: `${b.h}px`, animationDelay: `${b.d}s` }}
+                />
+              ))}
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardHeaderLeft}>
+                  <span className={styles.cardDot} />
+                  <span className={styles.cardTitle}>
+                    analisando · set-verão.mp3
+                  </span>
+                </div>
+                <span className={styles.cardTime}>2:47:11</span>
+              </div>
+              <div className={styles.cardWave} aria-hidden="true">
+                {wave.map((b, i) => (
+                  <div
+                    key={i}
+                    className={`${styles.cardBar} ${styles.wvb}`}
+                    data-anim
+                    style={{ height: `${b.h}px`, animationDelay: `${b.d}s` }}
+                  />
+                ))}
+              </div>
+              <div className={styles.cardPill}>
+                <span className={styles.cardPillText}>
+                  ✦ 30 momentos virais encontrados
+                </span>
+                <span className={styles.markers} aria-hidden="true">
+                  {markers.map((m, i) => (
+                    <span
+                      key={i}
+                      className={`${styles.markerBar} ${styles.wvb}`}
+                      data-anim
+                      style={{ height: `${m.h}px`, animationDelay: `${m.d}s` }}
+                    />
+                  ))}
+                </span>
+              </div>
+            </div>
+          </div>
         </section>
-      )}
-    </main>
+
+        {/* como funciona */}
+        <section id="como-funciona" className={styles.howSection}>
+          <div className={styles.howBar} />
+          <div className={styles.sectionEyebrow}>COMO FUNCIONA</div>
+          <h2 className={styles.howTitle}>Do arquivo ao feed em 3 passos.</h2>
+          <div className={styles.steps}>
+            <div className={styles.stepCard}>
+              <div
+                className={styles.stepNum}
+                style={{ backgroundImage: "linear-gradient(120deg,#a855f7,#ec4899)" }}
+              >
+                01
+              </div>
+              <h3 className={styles.stepTitle}>Suba seu set</h3>
+              <p className={styles.stepBody}>
+                Arraste um arquivo de até 3 horas ou cole o link do SoundCloud,
+                YouTube ou Mixcloud.
+              </p>
+            </div>
+            <div className={styles.stepCard}>
+              <div
+                className={styles.stepNum}
+                style={{ backgroundImage: "linear-gradient(120deg,#d946ef,#22d3ee)" }}
+              >
+                02
+              </div>
+              <h3 className={styles.stepTitle}>A IA acha os picos</h3>
+              <p className={styles.stepBody}>
+                Detectamos drops, viradas e os momentos de maior energia da pista
+                — sem você ouvir tudo de novo.
+              </p>
+            </div>
+            <div className={styles.stepCard}>
+              <div
+                className={styles.stepNum}
+                style={{ backgroundImage: "linear-gradient(120deg,#22d3ee,#a855f7)" }}
+              >
+                03
+              </div>
+              <h3 className={styles.stepTitle}>Receba 30 cortes</h3>
+              <p className={styles.stepBody}>
+                Vídeos verticais 9:16, já legendados e prontos pra postar no
+                TikTok e Reels.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* preços */}
+        <section id="precos" className={styles.pricing}>
+          <div className={styles.pricingHead}>
+            <div className={styles.pricingUnderline}>
+              <span />
+            </div>
+            <div className={styles.sectionEyebrow}>PREÇOS</div>
+            <h2 className={styles.pricingTitle}>
+              Comece grátis. Cresça quando bombar.
+            </h2>
+          </div>
+          <div className={styles.plans}>
+            <div className={styles.plan}>
+              <div className={styles.planName}>Grátis</div>
+              <div className={styles.planPrice}>R$0</div>
+              <div className={styles.planSub}>pra sempre</div>
+              <div className={styles.planFeatures}>
+                <span>✓ 1 set de até 1 hora</span>
+                <span>✓ 10 cortes verticais</span>
+                <span>✓ Legendas automáticas</span>
+                <span className={styles.featureMuted}>· Com marca d&apos;água</span>
+              </div>
+              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+                Começar grátis
+              </a>
+            </div>
+            <div className={`${styles.plan} ${styles.planPro}`}>
+              <span className={styles.planBadge}>★ MAIS POPULAR</span>
+              <div className={styles.planName}>Pro</div>
+              <div className={styles.planPrice}>
+                R$49<span className={styles.planPriceUnit}>/mês</span>
+              </div>
+              <div className={styles.planSub}>cobrado mensalmente</div>
+              <div className={`${styles.planFeatures} ${styles.planFeaturesPro}`}>
+                <span>✓ Sets de até 3 horas</span>
+                <span>✓ Até 12h de set por mês</span>
+                <span>✓ 10 cortes por hora de set</span>
+                <span>✓ Sem marca d&apos;água</span>
+                <span>✓ Editor pra legendar e travar o corte no minuto exato</span>
+              </div>
+              <a className={styles.planCtaFill} href={TRIAL_HREF}>
+                Testar 7 dias grátis
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* CTA final */}
+        <section className={styles.ctaFinal}>
+          <h2 className={styles.ctaTitle}>
+            Seus melhores drops não merecem morrer no SoundCloud.
+          </h2>
+          <p className={styles.ctaSub}>
+            Suba um set agora e veja a DJviral transformar 1 hora em 10 cortes —
+            de graça.
+          </p>
+          <a className={styles.ctaButton} href={TRIAL_HREF}>
+            Testar grátis — 1h vira 10 cortes
+          </a>
+        </section>
+
+        {/* footer */}
+        <footer className={styles.footer}>
+          <span className={styles.footerLogo}>
+            <span className="wmDj">DJ</span>
+            <span className="wmViral">viral</span>
+          </span>
+          <span className={styles.footerCopy}>
+            © 2026 DJviral · cortes que viram feed
+          </span>
+        </footer>
+      </div>
+    </div>
   );
 }
