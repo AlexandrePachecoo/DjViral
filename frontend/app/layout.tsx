@@ -1,26 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "DjViral",
   description: "Gera cortes virais a partir de sets de DJ",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0b0b10",
+};
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
-      <body
-        style={{
-          fontFamily: "system-ui, sans-serif",
-          maxWidth: 720,
-          margin: "0 auto",
-          padding: "2rem 1rem",
-          background: "#0b0b10",
-          color: "#e9e9f0",
-        }}
-      >
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

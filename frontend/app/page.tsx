@@ -88,46 +88,46 @@ export default function Home() {
   return (
     <main>
       <h1>🎧 DjViral</h1>
-      <p style={{ opacity: 0.7 }}>
+      <p className="subtitle">
         Envie seu set e receba os cortes mais virais automaticamente.
       </p>
 
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 24 }}>
+      <form onSubmit={handleSubmit} className="form">
         <input
           placeholder="Nome do set"
           value={name}
           onChange={(e) => setName(e.target.value)}
           disabled={busy}
-          style={inputStyle}
+          className="input"
         />
         <input
           type="file"
           accept="video/mp4,video/*"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           disabled={busy}
-          style={inputStyle}
+          className="input"
         />
-        <button type="submit" disabled={busy || !file || !name} style={buttonStyle}>
+        <button type="submit" disabled={busy || !file || !name} className="button">
           {busy ? "Processando..." : "Gerar cortes"}
         </button>
       </form>
 
       {message && (
-        <p style={{ marginTop: 16, color: status === "error" ? "#ff6b6b" : "#9d8cff" }}>
+        <p className={status === "error" ? "status status--error" : "status"}>
           {message}
         </p>
       )}
 
       {cuts.length > 0 && (
-        <section style={{ marginTop: 32, display: "grid", gap: 24 }}>
+        <section className="cuts">
           {cuts.map((c, i) => (
-            <div key={i} style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <strong>{c.titulo}</strong>
-                <span style={{ opacity: 0.6 }}>score {c.score.toFixed(2)}</span>
+            <div key={i} className="card">
+              <div className="card__header">
+                <strong className="card__title">{c.titulo}</strong>
+                <span className="card__score">score {c.score.toFixed(2)}</span>
               </div>
-              <video src={c.url} controls style={{ width: "100%", borderRadius: 8 }} />
-              <small style={{ opacity: 0.6 }}>
+              <video src={c.url} controls playsInline preload="metadata" />
+              <small className="card__meta">
                 {Math.round(c.inicio)}s – {Math.round(c.fim)}s
               </small>
             </div>
@@ -137,30 +137,3 @@ export default function Home() {
     </main>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 8,
-  border: "1px solid #2a2a35",
-  background: "#15151c",
-  color: "#e9e9f0",
-};
-
-const buttonStyle: React.CSSProperties = {
-  padding: "12px",
-  borderRadius: 8,
-  border: "none",
-  background: "#7c5cff",
-  color: "white",
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const cardStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 8,
-  padding: 16,
-  borderRadius: 12,
-  background: "#15151c",
-  border: "1px solid #2a2a35",
-};

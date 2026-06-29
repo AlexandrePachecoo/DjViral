@@ -8,6 +8,9 @@ clipes curtos otimizados para TikTok/Reels.
 
 > MVP implementado: frontend Next.js (`frontend/`) + worker de análise FastAPI
 > (`backend/`). Ver "Arquitetura" abaixo.
+>
+> Para o sistema de design da UI (tokens de cor, tipografia, breakpoints e
+> diretrizes de responsividade), ver **[`design.md`](design.md)**.
 
 ## Requisitos funcionais (MVP)
 
@@ -54,6 +57,22 @@ Navegador (Vercel UI)
 2. `clipper.py` — FFmpeg corta ~60s de vídeo em torno de cada pico (re-encode
    para corte preciso; seek com clamp em 0).
 3. `pipeline.py` — orquestra download → analyze → cut → upload → persiste `cuts`.
+
+### Frontend / UI (`frontend/app/`)
+
+- `layout.tsx` — raiz HTML; importa `globals.css`, define `metadata` e
+  `viewport` (`width=device-width`, `viewport-fit=cover` para respeitar o notch
+  do iOS).
+- `page.tsx` — única tela (client component): formulário de upload + lista de
+  cortes com player de vídeo. Faz polling em `GET /api/projects/{id}`.
+- `globals.css` — **fonte única de estilo**, mobile-first, com tokens em
+  `:root` e media queries. A UI não usa mais estilos inline; tudo é por
+  `className`. Detalhes do sistema de design em [`design.md`](design.md).
+
+A UI é **responsiva** (testada de ~320px até desktop): largura fluida,
+`box-sizing: border-box` global, inputs `font-size: 16px` (evita zoom no iOS),
+botões com alvo de toque ≥48px, vídeos com `max-height` para não estourar a
+tela e `overflow-x: hidden` para impedir scroll horizontal.
 
 ## Stack
 

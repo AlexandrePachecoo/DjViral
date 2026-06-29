@@ -1,0 +1,175 @@
+/* ==========================================================================
+   DjViral — estilos globais
+   Mobile-first. Ver design.md para o sistema de design (tokens, breakpoints).
+   ========================================================================== */
+
+:root {
+  /* Cores */
+  --bg: #0b0b10;
+  --surface: #15151c;
+  --border: #2a2a35;
+  --text: #e9e9f0;
+  --muted: rgba(233, 233, 240, 0.6);
+  --accent: #7c5cff;
+  --accent-soft: #9d8cff;
+  --danger: #ff6b6b;
+
+  /* Espaçamento / raios */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --maxw: 720px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Evita zoom horizontal inesperado em telas pequenas */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0 auto;
+  max-width: var(--maxw);
+  /* Respeita o notch / safe-area no iOS e dá folga lateral no mobile */
+  padding: 2rem max(1rem, env(safe-area-inset-left)) 3rem;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  /* Nada deve estourar a largura da viewport */
+  overflow-x: hidden;
+}
+
+/* Tipografia ------------------------------------------------------------- */
+
+h1 {
+  /* Escala fluida: encolhe no celular, cresce no desktop */
+  font-size: clamp(1.6rem, 6vw, 2.25rem);
+  margin: 0 0 0.25rem;
+  word-break: break-word;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* Formulário ------------------------------------------------------------- */
+
+.form {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.input {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  /* 16px impede o iOS de dar zoom ao focar o campo */
+  font-size: 16px;
+  /* O seletor de arquivo não pode estourar a largura no mobile */
+  max-width: 100%;
+}
+
+.input[type="file"] {
+  padding: 10px 12px;
+}
+
+.button {
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  /* Alvo de toque confortável no celular */
+  min-height: 48px;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Mensagem de status ----------------------------------------------------- */
+
+.status {
+  margin-top: 16px;
+  color: var(--accent-soft);
+  word-break: break-word;
+}
+
+.status--error {
+  color: var(--danger);
+}
+
+/* Lista de cortes -------------------------------------------------------- */
+
+.cuts {
+  margin-top: 32px;
+  display: grid;
+  gap: 24px;
+}
+
+.card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  /* No mobile, título e score quebram para a próxima linha em vez de espremer */
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.card__title {
+  word-break: break-word;
+}
+
+.card__score {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.card__meta {
+  color: var(--muted);
+}
+
+.card video {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  /* Vídeos verticais (TikTok/Reels) não devem ocupar a tela inteira */
+  max-height: 70vh;
+  background: #000;
+}
+
+/* Ajustes finos para telas bem estreitas ---------------------------------- */
+
+@media (max-width: 480px) {
+  body {
+    padding: 1.5rem max(0.875rem, env(safe-area-inset-left)) 2.5rem;
+  }
+
+  .cuts {
+    gap: 16px;
+  }
+}
