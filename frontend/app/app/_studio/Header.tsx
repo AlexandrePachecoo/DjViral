@@ -23,6 +23,7 @@ export function Header({ tab, onTab, userName }: Props) {
 
   return (
     <header
+      className="dj-header"
       style={{
         position: "sticky",
         top: 0,
@@ -39,7 +40,7 @@ export function Header({ tab, onTab, userName }: Props) {
     >
       <Logo />
 
-      <nav style={{ display: "flex", gap: 26, margin: "0 auto" }}>
+      <nav className="dj-header-nav" style={{ display: "flex", gap: 26, margin: "0 auto" }}>
         {TABS.map((t) => {
           const active = tab === t.key;
           return (
@@ -61,7 +62,7 @@ export function Header({ tab, onTab, userName }: Props) {
         })}
       </nav>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div className="dj-header-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <div onClick={() => router.push("/app/novo")} style={btnPrimary}>
           ＋ Novo set
         </div>
@@ -78,11 +79,14 @@ export function Header({ tab, onTab, userName }: Props) {
               justifyContent: "center",
               font: `600 12px ${font.display}`,
               color: theme.accent,
+              flexShrink: 0,
             }}
           >
             {initial}
           </div>
-          <span style={{ fontSize: 13, color: theme.textSecondary }}>{userName}</span>
+          <span className="dj-header-username" style={{ fontSize: 13, color: theme.textSecondary }}>
+            {userName}
+          </span>
         </div>
       </div>
     </header>

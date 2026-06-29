@@ -96,8 +96,9 @@ export function SavedView({ view, onView, filter, onFilter, showScore }: Props) 
             );
           })}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className="dj-saved-tools" style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div
+            className="dj-saved-search"
             style={{
               display: "flex",
               alignItems: "center",
@@ -169,7 +170,8 @@ export function SavedView({ view, onView, filter, onFilter, showScore }: Props) 
           ))}
         </div>
       ) : (
-        <div style={{ borderRadius: 14, overflow: "hidden", background: theme.surface, border: `1px solid ${theme.border}` }}>
+        <div className="dj-table-scroll">
+        <div className="dj-table" style={{ borderRadius: 14, overflow: "hidden", background: theme.surface, border: `1px solid ${theme.border}` }}>
           <div
             style={{
               display: "grid",
@@ -215,6 +217,7 @@ export function SavedView({ view, onView, filter, onFilter, showScore }: Props) 
               <span style={{ color: theme.textFaint, cursor: "pointer" }}>✎ ⋯</span>
             </div>
           ))}
+        </div>
         </div>
       )}
     </div>

@@ -1,106 +1,123 @@
 # DjViral — Design
 
-Sistema de design da interface do DjViral. Complementa o `CLAUDE.md` (que cobre
-arquitetura e backend); aqui o foco é **UI, UX e responsividade**.
+Sistema de design da interface do DjViral. Complementa o `CLAUDE.md` (arquitetura
+e backend); aqui o foco é **UI, UX e responsividade**.
 
-A fonte única de estilo é [`frontend/app/globals.css`](frontend/app/globals.css).
-A UI **não usa estilos inline** — todo visual é aplicado por `className`, o que
-permite media queries e mantém o JSX limpo.
+A UI tem **dois contextos visuais distintos**, cada um com seu próprio conjunto
+de tokens:
+
+| Contexto | Onde | Tema | Tokens |
+| -------- | ---- | ---- | ------ |
+| **Marketing** | landing `/` e auth `/login`, `/app/novo` | escuro / neon | `globals.css` (`--dj-*`) + `page.module.css` |
+| **Estúdio** | área logada `/app` | claro / minimalista | `app/app/_studio/theme.ts` |
+
+Base global e animações ficam em [`frontend/app/globals.css`](frontend/app/globals.css).
+A landing usa CSS Modules ([`page.module.css`](frontend/app/page.module.css)); o
+estúdio usa **estilos inline** a partir dos tokens de `theme.ts`.
 
 ## Princípios
 
-1. **Mobile-first.** A maioria dos DJs vai abrir o site no celular. Os estilos
-   base já são os do mobile; media queries só ajustam para telas maiores ou
-   muito estreitas.
-2. **Uma tela só.** O MVP é uma página: enviar set → acompanhar processamento →
-   assistir aos cortes. Sem navegação, sem distração.
-3. **Tema escuro.** Combina com o contexto (DJ, palco, vídeo) e reduz brilho no
-   celular.
-4. **Conteúdo nunca estoura a viewport.** `box-sizing: border-box` global,
-   `overflow-x: hidden` no `body`, larguras fluidas (`width: 100%` / `max-width`).
+1. **Mobile-first na prática.** A maioria dos DJs abre no celular. Toda tela é
+   testada de ~320px até desktop sem scroll horizontal nem conteúdo cortado.
+2. **Landing vende, estúdio trabalha.** A landing é escura/impactante (neon,
+   gradientes, waveforms animadas). O estúdio é claro e sóbrio pra não cansar em
+   uso prolongado.
+3. **Acento único por contexto.** Estúdio: violeta `#7c3aed`. Landing: gradiente
+   `violeta → magenta → rosa → ciano`.
+4. **Conteúdo nunca estoura a viewport.** `box-sizing: border-box` global; layouts
+   fluidos; grids que colapsam e linhas que quebram (`flex-wrap`) no mobile.
+
+## Tipografia
+
+Fontes carregadas via Google Fonts em `layout.tsx`:
+
+- **Space Grotesk** — títulos e números (`font.display`).
+- **Outfit** — corpo da landing e wordmark (`font.wordmark`).
+- **Sora** — corpo do estúdio (`font.body`).
+
+Fallback `system-ui, sans-serif` em todas. Títulos grandes da landing encolhem por
+breakpoint (ex.: `.h1` 74px → 48px → 40px).
 
 ## Tokens
 
-Definidos como CSS custom properties em `:root` (em `globals.css`). Use os
-tokens em vez de valores soltos.
+### Estúdio (`app/app/_studio/theme.ts`)
 
-### Cores
+Tema claro. Principais: `bg #fafafa`, `surface #ffffff`, `border #ececec`,
+`textPrimary #18181b`, `textMuted #a1a1aa`, `accent #7c3aed`. Helpers reutilizáveis:
+`btnPrimary`, `btnGhost`, `statusChip` (post/prog/draft) e `scoreColor()`
+(≥85 = acento).
 
-| Token            | Valor                       | Uso                                  |
-| ---------------- | --------------------------- | ------------------------------------ |
-| `--bg`           | `#0b0b10`                   | Fundo da página                      |
-| `--surface`      | `#15151c`                   | Cards, inputs                        |
-| `--border`       | `#2a2a35`                   | Bordas de cards e inputs             |
-| `--text`         | `#e9e9f0`                   | Texto principal                      |
-| `--muted`        | `rgba(233,233,240,0.6)`     | Texto secundário (metadados, score)  |
-| `--accent`       | `#7c5cff`                   | Botão primário                       |
-| `--accent-soft`  | `#9d8cff`                   | Mensagens de status (info)           |
-| `--danger`       | `#ff6b6b`                   | Mensagens de erro                    |
+### Marketing (`globals.css` `:root`)
 
-### Forma e espaçamento
+Tema escuro: `--dj-bg #08080d`, `--dj-panel #15151f`, e a paleta neon
+`--dj-purple #a855f7`, `--dj-magenta #d946ef`, `--dj-pink #ec4899`,
+`--dj-cyan #22d3ee`.
 
-| Token         | Valor   | Uso                          |
-| ------------- | ------- | ---------------------------- |
-| `--radius`    | `12px`  | Cards                        |
-| `--radius-sm` | `8px`   | Inputs, botões, vídeo        |
-| `--maxw`      | `720px` | Largura máxima do conteúdo   |
+## Animações
 
-### Tipografia
+Definidas em `globals.css` (escopo global, referenciadas por inline styles do
+estúdio) e em `page.module.css` (escopo de módulo, para a landing):
 
-- Fonte: `system-ui, -apple-system, sans-serif` (nativa, zero download).
-- `h1`: escala fluida com `clamp(1.6rem, 6vw, 2.25rem)` — encolhe no celular,
-  cresce no desktop.
-- `line-height: 1.5`; títulos longos quebram com `word-break: break-word`.
+- `dj-eq` / `eq` — barras de equalizador (logo, tiles).
+- `wavemove` — waveform da landing.
+- `dj-fadeUp`, `dj-fadeIn`, `dj-modalIn` — entrada de views e do modal.
 
-## Layout e breakpoints
+Tudo que anima usa o atributo `data-anim`; em `prefers-reduced-motion` o
+`globals.css` zera as animações via `[data-anim] { animation: none !important; }`.
 
-- O `body` é centralizado (`margin: 0 auto`) com `max-width: var(--maxw)`.
-- Padding lateral usa `max(1rem, env(safe-area-inset-left))` para respeitar a
-  safe-area (notch) do iOS. O `viewport` em `layout.tsx` usa
-  `viewport-fit=cover` para isso funcionar.
+## Responsividade
 
-| Breakpoint        | Comportamento                                              |
-| ----------------- | --------------------------------------------------------- |
-| base (mobile)     | Layout em coluna, inputs e botão ocupam 100% da largura.  |
-| `≤ 480px`         | Padding reduzido, menor gap entre os cards.               |
-| `≥ 720px`         | Conteúdo deixa de crescer (limitado por `--maxw`).        |
+Como o estúdio usa estilos inline, os ajustes responsivos vivem em **classes
+globais `dj-*`** com media queries em `globals.css` — os componentes só adicionam
+a `className` como "gancho". Onde a propriedade também é inline, a regra usa
+`!important` pra vencer a especificidade.
 
-## Componentes (classes)
+### Breakpoints
 
-| Classe          | Descrição                                                        |
-| --------------- | --------------------------------------------------------------- |
-| `.subtitle`     | Texto auxiliar abaixo do título (`--muted`).                    |
-| `.form`         | Grid vertical com gap; agrupa os campos de upload.             |
-| `.input`        | Campo de texto e de arquivo. `font-size: 16px`, `width: 100%`. |
-| `.button`       | Ação primária. `width: 100%`, `min-height: 48px`, estado `:disabled`. |
-| `.status` / `.status--error` | Mensagem de progresso/erro.                       |
-| `.cuts`         | Grid da lista de cortes gerados.                              |
-| `.card`         | Cartão de um corte (cabeçalho + vídeo + metadados).          |
-| `.card__header` | Título + score; `flex-wrap` para quebrar no mobile.          |
-| `.card__title` / `.card__score` / `.card__meta` | Partes do card.            |
-| `.card video`   | Player; `width: 100%`, `max-height: 70vh` para vídeos verticais. |
+| Largura | O que acontece |
+| ------- | -------------- |
+| `≤ 900px` | Landing: hero, "como funciona" e preços viram 1 coluna; paddings menores. |
+| `≤ 820px` | Editor do estúdio colapsa pra 1 coluna (`.dj-editor-grid`). |
+| `≤ 720px` | Header do estúdio quebra: logo + ações na 1ª linha, abas roláveis na 2ª (`.dj-header*`); padding do `main` reduz. |
+| `≤ 640px` | Estúdio: card do set e linhas da lista quebram; barra de score full-width; tabela de salvos rola na horizontal (`.dj-table-scroll`); busca full-width. |
+| `≤ 560px` | Landing: links do nav somem (sobra o CTA); botões do hero empilham. Editor: topo quebra. |
+| `≤ 420px` | Header do estúdio esconde o nome do usuário (mantém o avatar). |
 
-## Diretrizes de responsividade (checklist)
+### Ganchos responsivos (classes `dj-*`)
 
-Ao mexer na UI, garanta que:
+| Classe | Efeito no mobile |
+| ------ | ---------------- |
+| `.dj-header` / `.dj-header-nav` / `.dj-header-actions` / `.dj-header-username` | Header em 2 linhas, abas roláveis, nome do usuário oculto. |
+| `.dj-studio-main` | Padding lateral menor. |
+| `.dj-editor-grid` | Preview acima do painel (1 coluna). |
+| `.dj-editor-topbar` | Voltar/título/ações quebram. |
+| `.dj-genset` | Card do set quebra (chip de status desce). |
+| `.dj-list-row` / `.dj-list-score` / `.dj-list-actions` | Linha da lista quebra; score e ações ocupam a largura toda. |
+| `.dj-saved-tools` / `.dj-saved-search` | Ferramentas e busca full-width. |
+| `.dj-table-scroll` / `.dj-table` | Tabela de salvos rola na horizontal com colunas legíveis. |
 
-- [ ] Nenhum elemento estoura a largura — testar em ~320px (iPhone SE).
-- [ ] Inputs têm `font-size: 16px` (senão o iOS dá zoom ao focar).
-- [ ] Alvos de toque têm pelo menos ~44–48px de altura.
-- [ ] Flex containers que podem espremer usam `flex-wrap` + `gap`.
-- [ ] Vídeos têm `width: 100%`, `height: auto` e `max-height` (verticais!).
-- [ ] `<video>` usa `playsInline` para não abrir em fullscreen no iOS.
-- [ ] Estilo novo vai em `globals.css` por `className`, não inline.
+## Diretrizes (checklist ao mexer na UI)
+
+- [ ] Testar em ~320px (iPhone SE): nada estoura a largura.
+- [ ] Inputs com `font-size: 16px` (senão o iOS dá zoom ao focar).
+- [ ] Alvos de toque com ~44–48px de altura.
+- [ ] Linhas/flex que podem espremer usam `flex-wrap` (+ `gap`).
+- [ ] Grids fixos colapsam ou ganham scroll horizontal no mobile.
+- [ ] Vídeos com `width: 100%`, `height: auto` e `playsInline`.
+- [ ] Estúdio: ajuste responsivo entra como classe `dj-*` em `globals.css`, não
+      como novo `@media` solto (os estilos são inline).
+- [ ] Respeitar `prefers-reduced-motion` (usar `data-anim`).
 
 ## Acessibilidade
 
-- Tema escuro com contraste suficiente entre `--text` e `--surface`/`--bg`.
-- Botão tem estado `:disabled` visível durante upload/processamento.
-- `lang="pt-BR"` no `<html>`.
+- Contraste adequado em ambos os temas.
+- `lang="pt-BR"` no `<html>`; `viewport-fit=cover` para a safe-area do iOS.
+- Estados `:disabled` visíveis em botões durante upload/processamento.
+- Animações desligáveis via `prefers-reduced-motion`.
 
 ## Evoluções de UI planejadas
 
-- Indicador de progresso do upload (barra/porcentagem) em vez de só texto.
-- Estado de loading com skeleton nos cards enquanto o worker processa.
-- Botão de download por corte e ação de compartilhar.
-- Histórico de projetos (depende da autenticação, ainda não implementada).
+- Player de vídeo real nos cards (hoje são placeholders/thumbs).
+- Barra de progresso de upload (em vez de só texto de status).
+- Skeletons enquanto o worker processa.
+- Tornar o menu do header um drawer no mobile (hoje as abas rolam).

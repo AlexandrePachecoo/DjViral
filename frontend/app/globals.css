@@ -93,6 +93,86 @@ body {
   }
 }
 
+/* ===== Studio (/app) responsividade =====
+   Os componentes do estúdio usam estilos inline; estas classes globais são os
+   "ganchos" responsivos. Onde a propriedade também é definida inline, usamos
+   !important para vencer a especificidade do style inline. */
+
+/* Header: vira duas linhas no mobile — logo + ações na primeira, abas roláveis
+   na segunda. Sem isso, a linha única estoura a largura da tela. */
+@media (max-width: 720px) {
+  .dj-header {
+    flex-wrap: wrap;
+    gap: 12px !important;
+    padding: 12px 16px !important;
+  }
+  .dj-header-nav {
+    order: 3;
+    width: 100%;
+    margin: 0 !important;
+    gap: 22px !important;
+    overflow-x: auto;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dj-header-actions {
+    margin-left: auto;
+  }
+  .dj-studio-main {
+    padding: 24px 16px 64px !important;
+  }
+}
+@media (max-width: 420px) {
+  .dj-header-username {
+    display: none;
+  }
+}
+
+/* Generator: o card do set e as linhas da lista quebram em vez de espremer. */
+@media (max-width: 640px) {
+  .dj-genset {
+    flex-wrap: wrap;
+    gap: 14px !important;
+  }
+  .dj-list-row {
+    flex-wrap: wrap;
+    gap: 12px !important;
+  }
+  .dj-list-score {
+    width: 100% !important;
+    order: 3;
+  }
+  .dj-list-actions {
+    width: 100%;
+  }
+
+  /* Cortes salvos: barra de ferramentas e busca ocupam a largura toda. */
+  .dj-saved-tools {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+  .dj-saved-search {
+    width: 100% !important;
+  }
+
+  /* Tabela de cortes salvos: rola na horizontal mantendo as colunas legíveis. */
+  .dj-table {
+    min-width: 680px;
+  }
+
+  /* Editor: topo (voltar + título + ações) quebra em telas estreitas. */
+  .dj-editor-topbar {
+    flex-wrap: wrap;
+    gap: 12px !important;
+  }
+}
+
+/* O wrapper de scroll da tabela é inofensivo no desktop (não há overflow). */
+.dj-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

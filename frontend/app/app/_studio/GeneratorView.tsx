@@ -19,6 +19,7 @@ export function GeneratorView({ view, onView, showScore, onEdit, onPost, onProgr
     <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
       {/* ===== Set card ===== */}
       <div
+        className="dj-genset"
         style={{
           display: "flex",
           alignItems: "center",
@@ -274,6 +275,7 @@ function ListaView({ showScore, onEdit, onPost, onProgram }: CardActions) {
       {CUTS.map((c) => (
         <div
           key={c.id}
+          className="dj-list-row"
           style={{
             display: "flex",
             alignItems: "center",
@@ -312,14 +314,14 @@ function ListaView({ showScore, onEdit, onPost, onProgram }: CardActions) {
             </div>
           </div>
           {showScore && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, width: 180 }}>
+            <div className="dj-list-score" style={{ display: "flex", alignItems: "center", gap: 10, width: 180 }}>
               <div style={{ flex: 1, height: 6, borderRadius: 5, background: theme.surfaceMuted2, overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${c.score}%`, background: scoreColor(c.score) }} />
               </div>
               <span style={{ font: `600 14px ${font.display}`, color: scoreColor(c.score) }}>{c.score}</span>
             </div>
           )}
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="dj-list-actions" style={{ display: "flex", gap: 8 }}>
             <div
               onClick={() => onPost(c)}
               style={{

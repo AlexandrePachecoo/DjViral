@@ -60,19 +60,28 @@ Navegador (Vercel UI)
 
 ### Frontend / UI (`frontend/app/`)
 
-- `layout.tsx` — raiz HTML; importa `globals.css`, define `metadata` e
-  `viewport` (`width=device-width`, `viewport-fit=cover` para respeitar o notch
-  do iOS).
-- `page.tsx` — única tela (client component): formulário de upload + lista de
-  cortes com player de vídeo. Faz polling em `GET /api/projects/{id}`.
-- `globals.css` — **fonte única de estilo**, mobile-first, com tokens em
-  `:root` e media queries. A UI não usa mais estilos inline; tudo é por
-  `className`. Detalhes do sistema de design em [`design.md`](design.md).
+A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
+(escuro/neon) e **estúdio** (claro/minimalista).
 
-A UI é **responsiva** (testada de ~320px até desktop): largura fluida,
-`box-sizing: border-box` global, inputs `font-size: 16px` (evita zoom no iOS),
-botões com alvo de toque ≥48px, vídeos com `max-height` para não estourar a
-tela e `overflow-x: hidden` para impedir scroll horizontal.
+- `layout.tsx` — raiz HTML; importa `globals.css`, carrega as fontes (Google
+  Fonts), define `metadata` e `viewport` (`viewport-fit=cover` p/ o notch iOS).
+- `globals.css` — base global (reset, `:root` com tokens `--dj-*`), animações de
+  escopo global e os **ganchos responsivos `dj-*`** do estúdio (media queries).
+- `page.tsx` + `page.module.css` — **landing** (`/`): hero, "como funciona",
+  preços, CTA. Estilizada via CSS Modules.
+- `login/page.tsx` — login/cadastro (`/login`).
+- `app/` — área logada (`/app`), protegida por sessão:
+  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos).
+  - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
+  - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
+
+A UI é **responsiva** (testada de ~320px até desktop). Como o estúdio usa
+estilos inline, os ajustes responsivos vivem em classes globais `dj-*` em
+`globals.css` (com media queries); os componentes só adicionam a `className`.
+Pontos-chave: `box-sizing: border-box` global, inputs `font-size: 16px` (evita
+zoom no iOS), header do estúdio que quebra em 2 linhas no mobile, grids que
+colapsam e a tabela de cortes salvos com scroll horizontal. Breakpoints e
+ganchos detalhados em [`design.md`](design.md).
 
 ## Stack
 

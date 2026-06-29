@@ -10,9 +10,15 @@ import { supabaseAdmin } from "@/lib/supabase";
 const COOKIE_NAME = "djviral_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 dias
 
-const authSecret = process.env.AUTH_SECRET;
-if (!authSecret) {
-  throw new Error("AUTH_SECRET precisa estar definido no ambiente");
+// Lazy: o segredo só é exigido quando uma sessão é assinada/verificada
+// (runtime), não ao importar o módulo. Assim o build da Vercel não quebra
+// quando AUTH_SECRET não está presente no ambiente de build.
+function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error("AUTH_SECRET precisa estar definido no ambiente");
+  }
+  return secret;
 }
 
 export type SessionUser = {
@@ -49,7 +55,7 @@ function b64url(input: Buffer | string): string {
 }
 
 function sign(data: string): string {
-  return b64url(createHmac("sha256", authSecret as string).update(data).digest());
+  return b64url(createHmac("sha256", getAuthSecret()).update(data).digest());
 }
 
 export function createSessionToken(userId: string): string {

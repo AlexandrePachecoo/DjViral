@@ -139,11 +139,14 @@ const cardStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  padding: "10px 12px",
+  width: "100%",
+  padding: "12px",
   borderRadius: 8,
   border: "1px solid #2a2a35",
   background: "#0f0f15",
   color: "#e9e9f0",
+  // 16px impede o iOS de dar zoom ao focar o campo.
+  fontSize: 16,
 };
 
 const buttonStyle: React.CSSProperties = {
@@ -153,6 +156,8 @@ const buttonStyle: React.CSSProperties = {
   background: "#7c5cff",
   color: "white",
   fontWeight: 600,
+  fontSize: 16,
+  minHeight: 48,
   cursor: "pointer",
 };
 
