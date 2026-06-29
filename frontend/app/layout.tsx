@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           crossOrigin=""
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Outfit:wght@200;300;400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@300;400;500;600&family=Outfit:wght@200;300;400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
