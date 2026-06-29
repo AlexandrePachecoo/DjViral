@@ -72,6 +72,7 @@ export default function Studio() {
       <Header tab={tab} onTab={goTab} userName={userName} />
 
       <main
+        className="dj-studio-main"
         style={{
           position: "relative",
           zIndex: 1,

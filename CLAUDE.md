@@ -8,6 +8,9 @@ clipes curtos otimizados para TikTok/Reels.
 
 > MVP implementado: frontend Next.js (`frontend/`) + worker de análise FastAPI
 > (`backend/`). Ver "Arquitetura" abaixo.
+>
+> Para o sistema de design da UI (tokens de cor, tipografia, breakpoints e
+> diretrizes de responsividade), ver **[`design.md`](design.md)**.
 
 ## Requisitos funcionais (MVP)
 
@@ -54,6 +57,31 @@ Navegador (Vercel UI)
 2. `clipper.py` — FFmpeg corta ~60s de vídeo em torno de cada pico (re-encode
    para corte preciso; seek com clamp em 0).
 3. `pipeline.py` — orquestra download → analyze → cut → upload → persiste `cuts`.
+
+### Frontend / UI (`frontend/app/`)
+
+A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
+(escuro/neon) e **estúdio** (claro/minimalista).
+
+- `layout.tsx` — raiz HTML; importa `globals.css`, carrega as fontes (Google
+  Fonts), define `metadata` e `viewport` (`viewport-fit=cover` p/ o notch iOS).
+- `globals.css` — base global (reset, `:root` com tokens `--dj-*`), animações de
+  escopo global e os **ganchos responsivos `dj-*`** do estúdio (media queries).
+- `page.tsx` + `page.module.css` — **landing** (`/`): hero, "como funciona",
+  preços, CTA. Estilizada via CSS Modules.
+- `login/page.tsx` — login/cadastro (`/login`).
+- `app/` — área logada (`/app`), protegida por sessão:
+  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos).
+  - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
+  - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
+
+A UI é **responsiva** (testada de ~320px até desktop). Como o estúdio usa
+estilos inline, os ajustes responsivos vivem em classes globais `dj-*` em
+`globals.css` (com media queries); os componentes só adicionam a `className`.
+Pontos-chave: `box-sizing: border-box` global, inputs `font-size: 16px` (evita
+zoom no iOS), header do estúdio que quebra em 2 linhas no mobile, grids que
+colapsam e a tabela de cortes salvos com scroll horizontal. Breakpoints e
+ganchos detalhados em [`design.md`](design.md).
 
 ## Stack
 

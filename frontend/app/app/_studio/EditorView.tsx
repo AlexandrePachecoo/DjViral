@@ -16,7 +16,7 @@ export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: 
   return (
     <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
       {/* ===== Topbar ===== */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
+      <div className="dj-editor-topbar" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
         <div
           onClick={onBack}
           style={{
