@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     worker_secret: str = ""
 
     # Parâmetros de processamento
-    top_n: int = 5          # quantos clipes gerar (top picos)
+    top_n: int = 30         # quantos clipes gerar no máximo (top picos)
     clip_duration: int = 60  # duração de cada clipe em segundos
     pre_roll: int = 5        # segundos antes do pico onde o corte começa
 

@@ -35,8 +35,10 @@ def process_project(project_id: str) -> None:
         video_path = download_source(source.data[0]["url"])
         logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
 
-        peaks = analyzer.analyze(video_path, top_n=settings.top_n)
-        logger.info("Projeto %s: %d picos encontrados", project_id, len(peaks))
+        peaks, bpm = analyzer.analyze(video_path, top_n=settings.top_n)
+        logger.info(
+            "Projeto %s: %d picos encontrados (%d BPM)", project_id, len(peaks), bpm
+        )
 
         for idx, peak in enumerate(peaks):
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -57,7 +59,7 @@ def process_project(project_id: str) -> None:
                 client.table("cuts").insert(
                     {
                         "project_id": project_id,
-                        "titulo": f"Corte {idx + 1}",
+                        "titulo": f"Drop {idx + 1} · {bpm} BPM",
                         "inicio": start,
                         "fim": start + settings.clip_duration,
                         "duracao": settings.clip_duration,

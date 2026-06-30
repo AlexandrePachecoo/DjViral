@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
 
+// Lista os projetos (mais recentes primeiro) para o histórico no frontend.
+// Sem autenticação ainda, então o histórico é global (todos os projetos).
+export async function GET() {
+  const { data: projects, error } = await supabaseAdmin
+    .from("projects")
+    .select("id, name, status, date_create")
+    .order("date_create", { ascending: false });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ projects: projects ?? [] });
+}
+
 // Cria um projeto + source e devolve uma signed upload URL para o navegador
 // enviar o vídeo DIRETO ao Supabase Storage (sem passar pela Vercel).
 export async function POST(req: NextRequest) {
