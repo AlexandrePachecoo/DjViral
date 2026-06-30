@@ -5,12 +5,13 @@ import { CAPTIONS, type Cut } from "./data";
 
 type Props = {
   cut: Cut;
+  setName: string;
   selectedCaptionId: string;
   onSelectCaption: (id: string) => void;
   onBack: () => void;
 };
 
-export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: Props) {
+export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, onBack }: Props) {
   const selectedCaption = CAPTIONS.find((c) => c.id === selectedCaptionId) ?? CAPTIONS[0];
 
   return (
@@ -35,7 +36,9 @@ export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: 
           ←
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 12, color: theme.textMuted }}>Editando corte</div>
+          <div style={{ fontSize: 12, color: theme.textMuted }}>
+            Editando corte{setName ? ` · ${setName}` : ""}
+          </div>
           <div style={{ font: `500 20px ${font.display}` }}>{cut.title}</div>
         </div>
         <div style={btnGhost}>Pré-visualizar</div>
@@ -52,27 +55,17 @@ export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: 
               aspectRatio: "9 / 16",
               borderRadius: 18,
               overflow: "hidden",
-              background: theme.previewVideo,
+              background: "#000",
             }}
           >
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div
-                style={{
-                  width: 54,
-                  height: 54,
-                  borderRadius: "50%",
-                  background: "rgba(255,255,255,.12)",
-                  border: "1px solid rgba(255,255,255,.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#fff",
-                  paddingLeft: 3,
-                }}
-              >
-                ▶
-              </div>
-            </div>
+            <video
+              src={cut.url}
+              controls
+              playsInline
+              preload="metadata"
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000" }}
+            />
+            {/* Sobreposição da legenda (ainda mock; edição de legenda fora de escopo). */}
             <div
               style={{
                 position: "absolute",
@@ -87,6 +80,7 @@ export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: 
                 border: `1.5px dashed ${theme.accentLight}`,
                 borderRadius: 8,
                 padding: 9,
+                pointerEvents: "none",
               }}
             >
               {selectedCaption.text}
@@ -108,15 +102,6 @@ export function EditorView({ cut, selectedCaptionId, onSelectCaption, onBack }: 
                 }}
               >
                 ✥
-              </div>
-            </div>
-            <div style={{ position: "absolute", left: 18, right: 18, bottom: 18 }}>
-              <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,.25)" }}>
-                <div style={{ width: "42%", height: "100%", borderRadius: 3, background: theme.accentLight }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,.65)", marginTop: 6 }}>
-                <span>0:16</span>
-                <span>0:38</span>
               </div>
             </div>
           </div>
