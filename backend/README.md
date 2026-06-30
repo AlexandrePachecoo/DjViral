@@ -15,10 +15,12 @@ suficientes. A Vercel (`../frontend`) faz a orquestração e dispara este worker
 2. **Download** (`pipeline.py`) — busca a linha `source` do projeto, baixa o
    vídeo do bucket `sources` para um arquivo temporário.
 3. **Análise** (`analyzer.py`) — [Librosa](https://librosa.org) carrega o áudio
-   do mp4 e calcula dois sinais: **RMS** (energia/volume) e **onset strength**
-   (impacto dos beats). Eles são normalizados e combinados num *score de
-   viralidade*; `scipy.signal.find_peaks` encontra os picos e selecionamos os
-   `TOP_N` mais intensos.
+   do mp4 e calcula três sinais: **RMS** (energia/volume), **onset strength**
+   (impacto dos beats) e **contraste de energia pré/pós drop** (o quanto a
+   energia explode depois de um buildup). Eles são normalizados e combinados num
+   *score de viralidade*; `scipy.signal.find_peaks` encontra os picos e
+   selecionamos os `TOP_N` mais intensos. O **BPM** global do set também é
+   estimado e usado no título de cada corte.
 4. **Corte** (`clipper.py`) — para cada pico, o **FFmpeg** corta ~60s de vídeo
    (começando 5s antes do pico).
 5. **Storage** — cada clipe é enviado para o bucket `clips` e os metadados
@@ -69,7 +71,7 @@ curl -X POST http://localhost:8000/process \
 ### Testar só o núcleo de análise (sem Supabase)
 
 ```bash
-python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_n=5))"
+python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_n=30))"
 ```
 
 ## Deploy na Railway
