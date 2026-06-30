@@ -68,6 +68,20 @@ body {
   }
 }
 
+/* Skeleton de carregamento do estúdio (enquanto o worker/projeto carrega). */
+@keyframes dj-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.dj-skeleton {
+  animation: dj-pulse 1.3s ease-in-out infinite;
+}
+
 /* Equalizer bar primitive used in the studio logo + set tile. */
 .dj-eqbar {
   width: 3px;

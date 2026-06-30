@@ -117,7 +117,11 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 
 ## Evoluções de UI planejadas
 
-- Player de vídeo real nos cards (hoje são placeholders/thumbs).
+- ~~Player de vídeo real nos cards~~ — feito: o estúdio carrega os cortes reais
+  do usuário e usa `<video>` nos cards (Gerador e Cortes salvos).
+- ~~Skeletons enquanto carrega~~ — feito: `StudioStates.tsx` (`.dj-skeleton`) +
+  empty state com CTA quando não há set processado.
 - Barra de progresso de upload (em vez de só texto de status).
-- Skeletons enquanto o worker processa.
 - Tornar o menu do header um drawer no mobile (hoje as abas rolam).
+- Edição e publicação reais (hoje a aba Edição e o modal de publicar abrem com o
+  corte real, mas trim/legendas/postagem ainda são visuais — sem backend).

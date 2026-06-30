@@ -1,7 +1,7 @@
 "use client";
 
 import { theme, font, scoreColor } from "./theme";
-import { COMPOSE, SET_INFO, type Platform } from "./data";
+import { COMPOSE, type Platform } from "./data";
 import type { ModalState } from "./types";
 
 type Props = {
@@ -96,11 +96,17 @@ export function PublishModal({ state, onClose, onPlatform, onMode }: Props) {
               border: `1px solid ${theme.borderHairline}`,
             }}
           >
-            <div style={{ width: 44, height: 74, borderRadius: 7, background: cut.thumb, flexShrink: 0 }} />
+            <video
+              src={cut.url}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ width: 44, height: 74, borderRadius: 7, objectFit: "cover", background: "#000", flexShrink: 0 }}
+            />
             <div style={{ flex: 1 }}>
               <div style={{ font: `500 15px ${font.display}` }}>{cut.title}</div>
               <div style={{ fontSize: 12, color: theme.textMuted }}>
-                {SET_INFO.name} · {cut.dur}
+                {[state.setName, cut.dur].filter(Boolean).join(" · ")}
               </div>
             </div>
             <div style={{ font: `600 15px ${font.display}`, color: scoreColor(cut.score) }}>{cut.score}</div>
