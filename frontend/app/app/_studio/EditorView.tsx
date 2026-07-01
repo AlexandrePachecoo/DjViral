@@ -1,25 +1,143 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 import { CAPTIONS, type Cut } from "./data";
+import { type ApiCut, formatTimecode, toStudioCut } from "./cut";
 
 type Props = {
   cut: Cut;
   setName: string;
+  projectId: string;
   selectedCaptionId: string;
   onSelectCaption: (id: string) => void;
   onBack: () => void;
+  onSaved: (cut: Cut) => void;
 };
 
-export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, onBack }: Props) {
+type SaveState = "idle" | "saving" | "error";
+
+export function EditorView({
+  cut,
+  setName,
+  projectId,
+  selectedCaptionId,
+  onSelectCaption,
+  onBack,
+  onSaved,
+}: Props) {
   const selectedCaption = CAPTIONS.find((c) => c.id === selectedCaptionId) ?? CAPTIONS[0];
+
+  const [title, setTitle] = useState(cut.title);
+  const [start, setStart] = useState(cut.startSec);
+  const [end, setEnd] = useState(cut.endSec);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [msg, setMsg] = useState("");
+  const [videoReload, setVideoReload] = useState(0);
+
+  // Reseta o formulário ao abrir outro corte.
+  useEffect(() => {
+    setTitle(cut.title);
+    setStart(cut.startSec);
+    setEnd(cut.endSec);
+    setSaveState("idle");
+    setMsg("");
+  }, [cut.id, cut.title, cut.startSec, cut.endSec]);
+
+  const saving = saveState === "saving";
+  const titleChanged = title.trim() !== cut.title && title.trim() !== "";
+  const trimChanged =
+    Math.abs(start - cut.startSec) > 0.01 || Math.abs(end - cut.endSec) > 0.01;
+  const dirty = titleChanged || trimChanged;
+
+  function nudgeStart(delta: number) {
+    setStart((s) => {
+      const ns = Math.max(0, +(s + delta).toFixed(2));
+      return ns < end - 0.5 ? ns : s;
+    });
+  }
+  function nudgeEnd(delta: number) {
+    setEnd((e) => {
+      const ne = +(e + delta).toFixed(2);
+      return ne > start + 0.5 ? ne : e;
+    });
+  }
+
+  async function pollUntilReady(): Promise<Cut> {
+    for (let i = 0; i < 30; i++) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const r = await fetch(`/api/projects/${projectId}`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const api: ApiCut | undefined = (data.cuts ?? []).find(
+        (c: ApiCut) => c.id === cut.id
+      );
+      if (!api) continue;
+      if (api.status === "ready") return toStudioCut(api);
+      if (api.status === "error") throw new Error("O re-corte falhou. Tente de novo.");
+    }
+    throw new Error("O re-corte está demorando. Tente novamente em instantes.");
+  }
+
+  async function handleSave() {
+    if (saving) return;
+    const newTitle = title.trim();
+    if (!newTitle) {
+      setSaveState("error");
+      setMsg("O título não pode ficar vazio.");
+      return;
+    }
+    if (!dirty) {
+      setMsg("Nada para salvar.");
+      return;
+    }
+
+    setSaveState("saving");
+    setMsg(trimChanged ? "Regenerando o vídeo do corte..." : "Salvando...");
+    try {
+      if (titleChanged) {
+        const r = await fetch(`/api/projects/${projectId}/cuts/${cut.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ titulo: newTitle }),
+        });
+        if (!r.ok) {
+          throw new Error((await r.json().catch(() => ({})))?.error ?? "Falha ao renomear");
+        }
+      }
+
+      if (trimChanged) {
+        const r = await fetch(`/api/projects/${projectId}/cuts/${cut.id}/recut`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ inicio: start, fim: end }),
+        });
+        if (!r.ok) {
+          throw new Error((await r.json().catch(() => ({})))?.error ?? "Falha ao re-cortar");
+        }
+        const updated = await pollUntilReady();
+        setSaveState("idle");
+        setMsg("");
+        onSaved(updated);
+        return;
+      }
+
+      // Só o título mudou — atualiza localmente.
+      setSaveState("idle");
+      setMsg("");
+      onSaved({ ...cut, title: newTitle });
+    } catch (e) {
+      setSaveState("error");
+      setMsg(e instanceof Error ? e.message : "Erro ao salvar");
+    }
+  }
 
   return (
     <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
       {/* ===== Topbar ===== */}
       <div className="dj-editor-topbar" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
         <div
-          onClick={onBack}
+          onClick={saving ? undefined : onBack}
           style={{
             width: 40,
             height: 40,
@@ -29,7 +147,8 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            cursor: "pointer",
+            cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.5 : 1,
             color: theme.textSecondary,
           }}
         >
@@ -41,9 +160,36 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
           </div>
           <div style={{ font: `500 20px ${font.display}` }}>{cut.title}</div>
         </div>
-        <div style={btnGhost}>Pré-visualizar</div>
-        <div style={btnPrimary}>Salvar corte</div>
+        <div style={{ ...btnGhost, opacity: saving ? 0.5 : 1 }} onClick={() => setVideoReload((n) => n + 1)}>
+          Pré-visualizar
+        </div>
+        <div
+          onClick={handleSave}
+          style={{
+            ...btnPrimary,
+            opacity: saving || !dirty ? 0.55 : 1,
+            cursor: saving || !dirty ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Salvando..." : "Salvar corte"}
+        </div>
       </div>
+
+      {msg && (
+        <div
+          style={{
+            marginBottom: 18,
+            padding: "10px 14px",
+            borderRadius: 10,
+            fontSize: 13,
+            background: saveState === "error" ? "#fef2f2" : theme.accentSoft,
+            color: saveState === "error" ? "#dc2626" : theme.accent,
+            border: `1px solid ${saveState === "error" ? "#fecaca" : theme.accentBorder}`,
+          }}
+        >
+          {msg}
+        </div>
+      )}
 
       {/* ===== Grid: preview + panel ===== */}
       <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 26 }} className="dj-editor-grid">
@@ -59,6 +205,7 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
             }}
           >
             <video
+              key={`${cut.url}-${videoReload}`}
               src={cut.url}
               controls
               playsInline
@@ -104,9 +251,27 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
                 ✥
               </div>
             </div>
+            {saving && trimChanged && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "rgba(0,0,0,.55)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#fff",
+                  fontSize: 14,
+                  textAlign: "center",
+                  padding: 20,
+                }}
+              >
+                Regenerando o vídeo com o novo trecho...
+              </div>
+            )}
           </div>
           <div style={{ fontSize: 11, color: theme.textMuted, textAlign: "center" }}>
-            arraste a legenda no preview pra posicionar onde quiser
+            ajuste início e fim ao lado · o vídeo é recortado ao salvar
           </div>
         </div>
 
@@ -114,18 +279,24 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
             <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 7 }}>Título do corte</div>
-            <div
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={saving}
+              maxLength={120}
+              placeholder="Nome do corte"
               style={{
+                width: "100%",
                 padding: "12px 14px",
                 borderRadius: 10,
                 background: theme.surface,
                 border: `1px solid ${theme.borderStrong}`,
-                fontSize: 15,
+                // 16px evita zoom no iOS ao focar.
+                fontSize: 16,
                 color: theme.textPrimary,
+                fontFamily: font.body,
               }}
-            >
-              {cut.title} 🔥
-            </div>
+            />
           </div>
 
           {/* Tempo */}
@@ -134,41 +305,36 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
               Tempo
             </div>
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: theme.textTertiary, marginBottom: 10 }}>
-                  <span>Trecho selecionado</span>
-                  <span style={{ color: theme.accent }}>0:16.2 → 0:54.6</span>
-                </div>
-                <div style={{ position: "relative", height: 6, borderRadius: 5, background: theme.surfaceMuted2 }}>
-                  <div style={{ position: "absolute", left: "22%", right: "24%", top: 0, bottom: 0, borderRadius: 5, background: theme.accent }} />
-                  {["22%", "76%"].map((left) => (
-                    <div
-                      key={left}
-                      style={{
-                        position: "absolute",
-                        left,
-                        top: -5,
-                        width: 16,
-                        height: 16,
-                        borderRadius: "50%",
-                        background: "#fff",
-                        border: `2px solid ${theme.accent}`,
-                        boxShadow: "0 1px 3px rgba(0,0,0,.15)",
-                      }}
-                    />
-                  ))}
-                </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: theme.textTertiary }}>
+                <span>Trecho selecionado</span>
+                <span style={{ color: theme.accent }}>
+                  {formatTimecode(start)} → {formatTimecode(end)}
+                </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 13, color: theme.textTertiary }}>Ajuste fino</span>
-                <span style={fineBtn}>◀ 0.5s início</span>
-                <span style={fineBtn}>fim 0.5s ▶</span>
-                <span style={{ marginLeft: "auto", fontSize: 13, color: theme.textMuted }}>duração 0:38.4</span>
+
+              <TrimRow
+                label="Início"
+                value={formatTimecode(start)}
+                disabled={saving}
+                onNudge={nudgeStart}
+              />
+              <TrimRow
+                label="Fim"
+                value={formatTimecode(end)}
+                disabled={saving}
+                onNudge={nudgeEnd}
+              />
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, color: theme.textTertiary }}>Duração</span>
+                <span style={{ marginLeft: "auto", fontSize: 13, color: theme.textMuted }}>
+                  {(end - start).toFixed(1)}s
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Legendas */}
+          {/* Legendas (visual; edição de legenda fora de escopo) */}
           <div style={{ borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
             <div
               style={{
@@ -180,7 +346,7 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
               }}
             >
               <span style={{ font: `500 14px ${font.display}` }}>Legendas</span>
-              <span style={{ fontSize: 12, color: theme.textMuted }}>toque pra editar · arraste no preview</span>
+              <span style={{ fontSize: 12, color: theme.textMuted }}>em breve</span>
             </div>
             <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
               {CAPTIONS.map((cap) => {
@@ -206,91 +372,66 @@ export function EditorView({ cut, setName, selectedCaptionId, onSelectCaption, o
                   </div>
                 );
               })}
-              <div style={{ display: "flex", gap: 7, marginTop: 2 }}>
-                <span style={{ padding: "5px 12px", borderRadius: 20, fontSize: 12, background: theme.accentTint08, color: theme.accent, border: `1px solid ${theme.accentBorder}` }}>
-                  Bold
-                </span>
-                <span style={styleChip}>Karaokê</span>
-                <span style={styleChip}>Neon</span>
-              </div>
-              <div
-                style={{
-                  border: `1.5px dashed ${theme.accentBorder}`,
-                  borderRadius: 10,
-                  padding: 10,
-                  textAlign: "center",
-                  fontSize: 13,
-                  color: theme.accent,
-                  cursor: "pointer",
-                }}
-              >
-                ＋ adicionar legenda
-              </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* ===== Timeline ===== */}
-      <div style={{ marginTop: 22, padding: "18px 20px", borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-          <span>Timeline do set</span>
-          <span>− zoom +</span>
-        </div>
-        <div style={{ position: "relative", height: 74, borderRadius: 9, background: "#f6f6f7", overflow: "hidden" }}>
-          <div style={{ position: "absolute", left: "22%", right: "24%", top: 0, bottom: 0, background: theme.accentTint08, borderLeft: `2px solid ${theme.accent}`, borderRight: `2px solid ${theme.accent}` }} />
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", padding: "0 8px", opacity: 0.6 }}>
-            <svg viewBox="0 0 240 40" preserveAspectRatio="none" style={{ width: "100%", height: 52, display: "block" }}>
-              <polyline
-                points="0,20 6,12 12,28 18,6 24,32 30,16 36,24 42,8 48,30 54,14 60,26 66,10 72,30 78,18 84,9 90,31 96,15 102,25 108,7 114,29 120,17 126,23 132,11 138,31 144,16 150,26 156,12 162,28 168,15 174,23 180,9 186,30 192,17 198,25 204,11 210,29 216,16 222,24 228,13 234,21 240,20"
-                fill="none"
-                stroke="#c4c4c8"
-                strokeWidth="1.5"
-              />
-            </svg>
-          </div>
-          {["36%", "52%", "64%"].map((left) => (
-            <div
-              key={left}
-              style={{
-                position: "absolute",
-                left,
-                top: -9,
-                background: theme.accent,
-                color: "#fff",
-                font: `600 9px ${font.display}`,
-                padding: "2px 6px",
-                borderRadius: 4,
-              }}
-            >
-              T
-            </div>
-          ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.textMuted, marginTop: 12 }}>
-          <span style={{ background: theme.accent, color: "#fff", font: `600 9px ${font.display}`, padding: "2px 6px", borderRadius: 4 }}>T</span>
-          legendas posicionadas no tempo · arraste as bordas pra cortar início/fim
         </div>
       </div>
     </div>
   );
 }
 
-const fineBtn: React.CSSProperties = {
-  padding: "6px 13px",
-  borderRadius: 8,
-  background: theme.surface,
-  border: `1px solid ${theme.borderStrong}`,
-  fontSize: 13,
-  color: theme.textSecondary,
-  cursor: "pointer",
-};
+function TrimRow({
+  label,
+  value,
+  disabled,
+  onNudge,
+}: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  onNudge: (delta: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 13, color: theme.textTertiary, width: 50 }}>{label}</span>
+      <NudgeBtn disabled={disabled} onClick={() => onNudge(-5)}>−5s</NudgeBtn>
+      <NudgeBtn disabled={disabled} onClick={() => onNudge(-0.5)}>−0.5s</NudgeBtn>
+      <span style={{ minWidth: 64, textAlign: "center", font: `500 14px ${font.display}`, color: theme.textPrimary }}>
+        {value}
+      </span>
+      <NudgeBtn disabled={disabled} onClick={() => onNudge(0.5)}>+0.5s</NudgeBtn>
+      <NudgeBtn disabled={disabled} onClick={() => onNudge(5)}>+5s</NudgeBtn>
+    </div>
+  );
+}
 
-const styleChip: React.CSSProperties = {
-  padding: "5px 12px",
-  borderRadius: 20,
-  fontSize: 12,
-  background: theme.surface,
-  color: theme.textTertiary,
-  border: `1px solid ${theme.borderStrong}`,
-};
+function NudgeBtn({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: React.ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        padding: "6px 11px",
+        borderRadius: 8,
+        background: theme.surface,
+        border: `1px solid ${theme.borderStrong}`,
+        fontSize: 13,
+        color: theme.textSecondary,
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        fontFamily: font.body,
+      }}
+    >
+      {children}
+    </button>
+  );
+}

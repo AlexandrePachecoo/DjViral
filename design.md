@@ -123,5 +123,6 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
   empty state com CTA quando não há set processado.
 - Barra de progresso de upload (em vez de só texto de status).
 - Tornar o menu do header um drawer no mobile (hoje as abas rolam).
-- Edição e publicação reais (hoje a aba Edição e o modal de publicar abrem com o
-  corte real, mas trim/legendas/postagem ainda são visuais — sem backend).
+- ~~Edição real do corte~~ — feito (título + trim): a aba Edição renomeia e
+  ajusta início/fim, e o worker regenera o vídeo (`POST /recut`). Legendas e
+  publicação ainda são visuais (sem backend).

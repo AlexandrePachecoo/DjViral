@@ -46,8 +46,13 @@ create table if not exists cuts (
     fim         double precision,
     duracao     integer,
     score       double precision,
-    url         text
+    url         text,
+    status      text not null default 'ready'  -- ready | processing | error
 );
+
+-- Migração para bancos já existentes (cuts criado antes da coluna `status`).
+-- O re-corte de um clipe marca `processing` enquanto o worker regenera o vídeo.
+alter table cuts add column if not exists status text not null default 'ready';
 
 create index if not exists idx_sources_project on sources (project_id);
 create index if not exists idx_cuts_project on cuts (project_id);

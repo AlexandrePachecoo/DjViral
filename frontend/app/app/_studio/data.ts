@@ -6,14 +6,21 @@
 
 export type Platform = "TikTok" | "Reels" | "Shorts";
 
+export type CutStatus = "ready" | "processing" | "error";
+
 export type Cut = {
   id: string;
   title: string;
   score: number;
   dur: string;
   moment: string;
+  // Valores crus (segundos no set) usados pela edição de trim.
+  startSec: number;
+  endSec: number;
   // URL pública do clipe gerado pelo worker (player de vídeo real).
   url: string;
+  // Estado do re-corte: enquanto `processing`, o worker está regenerando o vídeo.
+  status?: CutStatus;
   // Não vêm do banco: gênero e cor de thumb são do protótipo. Opcionais pra que
   // os cortes reais possam omiti-los (o gênero some, o thumb usa fallback).
   genre?: string;

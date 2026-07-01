@@ -171,3 +171,5 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - duracao
 - score (potencial viral)
 - url
+- status (`ready | processing | error`) — `processing` enquanto o worker
+  regenera o vídeo num re-corte (`POST /recut`)

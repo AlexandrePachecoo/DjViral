@@ -184,9 +184,14 @@ export default function Studio() {
           <EditorView
             cut={editorCut}
             setName={setInfo?.name ?? ""}
+            projectId={selectedProjectId ?? ""}
             selectedCaptionId={selectedCaptionId}
             onSelectCaption={setSelectedCaptionId}
             onBack={() => setTab("gerador")}
+            onSaved={(updated) => {
+              setEditorCut(updated);
+              setCuts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+            }}
           />
         )}
 

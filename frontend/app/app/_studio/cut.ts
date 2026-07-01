@@ -2,7 +2,7 @@
 // views do estúdio consomem. Mantém as views presentacionais e desacopladas do
 // formato do backend.
 
-import type { Cut } from "./data";
+import type { Cut, CutStatus } from "./data";
 
 // Shape de um corte como devolvido por GET /api/projects/[id].
 export type ApiCut = {
@@ -13,6 +13,7 @@ export type ApiCut = {
   duracao: number | null;
   score: number | null;
   url: string | null;
+  status: string | null;
 };
 
 // Segundos → "h:mm:ss" (sets longos) ou "m:ss".
@@ -41,13 +42,22 @@ export function parseBpm(titulo: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
+const CUT_STATUSES: CutStatus[] = ["ready", "processing", "error"];
+
 export function toStudioCut(api: ApiCut): Cut {
+  const startSec = api.inicio ?? 0;
+  const endSec = api.fim ?? startSec;
   return {
     id: api.id,
     title: api.titulo?.trim() || "Corte sem título",
     score: toDisplayScore(api.score),
-    dur: formatTimecode(api.duracao ?? 0),
-    moment: formatTimecode(api.inicio ?? 0),
+    dur: formatTimecode(api.duracao ?? Math.max(0, endSec - startSec)),
+    moment: formatTimecode(startSec),
+    startSec,
+    endSec,
     url: api.url ?? "",
+    status: CUT_STATUSES.includes(api.status as CutStatus)
+      ? (api.status as CutStatus)
+      : "ready",
   };
 }
