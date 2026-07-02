@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     top_n: int = 30         # quantos clipes gerar no máximo (top picos)
     clip_duration: int = 60  # duração de cada clipe em segundos
     pre_roll: int = 5        # segundos antes do pico onde o corte começa
+    # Formato de saída dos clipes. Vertical 9:16 (1080x1920) é o padrão de
+    # TikTok/Reels; o clipper faz crop central do set horizontal para preencher
+    # a tela. Configurável via OUTPUT_WIDTH / OUTPUT_HEIGHT.
+    output_width: int = 1080
+    output_height: int = 1920
     # Jobs pesados (process/recut) simultâneos. 1 = fila serial; suba apenas
     # se o plano da Railway tiver memória de sobra (cada job usa ~centenas de
     # MB entre FFmpeg e análise, mais o vídeo em disco).

@@ -28,6 +28,14 @@ def cut(
     """
     ss = max(0.0, start_sec - pre_roll)
 
+    # Saída vertical 9:16 (TikTok/Reels): recorta a faixa central de altura cheia
+    # e largura proporcional, depois escala para a resolução alvo. O ``min(...)``
+    # evita um crop mais largo que o vídeo caso a fonte já seja vertical;
+    # ``setsar=1`` garante pixels quadrados. Filtrar já força re-encode, o que o
+    # código abaixo já faz (libx264/aac).
+    w, h = settings.output_width, settings.output_height
+    vf = f"crop='min(iw,ih*{w}/{h})':ih,scale={w}:{h},setsar=1"
+
     cmd = [
         "ffmpeg",
         "-y",                      # sobrescreve se já existir
@@ -35,6 +43,7 @@ def cut(
         "-i", input_file,
         "-t", str(duration),
         "-threads", str(settings.ffmpeg_threads),
+        "-vf", vf,
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-c:a", "aac",
