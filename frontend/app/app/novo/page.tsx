@@ -19,6 +19,12 @@ type Status = "idle" | "uploading" | "processing" | "done" | "error";
 
 type Mode = "file" | "youtube";
 
+// Feature flag: o download do YouTube no worker é bloqueado pelo bot-check em
+// IP de datacenter (Railway) sem cookies. Enquanto isso não é resolvido, a aba
+// "Link do YouTube" fica escondida — todo o código do fluxo (backend, rota,
+// validação) continua no lugar. Para reativar, basta trocar para `true`.
+const YOUTUBE_ENABLED = false;
+
 export default function NewSet() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -146,28 +152,31 @@ export default function NewSet() {
       </div>
       <h1>🎧 Novo set</h1>
       <p style={{ opacity: 0.7 }}>
-        Envie seu set — ou cole um link do YouTube — e receba os cortes mais
-        virais automaticamente.
+        {YOUTUBE_ENABLED
+          ? "Envie seu set — ou cole um link do YouTube — e receba os cortes mais virais automaticamente."
+          : "Envie seu set e receba os cortes mais virais automaticamente."}
       </p>
 
-      <div style={tabRow}>
-        <button
-          type="button"
-          onClick={() => setMode("file")}
-          disabled={busy}
-          style={mode === "file" ? tabActive : tabInactive}
-        >
-          Enviar arquivo
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("youtube")}
-          disabled={busy}
-          style={mode === "youtube" ? tabActive : tabInactive}
-        >
-          Link do YouTube
-        </button>
-      </div>
+      {YOUTUBE_ENABLED && (
+        <div style={tabRow}>
+          <button
+            type="button"
+            onClick={() => setMode("file")}
+            disabled={busy}
+            style={mode === "file" ? tabActive : tabInactive}
+          >
+            Enviar arquivo
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("youtube")}
+            disabled={busy}
+            style={mode === "youtube" ? tabActive : tabInactive}
+          >
+            Link do YouTube
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
         <input
