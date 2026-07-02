@@ -15,10 +15,12 @@ suficientes. A Vercel (`../frontend`) faz a orquestração e dispara este worker
 2. **Download** (`pipeline.py`) — busca a linha `source` do projeto, baixa o
    vídeo do bucket `sources` para um arquivo temporário.
 3. **Análise** (`analyzer.py`) — [Librosa](https://librosa.org) carrega o áudio
-   do mp4 e calcula dois sinais: **RMS** (energia/volume) e **onset strength**
-   (impacto dos beats). Eles são normalizados e combinados num *score de
-   viralidade*; `scipy.signal.find_peaks` encontra os picos e selecionamos os
-   `TOP_N` mais intensos.
+   do mp4 e calcula três sinais: **RMS** (energia/volume), **onset strength**
+   (impacto dos beats) e **contraste de energia pré/pós drop** (o quanto a
+   energia explode depois de um buildup). Eles são normalizados e combinados num
+   *score de viralidade*; `scipy.signal.find_peaks` encontra os picos e
+   selecionamos os `TOP_N` mais intensos. O **BPM** global do set também é
+   estimado e usado no título de cada corte.
 4. **Corte** (`clipper.py`) — para cada pico, o **FFmpeg** corta ~60s de vídeo
    (começando 5s antes do pico).
 5. **Storage** — cada clipe é enviado para o bucket `clips` e os metadados
@@ -69,7 +71,7 @@ curl -X POST http://localhost:8000/process \
 ### Testar só o núcleo de análise (sem Supabase)
 
 ```bash
-python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_n=5))"
+python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_n=30))"
 ```
 
 ## Deploy na Railway
@@ -82,9 +84,13 @@ python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_
 
 ## Limitações conscientes deste MVP
 
-- Sets de até 3h são carregados em memória pelo `librosa.load` (mono 22050 Hz,
-  ~1 GB). Streaming/processamento em blocos fica para depois.
-- `BackgroundTasks` roda no mesmo processo. Para escala real, migrar para fila
-  dedicada (Redis/BullMQ/Celery).
-- A heurística de score (RMS + onset) é simples. Refinamentos futuros: detecção
-  de BPM, contraste de energia pré/pós drop, etc.
+- A análise roda em streaming (FFmpeg extrai o áudio para WAV e o librosa lê
+  em blocos), então o pico de memória é constante (~100–150 MB) mesmo em sets
+  de 3h. O vídeo original e o WAV temporário ficam em **disco** durante o
+  processamento (alguns GB livres são necessários).
+- `BackgroundTasks` roda no mesmo processo, com no máximo
+  `MAX_CONCURRENT_JOBS` (default 1) jobs pesados simultâneos — os demais
+  esperam na fila. Para escala real, migrar para fila dedicada
+  (Redis/BullMQ/Celery).
+- A heurística de score (RMS + onset + contraste) é simples. Refinamentos
+  futuros: análise de vocais, estrutura da música, etc.

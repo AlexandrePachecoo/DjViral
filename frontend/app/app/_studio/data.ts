@@ -1,10 +1,12 @@
-// Mock data + types for the studio prototype.
-// The design prototype has no real fetch; in a real implementation these come
-// from the analysis job (cuts), the editor (trims/captions) and the publish
-// integrations (status/platforms). Kept here so views stay presentational.
+// Tipos do estúdio + dados que ainda são mock.
+//
+// Os cortes e o set agora vêm da API (ver `cut.ts` e `page.tsx`). O que continua
+// mock são as legendas do editor (CAPTIONS) e as descrições por plataforma
+// (COMPOSE) — features de edição/publicação ainda não implementadas no backend.
 
 export type Platform = "TikTok" | "Reels" | "Shorts";
-export type StatusKind = "post" | "prog" | "draft";
+
+export type CutStatus = "ready" | "processing" | "error";
 
 export type Cut = {
   id: string;
@@ -12,15 +14,24 @@ export type Cut = {
   score: number;
   dur: string;
   moment: string;
-  genre: string;
-  thumb: string;
+  // Valores crus (segundos no set) usados pela edição de trim.
+  startSec: number;
+  endSec: number;
+  // URL pública do clipe gerado pelo worker (player de vídeo real).
+  url: string;
+  // Estado do re-corte: enquanto `processing`, o worker está regenerando o vídeo.
+  status?: CutStatus;
+  // Não vêm do banco: gênero e cor de thumb são do protótipo. Opcionais pra que
+  // os cortes reais possam omiti-los (o gênero some, o thumb usa fallback).
+  genre?: string;
+  thumb?: string;
 };
 
-export type StatusInfo = {
-  label: string;
-  kind: StatusKind;
-  date: string;
-  plats: string[];
+// Resumo do set ativo exibido no card do Gerador (derivado do projeto + cortes).
+export type SetInfo = {
+  name: string;
+  cutsCount: number;
+  bpm: number | null;
 };
 
 export type Caption = {
@@ -33,32 +44,6 @@ export type Caption = {
 export type Compose = {
   desc: string;
   tags: string[];
-};
-
-export const SET_INFO = {
-  name: "Sunset Rooftop Set",
-  duration: "1h 42m",
-  genre: "house",
-  bpm: "120 BPM",
-  cutsCount: 12,
-} as const;
-
-export const CUTS: Cut[] = [
-  { id: "c1", title: "Drop principal", score: 92, dur: "0:38", moment: "1:12:40", genre: "house", thumb: "#f1eef9" },
-  { id: "c2", title: "Vocal break", score: 88, dur: "0:45", moment: "0:54:10", genre: "vocal", thumb: "#eef3f6" },
-  { id: "c3", title: "Build-up", score: 81, dur: "0:31", moment: "1:38:05", genre: "drop", thumb: "#f6eef2" },
-  { id: "c4", title: "Transição", score: 74, dur: "0:52", moment: "0:22:30", genre: "tech house", thumb: "#f1f1f3" },
-  { id: "c5", title: "Sirene + clap", score: 79, dur: "0:28", moment: "1:50:12", genre: "rave", thumb: "#f6f2ea" },
-  { id: "c6", title: "Outro melódico", score: 71, dur: "0:40", moment: "1:58:44", genre: "melodic", thumb: "#eef5f1" },
-];
-
-export const STATUS_BY_ID: Record<string, StatusInfo> = {
-  c1: { label: "✓ Postado", kind: "post", date: "27/06", plats: ["TT", "IG"] },
-  c2: { label: "⏱ 29/06 18h", kind: "prog", date: "29/06", plats: ["YT"] },
-  c3: { label: "Rascunho", kind: "draft", date: "26/06", plats: ["—"] },
-  c4: { label: "✓ Postado", kind: "post", date: "24/06", plats: ["TT", "IG", "YT"] },
-  c5: { label: "⏱ 30/06 20h", kind: "prog", date: "30/06", plats: ["IG"] },
-  c6: { label: "Rascunho", kind: "draft", date: "25/06", plats: ["—"] },
 };
 
 export const CAPTIONS: Caption[] = [

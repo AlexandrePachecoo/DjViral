@@ -16,9 +16,13 @@ class Settings(BaseSettings):
     worker_secret: str = ""
 
     # Parâmetros de processamento
-    top_n: int = 5          # quantos clipes gerar (top picos)
+    top_n: int = 30         # quantos clipes gerar no máximo (top picos)
     clip_duration: int = 60  # duração de cada clipe em segundos
     pre_roll: int = 5        # segundos antes do pico onde o corte começa
+    # Jobs pesados (process/recut) simultâneos. 1 = fila serial; suba apenas
+    # se o plano da Railway tiver memória de sobra (cada job usa ~centenas de
+    # MB entre FFmpeg e análise, mais o vídeo em disco).
+    max_concurrent_jobs: int = 1
 
 
 settings = Settings()
