@@ -3,6 +3,7 @@
 import { theme, font, scoreColor } from "./theme";
 import { Segmented } from "./Segmented";
 import { type Cut, type SetInfo } from "./data";
+import { downloadUrl } from "./cut";
 import type { GeradorView, ProjectSummary } from "./types";
 
 type Props = {
@@ -247,6 +248,9 @@ function GradeView({ cuts, showScore, onEdit, onPost, onProgram }: CardActions) 
               <SmallGhost onClick={() => onEdit(c)}>Editar</SmallGhost>
               <SmallGhost onClick={() => onProgram(c)}>Agendar</SmallGhost>
             </div>
+            <div style={{ marginTop: 7 }}>
+              <SmallGhost href={downloadUrl(c)}>Baixar</SmallGhost>
+            </div>
           </div>
         </div>
       ))}
@@ -254,21 +258,38 @@ function GradeView({ cuts, showScore, onEdit, onPost, onProgram }: CardActions) 
   );
 }
 
-function SmallGhost({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+function SmallGhost({
+  children,
+  onClick,
+  href,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  href?: string;
+}) {
+  const style: React.CSSProperties = {
+    display: "block",
+    textAlign: "center",
+    padding: 8,
+    borderRadius: 8,
+    cursor: "pointer",
+    fontSize: 12,
+    color: theme.textSecondary,
+    background: theme.surface,
+    border: `1px solid ${theme.borderStrong}`,
+    textDecoration: "none",
+  };
+  // Download precisa de uma âncora real (o `?download=` do Supabase força o
+  // attachment); os demais botões usam onClick.
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener" style={style}>
+        {children}
+      </a>
+    );
+  }
   return (
-    <div
-      onClick={onClick}
-      style={{
-        textAlign: "center",
-        padding: 8,
-        borderRadius: 8,
-        cursor: "pointer",
-        fontSize: 12,
-        color: theme.textSecondary,
-        background: theme.surface,
-        border: `1px solid ${theme.borderStrong}`,
-      }}
-    >
+    <div onClick={onClick} style={style}>
       {children}
     </div>
   );
@@ -336,6 +357,7 @@ function ListaView({ cuts, showScore, onEdit, onPost, onProgram }: CardActions) 
               Postar
             </div>
             <SmallGhostInline onClick={() => onEdit(c)}>Editar</SmallGhostInline>
+            <SmallGhostInline href={downloadUrl(c)}>Baixar</SmallGhostInline>
             <SmallGhostInline onClick={() => onProgram(c)}>⏱</SmallGhostInline>
           </div>
         </div>
@@ -344,20 +366,35 @@ function ListaView({ cuts, showScore, onEdit, onPost, onProgram }: CardActions) 
   );
 }
 
-function SmallGhostInline({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+function SmallGhostInline({
+  children,
+  onClick,
+  href,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  href?: string;
+}) {
+  const style: React.CSSProperties = {
+    display: "inline-block",
+    padding: "8px 13px",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontSize: 13,
+    color: theme.textSecondary,
+    background: theme.surface,
+    border: `1px solid ${theme.borderStrong}`,
+    textDecoration: "none",
+  };
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener" style={style}>
+        {children}
+      </a>
+    );
+  }
   return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "8px 13px",
-        borderRadius: 8,
-        cursor: "pointer",
-        fontSize: 13,
-        color: theme.textSecondary,
-        background: theme.surface,
-        border: `1px solid ${theme.borderStrong}`,
-      }}
-    >
+    <div onClick={onClick} style={style}>
       {children}
     </div>
   );

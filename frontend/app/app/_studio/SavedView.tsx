@@ -3,6 +3,7 @@
 import { theme, font, scoreColor, statusChip } from "./theme";
 import { Segmented } from "./Segmented";
 import { type Cut } from "./data";
+import { downloadUrl } from "./cut";
 import type { Filter, SalvosView } from "./types";
 
 type Props = {
@@ -34,6 +35,31 @@ function draftStyle(): React.CSSProperties {
     color: c.text,
     border: `1px solid ${c.border}`,
   };
+}
+
+// Botão de download (âncora real; o `?download=` do Supabase força o attachment).
+function DownloadLink({ cut, block }: { cut: Cut; block?: boolean }) {
+  return (
+    <a
+      href={downloadUrl(cut)}
+      target="_blank"
+      rel="noopener"
+      style={{
+        display: block ? "block" : "inline-block",
+        textAlign: "center",
+        padding: block ? 9 : "7px 13px",
+        borderRadius: 8,
+        fontSize: 13,
+        color: theme.textSecondary,
+        background: theme.surface,
+        border: `1px solid ${theme.borderStrong}`,
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      Baixar
+    </a>
+  );
 }
 
 export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: Props) {
@@ -139,9 +165,10 @@ export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: P
               </div>
               <div style={{ padding: 14 }}>
                 <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
-                <div style={{ fontSize: 12, color: theme.textMuted }}>
+                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
                   {cut.dur} · no set · {cut.moment}
                 </div>
+                <DownloadLink cut={cut} block />
               </div>
             </div>
           ))}
@@ -152,7 +179,7 @@ export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: P
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr",
+                gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr .9fr",
                 gap: 12,
                 padding: "13px 18px",
                 fontSize: 12,
@@ -165,13 +192,14 @@ export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: P
               <span>Status</span>
               <span>Duração</span>
               <span>Momento</span>
+              <span>Ações</span>
             </div>
             {rows.map((cut) => (
               <div
                 key={cut.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr",
+                  gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr .9fr",
                   gap: 12,
                   padding: "13px 18px",
                   alignItems: "center",
@@ -192,6 +220,9 @@ export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: P
                 <span style={{ ...draftStyle(), justifySelf: "start" }}>Rascunho</span>
                 <span style={{ fontSize: 13, color: theme.textTertiary }}>{cut.dur}</span>
                 <span style={{ fontSize: 13, color: theme.textTertiary }}>{cut.moment}</span>
+                <span style={{ justifySelf: "start" }}>
+                  <DownloadLink cut={cut} />
+                </span>
               </div>
             ))}
           </div>
