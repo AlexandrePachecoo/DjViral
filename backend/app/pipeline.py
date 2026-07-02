@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 
-from . import analyzer, clipper
+from . import analyzer, clipper, youtube
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
 
@@ -18,27 +18,35 @@ logger = logging.getLogger("djviral.pipeline")
 _job_slots = threading.BoundedSemaphore(settings.max_concurrent_jobs)
 
 
-def _source_path(client, project_id: str) -> str:
-    """Caminho no Storage do vídeo original do projeto (linha ``sources``)."""
+def _fetch_source(client, project_id: str) -> str:
+    """Baixa o vídeo original do projeto e retorna o caminho local.
+
+    A linha ``sources`` diz a origem: ``source_type='youtube'`` guarda a URL
+    do vídeo (baixada via yt-dlp); caso contrário ``url`` é o caminho no
+    Storage do Supabase.
+    """
     source = (
         client.table("sources")
-        .select("url")
+        .select("url, source_type")
         .eq("project_id", project_id)
         .limit(1)
         .execute()
     )
     if not source.data or not source.data[0].get("url"):
         raise RuntimeError(
-            f"Nenhum source com caminho de Storage para o projeto {project_id}"
+            f"Nenhum source com origem de vídeo para o projeto {project_id}"
         )
-    return source.data[0]["url"]
+    row = source.data[0]
+    if row.get("source_type") == "youtube":
+        return youtube.download_youtube(row["url"], settings.max_source_duration)
+    return download_source(row["url"])
 
 
 def process_project(project_id: str) -> None:
     """Pipeline completo, rodado em background.
 
-    Busca o vídeo original no Supabase Storage (a partir da linha ``source`` do
-    projeto), baixa-o, analisa o áudio, corta os top picos em clipes de vídeo,
+    Baixa o vídeo original (Supabase Storage ou YouTube, conforme a linha
+    ``source`` do projeto), analisa o áudio, corta os top picos em clipes,
     sobe cada clipe no Storage e grava os registros ``cuts``. Em caso de erro,
     marca o projeto como ``error``. Sempre remove o arquivo temporário ao final.
     """
@@ -50,7 +58,7 @@ def _process_project(project_id: str) -> None:
     client = get_client()
     video_path: str | None = None
     try:
-        video_path = download_source(_source_path(client, project_id))
+        video_path = _fetch_source(client, project_id)
         logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
 
         peaks, bpm = analyzer.analyze(video_path, top_n=settings.top_n)
@@ -125,7 +133,7 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
     clip_path: str | None = None
     duration = max(1, round(fim - inicio))
     try:
-        video_path = download_source(_source_path(client, project_id))
+        video_path = _fetch_source(client, project_id)
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
             clip_path = tmp.name

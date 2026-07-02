@@ -49,6 +49,17 @@ Navegador (Vercel UI)
   5. Navegador faz polling em GET /api/projects/{id} até status=done
 ```
 
+**Origem YouTube:** além do upload de arquivo, o usuário pode colar apenas um
+link do YouTube (aba "Link do YouTube" em `/app/novo`). Nesse caso
+`POST /api/projects` recebe `{name, youtube_url}` (validado em
+`frontend/lib/youtube.ts`; aceita watch/youtu.be/shorts/music.youtube), grava o
+link canônico em `sources.url` com `source_type='youtube'` e **pula** o upload
+(passos 2). No worker, `pipeline._fetch_source` vê o `source_type` e baixa o
+vídeo com **yt-dlp** (`backend/app/youtube.py`: mp4 até 1080p, duração checada
+contra `MAX_SOURCE_DURATION`, default 3h, antes do download). O restante do
+pipeline (análise, cortes, re-corte) é idêntico; o re-corte re-baixa do
+YouTube quando necessário.
+
 ### Pipeline de análise (worker)
 
 1. `analyzer.py` — FFmpeg extrai o áudio para um WAV temporário (mono
@@ -160,7 +171,8 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - name
 - duracao
 - tamanho
-- url
+- url — caminho no Storage (`upload`) ou link do YouTube (`youtube`)
+- source_type (`upload | youtube`)
 - status_processo
 
 ### Transcript
