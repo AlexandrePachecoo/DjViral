@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # se o plano da Railway tiver memória de sobra (cada job usa ~centenas de
     # MB entre FFmpeg e análise, mais o vídeo em disco).
     max_concurrent_jobs: int = 1
+    # Threads que o FFmpeg (x264) usa por corte. O container enxerga todos os
+    # núcleos do host (~34 na Railway) e o x264 abre uma thread por núcleo,
+    # segurando buffers de frame 1080p em cada uma: ~900 MB por corte, o que
+    # estoura a memória. 2 threads derrubam isso para ~300 MB sem perda de
+    # velocidade real (a CPU da VM é limitada de qualquer forma).
+    ffmpeg_threads: int = 2
 
 
 settings = Settings()
