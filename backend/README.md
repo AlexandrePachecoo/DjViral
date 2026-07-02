@@ -88,6 +88,10 @@ python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_
   em blocos), então o pico de memória é constante (~100–150 MB) mesmo em sets
   de 3h. O vídeo original e o WAV temporário ficam em **disco** durante o
   processamento (alguns GB livres são necessários).
+- Cada corte re-encoda com FFmpeg limitado a `FFMPEG_THREADS` (default 2). Sem
+  esse limite o x264 abre uma thread por núcleo do host (~34 na Railway) e cada
+  uma segura buffers de frame 1080p → ~900 MB por corte; com 2 threads o pico
+  fica em ~300 MB, sem custo real de velocidade.
 - `BackgroundTasks` roda no mesmo processo, com no máximo
   `MAX_CONCURRENT_JOBS` (default 1) jobs pesados simultâneos — os demais
   esperam na fila. Para escala real, migrar para fila dedicada

@@ -42,6 +42,17 @@ export function parseBpm(titulo: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
+// Monta a URL de download do clipe. Como `cut.url` é uma URL pública do Supabase
+// (outra origem), o atributo HTML `download` seria ignorado pelo browser; o
+// Supabase Storage aceita o query param `?download=<nome>`, que devolve
+// `Content-Disposition: attachment` e força o download com um nome amigável
+// derivado do título do corte.
+export function downloadUrl(cut: Cut): string {
+  const name = (cut.title || "corte").replace(/[^\w.-]+/g, "_").slice(0, 60);
+  const sep = cut.url.includes("?") ? "&" : "?";
+  return `${cut.url}${sep}download=${encodeURIComponent(name)}.mp4`;
+}
+
 const CUT_STATUSES: CutStatus[] = ["ready", "processing", "error"];
 
 export function toStudioCut(api: ApiCut): Cut {
