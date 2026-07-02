@@ -34,7 +34,8 @@ create table if not exists sources (
     name            text,
     duracao         double precision,
     tamanho         bigint,
-    url             text,
+    url             text,        -- caminho no Storage (upload) ou URL do YouTube
+    source_type     text not null default 'upload', -- upload | youtube
     status_processo text default 'processing'
 );
 
@@ -53,6 +54,11 @@ create table if not exists cuts (
 -- Migração para bancos já existentes (cuts criado antes da coluna `status`).
 -- O re-corte de um clipe marca `processing` enquanto o worker regenera o vídeo.
 alter table cuts add column if not exists status text not null default 'ready';
+
+-- Migração: origem do vídeo do source. 'upload' = arquivo no bucket privado
+-- `sources` (url = caminho no Storage); 'youtube' = url é o link do vídeo,
+-- baixado pelo worker com yt-dlp na hora de processar.
+alter table sources add column if not exists source_type text not null default 'upload';
 
 create index if not exists idx_sources_project on sources (project_id);
 create index if not exists idx_cuts_project on cuts (project_id);

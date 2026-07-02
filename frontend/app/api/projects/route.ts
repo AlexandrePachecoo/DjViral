@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { canonicalYoutubeUrl, extractYoutubeId } from "@/lib/youtube";
 
 // Lista os projetos do usuário autenticado (mais recentes primeiro). O estúdio
 // usa isso pra escolher o set ativo e popular o seletor de sets.
@@ -22,18 +23,30 @@ export async function GET() {
   return NextResponse.json({ projects: projects ?? [] });
 }
 
-// Cria um projeto + source e devolve uma signed upload URL para o navegador
-// enviar o vídeo DIRETO ao Supabase Storage (sem passar pela Vercel).
+// Cria um projeto + source. Duas origens de vídeo:
+//   - upload (`filename`): devolve uma signed upload URL para o navegador
+//     enviar o vídeo DIRETO ao Supabase Storage (sem passar pela Vercel);
+//   - YouTube (`youtube_url`): guarda o link no source e o worker baixa o
+//     vídeo com yt-dlp na hora de processar (sem upload).
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: "não autenticado" }, { status: 401 });
   }
 
-  const { name, filename } = await req.json();
-  if (!name || !filename) {
+  const { name, filename, youtube_url } = await req.json();
+  if (!name || (!filename && !youtube_url)) {
     return NextResponse.json(
-      { error: "name e filename são obrigatórios" },
+      { error: "name e (filename ou youtube_url) são obrigatórios" },
+      { status: 400 }
+    );
+  }
+
+  // Valida o link antes de criar qualquer linha no banco.
+  const youtubeId = youtube_url ? extractYoutubeId(youtube_url) : null;
+  if (youtube_url && !youtubeId) {
+    return NextResponse.json(
+      { error: "URL do YouTube inválida" },
       { status: 400 }
     );
   }
@@ -51,6 +64,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Origem YouTube: só registra o link; o download acontece no worker.
+  if (youtubeId) {
+    const url = canonicalYoutubeUrl(youtubeId);
+    const { error: srcErr } = await supabaseAdmin.from("sources").insert({
+      project_id: project.id,
+      name: url,
+      url,
+      source_type: "youtube",
+      status_processo: "ready",
+    });
+    if (srcErr) {
+      return NextResponse.json({ error: srcErr.message }, { status: 500 });
+    }
+    return NextResponse.json({ project_id: project.id, source_type: "youtube" });
+  }
+
   // 2. Caminho do vídeo no Storage e registro do source
   const safeName = filename.replace(/[^\w.\-]/g, "_");
   const storagePath = `${project.id}/${safeName}`;
@@ -59,6 +88,7 @@ export async function POST(req: NextRequest) {
     project_id: project.id,
     name: filename,
     url: storagePath,
+    source_type: "upload",
     status_processo: "uploading",
   });
   if (srcErr) {

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     worker_secret: str = ""
 
     # Parâmetros de processamento
+    # Duração máxima do vídeo original (3h). Fontes do YouTube são checadas
+    # pelos metadados antes do download.
+    max_source_duration: int = 10800
     top_n: int = 30         # quantos clipes gerar no máximo (top picos)
     clip_duration: int = 60  # duração de cada clipe em segundos
     pre_roll: int = 5        # segundos antes do pico onde o corte começa
