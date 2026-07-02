@@ -9,3 +9,4 @@ soundfile==0.12.1
 ffmpeg-python==0.2.0
 supabase==2.5.1
 httpx>=0.24,<0.28
+yt-dlp>=2026.1.31

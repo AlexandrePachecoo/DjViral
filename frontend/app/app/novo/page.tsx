@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { extractYoutubeId } from "@/lib/youtube";
 
 type SessionUser = { id: string; name: string; email: string; plan: string };
 
@@ -16,11 +17,15 @@ type Cut = {
 
 type Status = "idle" | "uploading" | "processing" | "done" | "error";
 
+type Mode = "file" | "youtube";
+
 export default function NewSet() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [name, setName] = useState("");
+  const [mode, setMode] = useState<Mode>("file");
   const [file, setFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -64,38 +69,51 @@ export default function NewSet() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file || !name) return;
+    if (!name) return;
+    if (mode === "file" && !file) return;
+    if (mode === "youtube" && !extractYoutubeId(youtubeUrl)) return;
     setCuts([]);
 
     try {
-      // 1. Cria projeto + signed upload URL
+      // 1. Cria projeto (+ signed upload URL no modo arquivo)
       setStatus("uploading");
       setMessage("Criando projeto...");
+      const body =
+        mode === "youtube"
+          ? { name, youtube_url: youtubeUrl }
+          : { name, filename: file!.name };
       const createRes = await fetch("/api/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, filename: file.name }),
+        body: JSON.stringify(body),
       });
       if (!createRes.ok) throw new Error((await createRes.json()).error);
       const { project_id, signedUrl } = await createRes.json();
       setProjectId(project_id);
 
-      // 2. Upload direto pro Supabase Storage (não passa pela Vercel)
-      setMessage("Enviando vídeo...");
-      const upRes = await fetch(signedUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "video/mp4" },
-        body: file,
-      });
-      if (!upRes.ok) {
-        const detail = await upRes.text().catch(() => "");
-        throw new Error(
-          `Falha no upload do vídeo (HTTP ${upRes.status})${detail ? `: ${detail}` : ""}`
-        );
+      // 2. Upload direto pro Supabase Storage (não passa pela Vercel).
+      //    No modo YouTube não há upload: o worker baixa o vídeo do link.
+      if (mode === "file") {
+        setMessage("Enviando vídeo...");
+        const upRes = await fetch(signedUrl, {
+          method: "PUT",
+          headers: { "content-type": file!.type || "video/mp4" },
+          body: file,
+        });
+        if (!upRes.ok) {
+          const detail = await upRes.text().catch(() => "");
+          throw new Error(
+            `Falha no upload do vídeo (HTTP ${upRes.status})${detail ? `: ${detail}` : ""}`
+          );
+        }
       }
 
       // 3. Dispara o worker
-      setMessage("Analisando o áudio e gerando cortes...");
+      setMessage(
+        mode === "youtube"
+          ? "Baixando do YouTube e gerando cortes..."
+          : "Analisando o áudio e gerando cortes..."
+      );
       setStatus("processing");
       const procRes = await fetch(`/api/projects/${project_id}/process`, {
         method: "POST",
@@ -128,10 +146,30 @@ export default function NewSet() {
       </div>
       <h1>🎧 Novo set</h1>
       <p style={{ opacity: 0.7 }}>
-        Envie seu set e receba os cortes mais virais automaticamente.
+        Envie seu set — ou cole um link do YouTube — e receba os cortes mais
+        virais automaticamente.
       </p>
 
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 24 }}>
+      <div style={tabRow}>
+        <button
+          type="button"
+          onClick={() => setMode("file")}
+          disabled={busy}
+          style={mode === "file" ? tabActive : tabInactive}
+        >
+          Enviar arquivo
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("youtube")}
+          disabled={busy}
+          style={mode === "youtube" ? tabActive : tabInactive}
+        >
+          Link do YouTube
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
         <input
           placeholder="Nome do set"
           value={name}
@@ -139,14 +177,33 @@ export default function NewSet() {
           disabled={busy}
           style={inputStyle}
         />
-        <input
-          type="file"
-          accept="video/mp4,video/*"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          disabled={busy}
-          style={inputStyle}
-        />
-        <button type="submit" disabled={busy || !file || !name} style={buttonStyle}>
+        {mode === "file" ? (
+          <input
+            type="file"
+            accept="video/mp4,video/*"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            disabled={busy}
+            style={inputStyle}
+          />
+        ) : (
+          <input
+            type="url"
+            placeholder="Cole o link do YouTube (watch, youtu.be ou shorts)"
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            disabled={busy}
+            style={inputStyle}
+          />
+        )}
+        <button
+          type="submit"
+          disabled={
+            busy ||
+            !name ||
+            (mode === "file" ? !file : !extractYoutubeId(youtubeUrl))
+          }
+          style={buttonStyle}
+        >
           {busy ? "Processando..." : "Gerar cortes"}
         </button>
       </form>
@@ -205,6 +262,36 @@ const logoutButton: React.CSSProperties = {
   color: "#e9e9f0",
   cursor: "pointer",
   fontSize: 14,
+};
+
+const tabRow: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  marginTop: 24,
+};
+
+const tabBase: React.CSSProperties = {
+  flex: 1,
+  padding: "10px 12px",
+  borderRadius: 8,
+  fontSize: 14,
+  fontWeight: 600,
+  cursor: "pointer",
+  minHeight: 44,
+};
+
+const tabActive: React.CSSProperties = {
+  ...tabBase,
+  border: "1px solid #7c5cff",
+  background: "rgba(124, 92, 255, 0.15)",
+  color: "#e9e9f0",
+};
+
+const tabInactive: React.CSSProperties = {
+  ...tabBase,
+  border: "1px solid #2a2a35",
+  background: "transparent",
+  color: "#9a9ab0",
 };
 
 const inputStyle: React.CSSProperties = {
