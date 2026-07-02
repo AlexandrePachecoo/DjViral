@@ -15,4 +15,7 @@ COPY app ./app
 
 # Railway injeta $PORT. Default 8000 para rodar local.
 ENV PORT=8000
+# Limita as arenas do malloc da glibc: threads de background + numpy tendem a
+# fragmentar a heap e inflar o RSS do container sem isso.
+ENV MALLOC_ARENA_MAX=2
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

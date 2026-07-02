@@ -51,12 +51,20 @@ Navegador (Vercel UI)
 
 ### Pipeline de análise (worker)
 
-1. `analyzer.py` — librosa carrega o áudio do mp4 e calcula **RMS** (energia) +
-   **onset strength** (impacto dos beats); normaliza e combina num *score de
-   viralidade*; `scipy.signal.find_peaks` seleciona os `TOP_N` picos.
+1. `analyzer.py` — FFmpeg extrai o áudio para um WAV temporário (mono
+   22050 Hz) e o librosa lê em **blocos** (`librosa.stream`): calcula **RMS**
+   (energia), **onset strength** (fluxo espectral, impacto dos beats) e
+   contraste de energia pré/pós drop; normaliza e combina num *score de
+   viralidade*; `scipy.signal.find_peaks` seleciona os `TOP_N` picos. O BPM é
+   estimado pela mediana de 3 janelas curtas (o tempograma do set inteiro
+   custaria GB de RAM). Pico de memória constante (~100–150 MB) independente
+   da duração do set.
 2. `clipper.py` — FFmpeg corta ~60s de vídeo em torno de cada pico (re-encode
    para corte preciso; seek com clamp em 0).
-3. `pipeline.py` — orquestra download → analyze → cut → upload → persiste `cuts`.
+3. `pipeline.py` — orquestra download → analyze → cut → upload → persiste
+   `cuts`. O download do vídeo é em **streaming** (chunks para disco, nunca o
+   arquivo inteiro em RAM) e um semáforo limita jobs pesados simultâneos
+   (`MAX_CONCURRENT_JOBS`, default 1).
 
 ### Frontend / UI (`frontend/app/`)
 
