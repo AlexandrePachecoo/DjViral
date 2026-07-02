@@ -2,6 +2,7 @@
 import logging
 import os
 import tempfile
+import threading
 import time
 
 from . import analyzer, clipper
@@ -9,6 +10,12 @@ from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
 
 logger = logging.getLogger("djviral.pipeline")
+
+# Limita quantos jobs pesados (download de GB + análise + FFmpeg) rodam ao
+# mesmo tempo. Sem isso, dois POST /process simultâneos dobram o pico de
+# memória e derrubam o container na Railway. Jobs excedentes ficam na fila
+# (bloqueiam a thread de background até chegar a vez).
+_job_slots = threading.BoundedSemaphore(settings.max_concurrent_jobs)
 
 
 def _source_path(client, project_id: str) -> str:
@@ -35,6 +42,11 @@ def process_project(project_id: str) -> None:
     sobe cada clipe no Storage e grava os registros ``cuts``. Em caso de erro,
     marca o projeto como ``error``. Sempre remove o arquivo temporário ao final.
     """
+    with _job_slots:
+        _process_project(project_id)
+
+
+def _process_project(project_id: str) -> None:
     client = get_client()
     video_path: str | None = None
     try:
@@ -103,6 +115,11 @@ def recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
     O início aqui é absoluto (segundos no set), então usamos ``pre_roll=0`` — o
     usuário já escolheu exatamente onde o corte começa.
     """
+    with _job_slots:
+        _recut_cut(project_id, cut_id, inicio, fim)
+
+
+def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
     client = get_client()
     video_path: str | None = None
     clip_path: str | None = None

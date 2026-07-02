@@ -5,5 +5,7 @@ pydantic-settings==2.3.4
 librosa==0.10.2.post1
 numpy==1.26.4
 scipy==1.13.1
+soundfile==0.12.1
 ffmpeg-python==0.2.0
 supabase==2.5.1
+httpx>=0.24,<0.28

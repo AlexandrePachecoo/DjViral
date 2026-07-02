@@ -84,9 +84,13 @@ python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_
 
 ## Limitações conscientes deste MVP
 
-- Sets de até 3h são carregados em memória pelo `librosa.load` (mono 22050 Hz,
-  ~1 GB). Streaming/processamento em blocos fica para depois.
-- `BackgroundTasks` roda no mesmo processo. Para escala real, migrar para fila
-  dedicada (Redis/BullMQ/Celery).
-- A heurística de score (RMS + onset) é simples. Refinamentos futuros: detecção
-  de BPM, contraste de energia pré/pós drop, etc.
+- A análise roda em streaming (FFmpeg extrai o áudio para WAV e o librosa lê
+  em blocos), então o pico de memória é constante (~100–150 MB) mesmo em sets
+  de 3h. O vídeo original e o WAV temporário ficam em **disco** durante o
+  processamento (alguns GB livres são necessários).
+- `BackgroundTasks` roda no mesmo processo, com no máximo
+  `MAX_CONCURRENT_JOBS` (default 1) jobs pesados simultâneos — os demais
+  esperam na fila. Para escala real, migrar para fila dedicada
+  (Redis/BullMQ/Celery).
+- A heurística de score (RMS + onset + contraste) é simples. Refinamentos
+  futuros: análise de vocais, estrutura da música, etc.
