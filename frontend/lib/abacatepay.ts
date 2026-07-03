@@ -100,6 +100,13 @@ async function ensureProduct(plan: PlanDef): Promise<string> {
 
 // Cria um checkout de assinatura (PIX ou cartão com recorrência mensal) e
 // retorna a URL da página de pagamento + o id do checkout (bill_...).
+//
+// PIX recorrente ("PIX Automático") é um recurso opt-in da AbacatePay — nem
+// toda loja tem habilitado (peça em Configurações → Meios de pagamento ou
+// pelo suporte deles). Enquanto não estiver, /subscriptions/create rejeita
+// `methods: ["PIX", "CARD"]` com "PIX Automático is not available for this
+// store". Tentamos com os dois primeiro e, só nesse erro específico, caímos
+// para CARD (suportado por qualquer loja) em vez de quebrar o checkout.
 export async function createSubscriptionCheckout(opts: {
   planId: "pro" | "premium";
   externalId: string; // nosso id da assinatura (subscriptions.external_id)
@@ -110,21 +117,32 @@ export async function createSubscriptionCheckout(opts: {
   const plan = PLANS[opts.planId];
   const productId = await ensureProduct(plan);
 
-  const billing = await abacateFetch<Billing>("/subscriptions/create", {
-    method: "POST",
-    body: {
-      items: [{ id: productId, quantity: 1 }],
-      methods: ["PIX", "CARD"],
-      externalId: opts.externalId,
-      returnUrl: `${opts.appUrl}/app?billing=cancelled`,
-      completionUrl: `${opts.appUrl}/app?billing=success`,
-      metadata: {
-        user_id: opts.userId,
-        user_email: opts.userEmail,
-        plan: plan.id,
-      },
+  const body = {
+    items: [{ id: productId, quantity: 1 }],
+    externalId: opts.externalId,
+    returnUrl: `${opts.appUrl}/app?billing=cancelled`,
+    completionUrl: `${opts.appUrl}/app?billing=success`,
+    metadata: {
+      user_id: opts.userId,
+      user_email: opts.userEmail,
+      plan: plan.id,
     },
-  });
+  };
+
+  let billing: Billing;
+  try {
+    billing = await abacateFetch<Billing>("/subscriptions/create", {
+      method: "POST",
+      body: { ...body, methods: ["PIX", "CARD"] },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    if (!message.includes("PIX Automático")) throw err;
+    billing = await abacateFetch<Billing>("/subscriptions/create", {
+      method: "POST",
+      body: { ...body, methods: ["CARD"] },
+    });
+  }
 
   return { checkoutId: billing.id, url: billing.url };
 }
