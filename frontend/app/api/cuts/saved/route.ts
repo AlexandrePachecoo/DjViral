@@ -11,13 +11,37 @@ export async function GET() {
   }
 
   // Projetos do usuário (mais recentes primeiro) → mantém a ordem das pastas.
-  const { data: projects, error: projErr } = await supabaseAdmin
+  // As colunas de compartilhamento (`share_token`/`share_message`) são de uma
+  // migração posterior; se o banco ainda não a aplicou, o PostgREST devolve
+  // `42703` (coluna inexistente). Nesse caso caímos para o select sem elas em
+  // vez de derrubar toda a aba "Cortes salvos" com um 500.
+  let projects: {
+    id: string;
+    name: string;
+    share_token?: string | null;
+    share_message?: string | null;
+  }[] | null = null;
+
+  const withShare = await supabaseAdmin
     .from("projects")
     .select("id, name, share_token, share_message")
     .eq("user_id", user.id)
     .order("date_create", { ascending: false });
-  if (projErr) {
-    return NextResponse.json({ error: projErr.message }, { status: 500 });
+
+  if (withShare.error?.code === "42703") {
+    const base = await supabaseAdmin
+      .from("projects")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .order("date_create", { ascending: false });
+    if (base.error) {
+      return NextResponse.json({ error: base.error.message }, { status: 500 });
+    }
+    projects = base.data;
+  } else if (withShare.error) {
+    return NextResponse.json({ error: withShare.error.message }, { status: 500 });
+  } else {
+    projects = withShare.data;
   }
 
   const projectList = projects ?? [];
