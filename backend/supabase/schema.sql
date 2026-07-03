@@ -48,12 +48,18 @@ create table if not exists cuts (
     duracao     integer,
     score       double precision,
     url         text,
-    status      text not null default 'ready'  -- ready | processing | error
+    status      text not null default 'ready', -- ready | processing | error
+    saved       boolean not null default false  -- o usuário salvou este corte?
 );
 
 -- Migração para bancos já existentes (cuts criado antes da coluna `status`).
 -- O re-corte de um clipe marca `processing` enquanto o worker regenera o vídeo.
 alter table cuts add column if not exists status text not null default 'ready';
+
+-- Migração: flag de "salvo". Todo corte nasce `false` (o worker insere assim);
+-- só vira `true` quando o usuário salva pela UI. Cortes não salvos são
+-- descartados quando a página do estúdio recarrega (ver /api/cleanup).
+alter table cuts add column if not exists saved boolean not null default false;
 
 -- Migração: origem do vídeo do source. 'upload' = arquivo no bucket privado
 -- `sources` (url = caminho no Storage); 'youtube' = url é o link do vídeo,

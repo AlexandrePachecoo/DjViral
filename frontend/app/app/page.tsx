@@ -3,51 +3,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
-import { EditorView } from "./_studio/EditorView";
 import { SavedView } from "./_studio/SavedView";
-import { PublishModal } from "./_studio/PublishModal";
-import { EmptyState, LoadingState } from "./_studio/StudioStates";
 import { theme, font } from "./_studio/theme";
-import { type Cut, type Platform, type SetInfo } from "./_studio/data";
-import { type ApiCut, parseBpm, toStudioCut } from "./_studio/cut";
-import type {
-  Filter,
-  GeradorView,
-  ModalMode,
-  ModalState,
-  ProjectSummary,
-  SalvosView,
-  Tab,
-} from "./_studio/types";
+import { type ApiCut, toStudioCut } from "./_studio/cut";
+import type { SavedFolder, Tab } from "./_studio/types";
 
-type LoadState = "loading" | "ready" | "empty" | "error";
+// Shape de uma pasta como devolvida por GET /api/cuts/saved.
+type ApiFolder = { projectId: string; setName: string; cuts: ApiCut[] };
 
 export default function Studio() {
   const [userName, setUserName] = useState("DJ");
-
   const [tab, setTab] = useState<Tab>("gerador");
-  const [geradorView, setGeradorView] = useState<GeradorView>("grade");
-  const [salvosView, setSalvosView] = useState<SalvosView>("galeria");
-  const [filter, setFilter] = useState<Filter>("todos");
-  const [selectedCaptionId, setSelectedCaptionId] = useState("cap1");
 
-  // Dados reais do estúdio.
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [cuts, setCuts] = useState<Cut[]>([]);
-  const [setInfo, setSetInfo] = useState<SetInfo | null>(null);
-  const [editorCut, setEditorCut] = useState<Cut | null>(null);
+  // Chave para resetar o Gerador (o botão "Novo set" a incrementa, remontando
+  // o componente com estado limpo).
+  const [generatorKey, setGeneratorKey] = useState(0);
 
-  const [modal, setModal] = useState<ModalState>({
-    open: false,
-    mode: "agora",
-    cut: null,
-    platform: "TikTok",
-    setName: "",
-  });
+  // Cortes salvos, agrupados por set.
+  const [savedFolders, setSavedFolders] = useState<SavedFolder[]>([]);
 
-  // Score visibility is a tweak in the prototype; kept on by default.
+  // Score é sempre visível no protótipo.
   const showScore = true;
 
   useEffect(() => {
@@ -59,78 +34,41 @@ export default function Studio() {
       .catch(() => {});
   }, []);
 
-  // Carrega os cortes de um projeto e monta o resumo do set.
-  const loadCuts = useCallback(async (projectId: string, name: string) => {
-    setLoadState("loading");
+  const loadSaved = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${projectId}`);
-      if (!res.ok) throw new Error("falha ao carregar cortes");
+      const res = await fetch("/api/cuts/saved");
+      if (!res.ok) return;
       const data = await res.json();
-      const apiCuts: ApiCut[] = data.cuts ?? [];
-      const mapped = apiCuts.map(toStudioCut);
-      setCuts(mapped);
-      setSetInfo({
-        name: data.name ?? name,
-        cutsCount: mapped.length,
-        bpm: apiCuts.map((c) => parseBpm(c.titulo)).find((b) => b != null) ?? null,
-      });
-      setLoadState("ready");
+      const folders: ApiFolder[] = data.folders ?? [];
+      setSavedFolders(
+        folders.map((f) => ({
+          projectId: f.projectId,
+          setName: f.setName,
+          cuts: f.cuts.map(toStudioCut),
+        }))
+      );
     } catch {
-      setCuts([]);
-      setSetInfo(null);
-      setLoadState("error");
+      // silencioso: mantém a lista atual em caso de falha de rede.
     }
   }, []);
 
-  // Carrega os projetos do usuário e escolhe o set concluído mais recente.
+  // No mount: descarta os cortes não salvos (e sets sem nada salvo) da sessão
+  // anterior e então carrega os cortes salvos.
   useEffect(() => {
-    let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/projects");
-        if (!res.ok) throw new Error("falha ao listar projetos");
-        const data = await res.json();
-        if (cancelled) return;
-        const all: ProjectSummary[] = data.projects ?? [];
-        const done = all.filter((p) => p.status === "done");
-        setProjects(done);
-        if (done.length === 0) {
-          setLoadState("empty");
-          return;
-        }
-        setSelectedProjectId(done[0].id);
-        await loadCuts(done[0].id, done[0].name);
+        await fetch("/api/cleanup", { method: "POST" });
       } catch {
-        if (!cancelled) setLoadState("error");
+        // se a limpeza falhar, ainda tentamos carregar o que existe.
       }
+      await loadSaved();
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadCuts]);
+  }, [loadSaved]);
 
-  function goTab(next: Tab) {
-    setTab(next);
+  function handleNewSet() {
+    setGeneratorKey((k) => k + 1);
+    setTab("gerador");
   }
-
-  function selectProject(id: string) {
-    const proj = projects.find((p) => p.id === id);
-    if (!proj) return;
-    setSelectedProjectId(id);
-    loadCuts(id, proj.name);
-  }
-
-  function openEditor(cut: Cut) {
-    setEditorCut(cut);
-    setSelectedCaptionId("cap1");
-    setTab("edicao");
-  }
-
-  function openModal(cut: Cut, mode: ModalMode) {
-    setModal({ open: true, mode, cut, platform: "TikTok", setName: setInfo?.name ?? "" });
-  }
-
-  const hasData = loadState === "ready" && setInfo !== null;
 
   return (
     <div
@@ -142,7 +80,7 @@ export default function Studio() {
         fontFamily: font.body,
       }}
     >
-      <Header tab={tab} onTab={goTab} userName={userName} />
+      <Header tab={tab} onTab={setTab} userName={userName} onNewSet={handleNewSet} />
 
       <main
         className="dj-studio-main"
@@ -154,73 +92,9 @@ export default function Studio() {
           padding: "38px 32px 80px",
         }}
       >
-        {loadState === "loading" && <LoadingState />}
-        {loadState === "empty" && <EmptyState />}
-        {loadState === "error" && (
-          <EmptyState
-            title="Não foi possível carregar seus cortes"
-            hint="Tente recarregar a página. Se acabou de enviar um set, aguarde o processamento terminar."
-            cta={null}
-          />
-        )}
-
-        {hasData && tab === "gerador" && setInfo && (
-          <GeneratorView
-            view={geradorView}
-            onView={setGeradorView}
-            showScore={showScore}
-            cuts={cuts}
-            setInfo={setInfo}
-            projects={projects}
-            selectedProjectId={selectedProjectId}
-            onSelectProject={selectProject}
-            onEdit={openEditor}
-            onPost={(c) => openModal(c, "agora")}
-            onProgram={(c) => openModal(c, "programar")}
-          />
-        )}
-
-        {hasData && tab === "edicao" && editorCut && (
-          <EditorView
-            cut={editorCut}
-            setName={setInfo?.name ?? ""}
-            projectId={selectedProjectId ?? ""}
-            selectedCaptionId={selectedCaptionId}
-            onSelectCaption={setSelectedCaptionId}
-            onBack={() => setTab("gerador")}
-            onSaved={(updated) => {
-              setEditorCut(updated);
-              setCuts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-            }}
-          />
-        )}
-
-        {hasData && tab === "edicao" && !editorCut && (
-          <EmptyState
-            title="Nenhum corte aberto"
-            hint="Volte ao Gerador e toque em Editar num corte."
-            cta={null}
-          />
-        )}
-
-        {hasData && tab === "salvos" && (
-          <SavedView
-            view={salvosView}
-            onView={setSalvosView}
-            filter={filter}
-            onFilter={setFilter}
-            showScore={showScore}
-            cuts={cuts}
-          />
-        )}
+        {tab === "gerador" && <GeneratorView key={generatorKey} onSaved={loadSaved} />}
+        {tab === "salvos" && <SavedView folders={savedFolders} showScore={showScore} />}
       </main>
-
-      <PublishModal
-        state={modal}
-        onClose={() => setModal((m) => ({ ...m, open: false }))}
-        onPlatform={(p: Platform) => setModal((m) => ({ ...m, platform: p }))}
-        onMode={(mode) => setModal((m) => ({ ...m, mode }))}
-      />
     </div>
   );
 }

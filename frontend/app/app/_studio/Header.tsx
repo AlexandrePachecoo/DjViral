@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { Logo } from "./Logo";
 import { theme, font, btnPrimary } from "./theme";
 import type { Tab } from "./types";
@@ -9,16 +8,15 @@ type Props = {
   tab: Tab;
   onTab: (t: Tab) => void;
   userName: string;
+  onNewSet: () => void;
 };
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "gerador", label: "Gerador" },
-  { key: "edicao", label: "Edição" },
   { key: "salvos", label: "Cortes salvos" },
 ];
 
-export function Header({ tab, onTab, userName }: Props) {
-  const router = useRouter();
+export function Header({ tab, onTab, userName, onNewSet }: Props) {
   const initial = (userName || "DJ").trim().charAt(0).toUpperCase() || "M";
 
   return (
@@ -63,7 +61,7 @@ export function Header({ tab, onTab, userName }: Props) {
       </nav>
 
       <div className="dj-header-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div onClick={() => router.push("/app/novo")} style={btnPrimary}>
+        <div onClick={onNewSet} style={btnPrimary}>
           ＋ Novo set
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
