@@ -5,6 +5,7 @@ import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
 import { SavedView } from "./_studio/SavedView";
 import { PlanView } from "./_studio/PlanView";
+import { ProfileView } from "./_studio/ProfileView";
 import { theme, font } from "./_studio/theme";
 import { type ApiCut, toStudioCut } from "./_studio/cut";
 import type { SavedFolder, Tab } from "./_studio/types";
@@ -108,6 +109,13 @@ export default function Studio() {
         )}
         {tab === "salvos" && <SavedView folders={savedFolders} showScore={showScore} />}
         {tab === "plano" && <PlanView />}
+        {tab === "perfil" && (
+          <ProfileView
+            userName={userName}
+            onNameChange={setUserName}
+            onManagePlan={() => setTab("plano")}
+          />
+        )}
       </main>
     </div>
   );
