@@ -6,11 +6,14 @@ import { supabaseAdmin } from "@/lib/supabase";
 //   free    → teste grátis: 1 hora de set no TOTAL e 10 cortes por geração
 //   pro     → R$39,90/mês: até 5 horas de set por mês
 //   premium → R$59,90/mês: até 12 horas de set por mês
+//   admin   → uso interno, sem cobrança: cota efetivamente ilimitada. Não é
+//             vendido nem aparece nos cards de upgrade — setado direto no
+//             banco (`update users set plan = 'admin' where email = '...'`).
 //
 // A cota de horas é contada pela duração dos sources enviados no período
-// (mês vigente da assinatura para pagos; desde sempre para o free).
+// (mês vigente da assinatura para pagos; desde sempre para o free/admin).
 
-export type PlanId = "free" | "pro" | "premium";
+export type PlanId = "free" | "pro" | "premium" | "admin";
 
 export type PlanDef = {
   id: PlanId;
@@ -49,6 +52,16 @@ export const PLANS: Record<PlanId, PlanDef> = {
     monthly: true,
     maxCutsPerSet: 30,
     productExternalId: "djviral-premium-monthly",
+  },
+  admin: {
+    id: "admin",
+    label: "Admin",
+    priceCents: 0,
+    // Sentinela grande (não Infinity: quebraria a serialização JSON das
+    // rotas de API, que vira `null`) — na prática nunca é atingido.
+    hours: 100000,
+    monthly: false,
+    maxCutsPerSet: 30,
   },
 };
 

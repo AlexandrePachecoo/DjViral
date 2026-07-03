@@ -7,7 +7,7 @@ import { theme, font, btnPrimary, btnGhost } from "./theme";
 // (checkout hospedado com PIX ou cartão em recorrência mensal).
 
 type Billing = {
-  plan: "free" | "pro" | "premium";
+  plan: "free" | "pro" | "premium" | "admin";
   planLabel: string;
   usage: {
     usedSeconds: number;
@@ -199,6 +199,13 @@ export function PlanView() {
 
       {error && (
         <div style={{ fontSize: 13, color: "#dc2626", marginBottom: 18 }}>{error}</div>
+      )}
+
+      {billing?.plan === "admin" && (
+        <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: 18 }}>
+          Conta admin — uso ilimitado, sem cobrança. Os cards abaixo são só os
+          planos vendidos publicamente.
+        </div>
       )}
 
       {/* Cards de plano */}
