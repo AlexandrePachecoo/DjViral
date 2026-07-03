@@ -5,12 +5,19 @@ import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
 import { SavedView } from "./_studio/SavedView";
 import { PlanView } from "./_studio/PlanView";
+import { ProfileView } from "./_studio/ProfileView";
 import { theme, font } from "./_studio/theme";
 import { type ApiCut, toStudioCut } from "./_studio/cut";
 import type { SavedFolder, Tab } from "./_studio/types";
 
 // Shape de uma pasta como devolvida por GET /api/cuts/saved.
-type ApiFolder = { projectId: string; setName: string; cuts: ApiCut[] };
+type ApiFolder = {
+  projectId: string;
+  setName: string;
+  cuts: ApiCut[];
+  shareToken?: string | null;
+  shareMessage?: string | null;
+};
 
 export default function Studio() {
   const [userName, setUserName] = useState("DJ");
@@ -52,6 +59,8 @@ export default function Studio() {
           projectId: f.projectId,
           setName: f.setName,
           cuts: f.cuts.map(toStudioCut),
+          shareToken: f.shareToken ?? null,
+          shareMessage: f.shareMessage ?? null,
         }))
       );
     } catch {
@@ -108,6 +117,13 @@ export default function Studio() {
         )}
         {tab === "salvos" && <SavedView folders={savedFolders} showScore={showScore} />}
         {tab === "plano" && <PlanView />}
+        {tab === "perfil" && (
+          <ProfileView
+            userName={userName}
+            onNameChange={setUserName}
+            onManagePlan={() => setTab("plano")}
+          />
+        )}
       </main>
     </div>
   );

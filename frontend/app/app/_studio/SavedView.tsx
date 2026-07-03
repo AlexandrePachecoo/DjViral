@@ -1,6 +1,7 @@
 "use client";
 
-import { theme, font, scoreColor } from "./theme";
+import { useState } from "react";
+import { theme, font, scoreColor, btnPrimary, btnGhost } from "./theme";
 import { type Cut } from "./data";
 import { downloadUrl } from "./cut";
 import type { SavedFolder } from "./types";
@@ -35,6 +36,255 @@ function DownloadLink({ cut }: { cut: Cut }) {
   );
 }
 
+// Painel de compartilhamento público de um set. Gera/revoga o link (/s/<token>)
+// e salva a mensagem do dono via POST /api/projects/[id]/share.
+function SharePanel({ folder }: { folder: SavedFolder }) {
+  const [token, setToken] = useState<string | null>(folder.shareToken ?? null);
+  const [message, setMessage] = useState(folder.shareMessage ?? "");
+  const [savedMessage, setSavedMessage] = useState(folder.shareMessage ?? "");
+  const [busy, setBusy] = useState(false);
+  const [savingMsg, setSavingMsg] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const enabled = !!token;
+  const publicUrl =
+    token && typeof window !== "undefined" ? `${window.location.origin}/s/${token}` : "";
+
+  async function post(body: Record<string, unknown>) {
+    const res = await fetch(`/api/projects/${folder.projectId}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("falha");
+    return res.json() as Promise<{ shareToken: string | null; message: string }>;
+  }
+
+  async function toggleShare() {
+    setBusy(true);
+    try {
+      const data = await post({ enabled: !enabled });
+      setToken(data.shareToken);
+    } catch {
+      // silencioso; o estado permanece o anterior.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMessage() {
+    setSavingMsg(true);
+    try {
+      const data = await post({ message });
+      setSavedMessage(data.message);
+    } catch {
+      // silencioso.
+    } finally {
+      setSavingMsg(false);
+    }
+  }
+
+  async function copyLink() {
+    if (!publicUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // clipboard indisponível; ignora.
+    }
+  }
+
+  const messageDirty = message !== savedMessage;
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: 18,
+        borderRadius: 14,
+        background: theme.surface,
+        border: `1px solid ${theme.border}`,
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+      }}
+    >
+      {/* Ativar / desativar o link */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ font: `500 14px ${font.display}` }}>Link público</div>
+          <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
+            {enabled
+              ? "Qualquer pessoa com o link vê e baixa os cortes salvos."
+              : "Gere um link para qualquer pessoa ver e baixar os cortes salvos."}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleShare}
+          disabled={busy}
+          style={{
+            ...(enabled ? btnGhost : btnPrimary),
+            opacity: busy ? 0.6 : 1,
+            cursor: busy ? "default" : "pointer",
+          }}
+        >
+          {busy ? "..." : enabled ? "Desativar link" : "Ativar link"}
+        </button>
+      </div>
+
+      {/* URL + copiar (só quando ativo) */}
+      {enabled && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            readOnly
+            value={publicUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            style={{
+              flex: 1,
+              minWidth: 200,
+              padding: "9px 12px",
+              borderRadius: 9,
+              border: `1px solid ${theme.borderStrong}`,
+              background: theme.surfaceInset,
+              color: theme.textSecondary,
+              fontSize: 13,
+              fontFamily: font.body,
+            }}
+          />
+          <button type="button" onClick={copyLink} style={btnGhost}>
+            {copied ? "Copiado!" : "Copiar link"}
+          </button>
+        </div>
+      )}
+
+      {/* Mensagem do dono */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: 500 }}>
+          Mensagem exibida no topo do link (opcional)
+        </label>
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          maxLength={500}
+          rows={3}
+          placeholder="Ex.: Valeu por curtir o set! Baixa os cortes e marca @seuperfil 🔥"
+          style={{
+            padding: "10px 12px",
+            borderRadius: 9,
+            border: `1px solid ${theme.borderStrong}`,
+            background: theme.surface,
+            color: theme.textPrimary,
+            fontSize: 14,
+            fontFamily: font.body,
+            resize: "vertical",
+          }}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={saveMessage}
+            disabled={savingMsg || !messageDirty}
+            style={{
+              ...btnPrimary,
+              opacity: savingMsg || !messageDirty ? 0.5 : 1,
+              cursor: savingMsg || !messageDirty ? "default" : "pointer",
+            }}
+          >
+            {savingMsg ? "Salvando..." : "Salvar mensagem"}
+          </button>
+          <span style={{ fontSize: 12, color: theme.textMuted }}>{message.length}/500</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FolderSection({ folder, showScore }: { folder: SavedFolder; showScore: boolean }) {
+  const [shareOpen, setShareOpen] = useState(false);
+  const shared = !!folder.shareToken;
+
+  return (
+    <section>
+      {/* Cabeçalho da pasta */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 10,
+            background: theme.accentSoft,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 18,
+            flexShrink: 0,
+          }}
+        >
+          📁
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ font: `500 18px ${font.display}`, letterSpacing: "-.01em" }}>{folder.setName}</div>
+          <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
+            {folder.cuts.length} corte{folder.cuts.length > 1 ? "s" : ""} salvo{folder.cuts.length > 1 ? "s" : ""}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShareOpen((v) => !v)}
+          style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
+        >
+          {shared ? "🔗 Compartilhado" : "🔗 Compartilhar"}
+        </button>
+      </div>
+
+      {shareOpen && <SharePanel folder={folder} />}
+
+      {/* Cortes da pasta */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+        {folder.cuts.map((cut) => (
+          <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
+            <div style={{ position: "relative", background: "#000" }}>
+              <video
+                src={cut.url}
+                controls
+                playsInline
+                preload="metadata"
+                style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
+              />
+              {showScore && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 13,
+                    right: 14,
+                    font: `600 15px ${font.display}`,
+                    color: scoreColor(cut.score),
+                    background: "rgba(255,255,255,.85)",
+                    padding: "2px 7px",
+                    borderRadius: 7,
+                    pointerEvents: "none",
+                  }}
+                >
+                  {cut.score}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: 14 }}>
+              <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
+                {cut.dur} · no set · {cut.moment}
+              </div>
+              <DownloadLink cut={cut} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function SavedView({ folders, showScore }: Props) {
   if (folders.length === 0) {
     return (
@@ -59,73 +309,7 @@ export function SavedView({ folders, showScore }: Props) {
   return (
     <div style={{ animation: "dj-fadeUp .4s ease", display: "flex", flexDirection: "column", gap: 34 }} data-anim>
       {folders.map((folder) => (
-        <section key={folder.projectId}>
-          {/* Cabeçalho da pasta */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 10,
-                background: theme.accentSoft,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 18,
-                flexShrink: 0,
-              }}
-            >
-              📁
-            </div>
-            <div>
-              <div style={{ font: `500 18px ${font.display}`, letterSpacing: "-.01em" }}>{folder.setName}</div>
-              <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
-                {folder.cuts.length} corte{folder.cuts.length > 1 ? "s" : ""} salvo{folder.cuts.length > 1 ? "s" : ""}
-              </div>
-            </div>
-          </div>
-
-          {/* Cortes da pasta */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
-            {folder.cuts.map((cut) => (
-              <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
-                <div style={{ position: "relative", background: "#000" }}>
-                  <video
-                    src={cut.url}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
-                  />
-                  {showScore && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 13,
-                        right: 14,
-                        font: `600 15px ${font.display}`,
-                        color: scoreColor(cut.score),
-                        background: "rgba(255,255,255,.85)",
-                        padding: "2px 7px",
-                        borderRadius: 7,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {cut.score}
-                    </div>
-                  )}
-                </div>
-                <div style={{ padding: 14 }}>
-                  <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
-                  <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-                    {cut.dur} · no set · {cut.moment}
-                  </div>
-                  <DownloadLink cut={cut} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        <FolderSection key={folder.projectId} folder={folder} showScore={showScore} />
       ))}
     </div>
   );

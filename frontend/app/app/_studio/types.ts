@@ -1,6 +1,6 @@
 import type { Cut } from "./data";
 
-export type Tab = "gerador" | "salvos" | "plano";
+export type Tab = "gerador" | "salvos" | "plano" | "perfil";
 export type GeradorView = "grade" | "lista";
 export type SalvosView = "galeria" | "tabela";
 
@@ -18,4 +18,8 @@ export type SavedFolder = {
   projectId: string;
   setName: string;
   cuts: Cut[];
+  // Compartilhamento público: token do link (NULL = não compartilhado) e a
+  // mensagem opcional do dono exibida no topo da página pública.
+  shareToken?: string | null;
+  shareMessage?: string | null;
 };

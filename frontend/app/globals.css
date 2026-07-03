@@ -194,6 +194,14 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Menu do usuário (dropdown no avatar do header): hover dos itens. */
+.dj-usermenu-item {
+  transition: background 0.15s;
+}
+.dj-usermenu-item:hover {
+  background: #f4f4f5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
