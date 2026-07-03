@@ -13,7 +13,7 @@ export async function GET() {
   // Projetos do usuário (mais recentes primeiro) → mantém a ordem das pastas.
   const { data: projects, error: projErr } = await supabaseAdmin
     .from("projects")
-    .select("id, name")
+    .select("id, name, share_token, share_message")
     .eq("user_id", user.id)
     .order("date_create", { ascending: false });
   if (projErr) {
@@ -49,6 +49,8 @@ export async function GET() {
       projectId: p.id,
       setName: p.name,
       cuts: byProject.get(p.id) ?? [],
+      shareToken: p.share_token ?? null,
+      shareMessage: p.share_message ?? null,
     }));
 
   return NextResponse.json({ folders });
