@@ -126,13 +126,28 @@ def _streamed_features(wav_path: str) -> tuple[np.ndarray, np.ndarray, int]:
     flux_parts: list[np.ndarray] = []
     prev_frame: np.ndarray | None = None
 
-    stream = librosa.stream(
+    # Lemos o WAV em blocos hop-alinhados direto pelo soundfile em vez de
+    # `librosa.stream`: cada bloco rende BLOCK_LENGTH frames com center=False e
+    # a emenda entre blocos continua contínua (blocksize/overlap reproduzem o
+    # que o stream fazia internamente). Fazemos isso para poder SANEAR cada
+    # bloco (np.nan_to_num) ANTES de qualquer feature — sets com um trecho de
+    # áudio corrompido/decodificado torto podem trazer amostras não-finitas
+    # (NaN/Inf), e o `librosa.stream` valida o bloco e derruba o job inteiro
+    # com "Audio buffer is not finite everywhere" antes de a gente conseguir
+    # limpar. Um pico ruim vira silêncio (0) em vez de abortar todo o corte.
+    block_samples = (BLOCK_LENGTH - 1) * HOP_LENGTH + FRAME_LENGTH
+    overlap_samples = FRAME_LENGTH - HOP_LENGTH
+    blocks = sf.blocks(
         wav_path,
-        block_length=BLOCK_LENGTH,
-        frame_length=FRAME_LENGTH,
-        hop_length=HOP_LENGTH,
+        blocksize=block_samples,
+        overlap=overlap_samples,
+        dtype="float32",
+        always_2d=False,
     )
-    for block in stream:
+    for block in blocks:
+        if block.ndim > 1:  # segurança: colapsa p/ mono (ffmpeg já força -ac 1)
+            block = block.mean(axis=1)
+        block = np.nan_to_num(block, nan=0.0, posinf=0.0, neginf=0.0)
         if len(block) < FRAME_LENGTH:
             continue  # sobra final menor que uma janela: nenhum frame
 
