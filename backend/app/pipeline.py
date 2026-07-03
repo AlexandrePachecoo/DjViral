@@ -1,6 +1,7 @@
 """Orquestra o processamento de um projeto: analisa → corta → sobe → persiste."""
 import logging
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -11,6 +12,30 @@ from .supabase_client import download_source, get_client, upload_clip
 
 logger = logging.getLogger("djviral.pipeline")
 
+
+class PlanLimitExceeded(RuntimeError):
+    """O vídeo é mais longo do que a cota restante do plano do usuário."""
+
+
+def probe_duration(path: str) -> float:
+    """Duração real do vídeo em segundos, via ffprobe (0.0 se indisponível)."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        logger.warning("ffprobe não conseguiu medir %s: %s", path, result.stderr[-500:])
+        return 0.0
+
 # Limita quantos jobs pesados (download de GB + análise + FFmpeg) rodam ao
 # mesmo tempo. Sem isso, dois POST /process simultâneos dobram o pico de
 # memória e derrubam o container na Railway. Jobs excedentes ficam na fila
@@ -18,12 +43,15 @@ logger = logging.getLogger("djviral.pipeline")
 _job_slots = threading.BoundedSemaphore(settings.max_concurrent_jobs)
 
 
-def _fetch_source(client, project_id: str) -> str:
+def _fetch_source(client, project_id: str, limit_seconds: int | None = None) -> str:
     """Baixa o vídeo original do projeto e retorna o caminho local.
 
     A linha ``sources`` diz a origem: ``source_type='youtube'`` guarda a URL
     do vídeo (baixada via yt-dlp); caso contrário ``url`` é o caminho no
     Storage do Supabase.
+
+    ``limit_seconds`` (cota restante do plano) aperta o teto de duração do
+    YouTube, evitando baixar um vídeo que seria rejeitado em seguida.
     """
     source = (
         client.table("sources")
@@ -37,31 +65,62 @@ def _fetch_source(client, project_id: str) -> str:
             f"Nenhum source com origem de vídeo para o projeto {project_id}"
         )
     row = source.data[0]
+    max_duration = settings.max_source_duration
+    if limit_seconds is not None:
+        max_duration = min(max_duration, limit_seconds)
     if row.get("source_type") == "youtube":
-        return youtube.download_youtube(row["url"], settings.max_source_duration)
+        return youtube.download_youtube(row["url"], max_duration)
     return download_source(row["url"])
 
 
-def process_project(project_id: str) -> None:
+def process_project(
+    project_id: str,
+    limit_seconds: int | None = None,
+    max_cuts: int | None = None,
+) -> None:
     """Pipeline completo, rodado em background.
 
     Baixa o vídeo original (Supabase Storage ou YouTube, conforme a linha
     ``source`` do projeto), analisa o áudio, corta os top picos em clipes,
     sobe cada clipe no Storage e grava os registros ``cuts``. Em caso de erro,
     marca o projeto como ``error``. Sempre remove o arquivo temporário ao final.
+
+    ``limit_seconds`` e ``max_cuts`` são os limites do plano do usuário
+    (enviados pela Vercel): a duração real do vídeo é medida com ffprobe e o
+    processamento é abortado se estourar a cota; ``max_cuts`` reduz o número
+    de clipes gerados (ex.: 10 no teste grátis).
     """
     with _job_slots:
-        _process_project(project_id)
+        _process_project(project_id, limit_seconds, max_cuts)
 
 
-def _process_project(project_id: str) -> None:
+def _process_project(
+    project_id: str,
+    limit_seconds: int | None = None,
+    max_cuts: int | None = None,
+) -> None:
     client = get_client()
     video_path: str | None = None
     try:
-        video_path = _fetch_source(client, project_id)
+        video_path = _fetch_source(client, project_id, limit_seconds)
         logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
 
-        peaks, bpm = analyzer.analyze(video_path, top_n=settings.top_n)
+        # Duração real do vídeo: persiste em sources.duracao (é ela que conta
+        # na cota do plano — corrige a duração estimada pelo navegador) e
+        # barra sets maiores que a cota restante.
+        duration = probe_duration(video_path)
+        if duration > 0:
+            client.table("sources").update({"duracao": duration}).eq(
+                "project_id", project_id
+            ).execute()
+        if limit_seconds is not None and duration > limit_seconds:
+            raise PlanLimitExceeded(
+                f"Vídeo com {duration:.0f}s excede a cota restante do plano "
+                f"({limit_seconds}s)"
+            )
+
+        top_n = settings.top_n if max_cuts is None else min(settings.top_n, max_cuts)
+        peaks, bpm = analyzer.analyze(video_path, top_n=top_n)
         logger.info(
             "Projeto %s: %d picos encontrados (%d BPM)", project_id, len(peaks), bpm
         )

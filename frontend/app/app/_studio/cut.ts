@@ -14,6 +14,7 @@ export type ApiCut = {
   score: number | null;
   url: string | null;
   status: string | null;
+  saved?: boolean | null;
 };
 
 // Segundos → "h:mm:ss" (sets longos) ou "m:ss".
@@ -70,5 +71,6 @@ export function toStudioCut(api: ApiCut): Cut {
     status: CUT_STATUSES.includes(api.status as CutStatus)
       ? (api.status as CutStatus)
       : "ready",
+    saved: api.saved ?? false,
   };
 }

@@ -1,53 +1,26 @@
 "use client";
 
-import { theme, font, scoreColor, statusChip } from "./theme";
-import { Segmented } from "./Segmented";
+import { theme, font, scoreColor } from "./theme";
 import { type Cut } from "./data";
 import { downloadUrl } from "./cut";
-import type { Filter, SalvosView } from "./types";
+import type { SavedFolder } from "./types";
 
 type Props = {
-  view: SalvosView;
-  onView: (v: SalvosView) => void;
-  filter: Filter;
-  onFilter: (f: Filter) => void;
+  folders: SavedFolder[];
   showScore: boolean;
-  cuts: Cut[];
 };
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: "todos", label: "Todos" },
-  { key: "postados", label: "Postados" },
-  { key: "programados", label: "Programados" },
-  { key: "rascunhos", label: "Rascunhos" },
-];
-
-// Publicação/agendamento ainda não existem no backend, então todo corte gerado
-// é um rascunho. Os filtros Postados/Programados ficam vazios até a feature de
-// publicação existir.
-function draftStyle(): React.CSSProperties {
-  const c = statusChip.draft;
-  return {
-    padding: "4px 10px",
-    borderRadius: 20,
-    fontSize: 11,
-    background: c.bg,
-    color: c.text,
-    border: `1px solid ${c.border}`,
-  };
-}
-
 // Botão de download (âncora real; o `?download=` do Supabase força o attachment).
-function DownloadLink({ cut, block }: { cut: Cut; block?: boolean }) {
+function DownloadLink({ cut }: { cut: Cut }) {
   return (
     <a
       href={downloadUrl(cut)}
       target="_blank"
       rel="noopener"
       style={{
-        display: block ? "block" : "inline-block",
+        display: "block",
         textAlign: "center",
-        padding: block ? 9 : "7px 13px",
+        padding: 9,
         borderRadius: 8,
         fontSize: 13,
         color: theme.textSecondary,
@@ -62,59 +35,10 @@ function DownloadLink({ cut, block }: { cut: Cut; block?: boolean }) {
   );
 }
 
-export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: Props) {
-  // Só "todos" e "rascunhos" têm itens; os demais ficam vazios por ora.
-  const rows = filter === "postados" || filter === "programados" ? [] : cuts;
-
-  return (
-    <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
-      {/* ===== Toolbar ===== */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 24,
-          flexWrap: "wrap",
-          gap: 14,
-        }}
-      >
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {FILTERS.map((f) => {
-            const active = filter === f.key;
-            return (
-              <div
-                key={f.key}
-                onClick={() => onFilter(f.key)}
-                style={{
-                  padding: "8px 15px",
-                  borderRadius: 20,
-                  cursor: "pointer",
-                  font: `500 13px ${font.body}`,
-                  transition: "all .2s",
-                  color: active ? theme.accent : theme.textTertiary,
-                  background: active ? theme.accentSoft : theme.surface,
-                  border: `1px solid ${active ? theme.accentBorder : theme.borderStrong}`,
-                }}
-              >
-                {f.label}
-              </div>
-            );
-          })}
-        </div>
-        <div className="dj-saved-tools" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <Segmented<SalvosView>
-            options={[
-              { key: "galeria", label: "Galeria" },
-              { key: "tabela", label: "Tabela" },
-            ]}
-            value={view}
-            onChange={onView}
-          />
-        </div>
-      </div>
-
-      {rows.length === 0 ? (
+export function SavedView({ folders, showScore }: Props) {
+  if (folders.length === 0) {
+    return (
+      <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
         <div
           style={{
             padding: "48px 24px",
@@ -126,108 +50,83 @@ export function SavedView({ view, onView, filter, onFilter, showScore, cuts }: P
             fontSize: 14,
           }}
         >
-          {filter === "postados"
-            ? "Nenhum corte postado ainda."
-            : filter === "programados"
-              ? "Nenhum corte programado ainda."
-              : "Nenhum corte salvo."}
+          Nenhum corte salvo ainda. Gere um set e salve seus cortes favoritos.
         </div>
-      ) : view === "galeria" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
-          {rows.map((cut) => (
-            <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
-              <div style={{ position: "relative", background: "#000" }}>
-                <video
-                  src={cut.url}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
-                />
-                <div style={{ position: "absolute", top: 13, left: 13, pointerEvents: "none", ...draftStyle() }}>Rascunho</div>
-                {showScore && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 13,
-                      right: 14,
-                      font: `600 15px ${font.display}`,
-                      color: scoreColor(cut.score),
-                      background: "rgba(255,255,255,.85)",
-                      padding: "2px 7px",
-                      borderRadius: 7,
-                      pointerEvents: "none",
-                    }}
-                  >
-                    {cut.score}
-                  </div>
-                )}
-              </div>
-              <div style={{ padding: 14 }}>
-                <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
-                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-                  {cut.dur} · no set · {cut.moment}
-                </div>
-                <DownloadLink cut={cut} block />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="dj-table-scroll">
-          <div className="dj-table" style={{ borderRadius: 14, overflow: "hidden", background: theme.surface, border: `1px solid ${theme.border}` }}>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ animation: "dj-fadeUp .4s ease", display: "flex", flexDirection: "column", gap: 34 }} data-anim>
+      {folders.map((folder) => (
+        <section key={folder.projectId}>
+          {/* Cabeçalho da pasta */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr .9fr",
-                gap: 12,
-                padding: "13px 18px",
-                fontSize: 12,
-                color: theme.textMuted,
-                borderBottom: `1px solid ${theme.borderHairline}`,
+                width: 38,
+                height: 38,
+                borderRadius: 10,
+                background: theme.accentSoft,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 18,
+                flexShrink: 0,
               }}
             >
-              <span>Corte</span>
-              <span>Score</span>
-              <span>Status</span>
-              <span>Duração</span>
-              <span>Momento</span>
-              <span>Ações</span>
+              📁
             </div>
-            {rows.map((cut) => (
-              <div
-                key={cut.id}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "2.4fr .8fr 1.2fr 1fr 1.2fr .9fr",
-                  gap: 12,
-                  padding: "13px 18px",
-                  alignItems: "center",
-                  borderBottom: `1px solid ${theme.borderHairline2}`,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div>
+              <div style={{ font: `500 18px ${font.display}`, letterSpacing: "-.01em" }}>{folder.setName}</div>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
+                {folder.cuts.length} corte{folder.cuts.length > 1 ? "s" : ""} salvo{folder.cuts.length > 1 ? "s" : ""}
+              </div>
+            </div>
+          </div>
+
+          {/* Cortes da pasta */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+            {folder.cuts.map((cut) => (
+              <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
+                <div style={{ position: "relative", background: "#000" }}>
                   <video
                     src={cut.url}
+                    controls
                     playsInline
-                    muted
                     preload="metadata"
-                    style={{ width: 34, height: 58, borderRadius: 6, objectFit: "cover", background: "#000", flexShrink: 0 }}
+                    style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
                   />
-                  <span style={{ font: `500 14px ${font.display}` }}>{cut.title}</span>
+                  {showScore && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 13,
+                        right: 14,
+                        font: `600 15px ${font.display}`,
+                        color: scoreColor(cut.score),
+                        background: "rgba(255,255,255,.85)",
+                        padding: "2px 7px",
+                        borderRadius: 7,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {cut.score}
+                    </div>
+                  )}
                 </div>
-                <span style={{ font: `600 14px ${font.display}`, color: scoreColor(cut.score) }}>{cut.score}</span>
-                <span style={{ ...draftStyle(), justifySelf: "start" }}>Rascunho</span>
-                <span style={{ fontSize: 13, color: theme.textTertiary }}>{cut.dur}</span>
-                <span style={{ fontSize: 13, color: theme.textTertiary }}>{cut.moment}</span>
-                <span style={{ justifySelf: "start" }}>
+                <div style={{ padding: 14 }}>
+                  <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
+                  <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
+                    {cut.dur} · no set · {cut.moment}
+                  </div>
                   <DownloadLink cut={cut} />
-                </span>
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        </section>
+      ))}
     </div>
   );
 }

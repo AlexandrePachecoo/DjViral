@@ -21,6 +21,8 @@ export type Cut = {
   url: string;
   // Estado do re-corte: enquanto `processing`, o worker está regenerando o vídeo.
   status?: CutStatus;
+  // O usuário salvou este corte? Cortes não salvos somem no próximo reload.
+  saved?: boolean;
   // Não vêm do banco: gênero e cor de thumb são do protótipo. Opcionais pra que
   // os cortes reais possam omiti-los (o gênero some, o thumb usa fallback).
   genre?: string;

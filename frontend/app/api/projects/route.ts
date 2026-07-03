@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { getPlanUsage } from "@/lib/plans";
 import { canonicalYoutubeUrl, extractYoutubeId } from "@/lib/youtube";
 
 // Lista os projetos do usuário autenticado (mais recentes primeiro). O estúdio
@@ -34,7 +35,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "não autenticado" }, { status: 401 });
   }
 
-  const { name, filename, youtube_url } = await req.json();
+  const { name, filename, youtube_url, duration_seconds, size_bytes } =
+    await req.json();
   if (!name || (!filename && !youtube_url)) {
     return NextResponse.json(
       { error: "name e (filename ou youtube_url) são obrigatórios" },
@@ -48,6 +50,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "URL do YouTube inválida" },
       { status: 400 }
+    );
+  }
+
+  // Cota do plano: horas de set no período (total no free, por mês nos
+  // pagos). A duração vem do navegador (metadata do arquivo) quando
+  // disponível; o worker revalida com a duração real antes de processar.
+  const usage = await getPlanUsage(user.id, user.plan);
+  const duration =
+    typeof duration_seconds === "number" && duration_seconds > 0
+      ? Math.round(duration_seconds)
+      : null;
+  if (usage.remainingSeconds <= 0 || (duration && duration > usage.remainingSeconds)) {
+    const restanteMin = Math.floor(usage.remainingSeconds / 60);
+    return NextResponse.json(
+      {
+        error:
+          usage.plan === "free"
+            ? `Seu teste grátis inclui ${usage.limitSeconds / 3600}h de set. ` +
+              `Restam ${restanteMin} min — faça upgrade para continuar gerando cortes.`
+            : `Você atingiu o limite de ${usage.limitSeconds / 3600}h de set do plano ` +
+              `neste mês (restam ${restanteMin} min). Faça upgrade ou aguarde a renovação.`,
+        code: "plan_limit",
+        plan: usage.plan,
+        remaining_seconds: usage.remainingSeconds,
+      },
+      { status: 402 }
     );
   }
 
@@ -71,6 +99,7 @@ export async function POST(req: NextRequest) {
       project_id: project.id,
       name: url,
       url,
+      duracao: duration,
       source_type: "youtube",
       status_processo: "ready",
     });
@@ -88,6 +117,8 @@ export async function POST(req: NextRequest) {
     project_id: project.id,
     name: filename,
     url: storagePath,
+    duracao: duration,
+    tamanho: typeof size_bytes === "number" && size_bytes > 0 ? Math.round(size_bytes) : null,
     source_type: "upload",
     status_processo: "uploading",
   });
