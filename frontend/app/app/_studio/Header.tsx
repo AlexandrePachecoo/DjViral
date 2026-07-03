@@ -15,6 +15,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "gerador", label: "Gerador" },
   { key: "salvos", label: "Cortes salvos" },
   { key: "plano", label: "Plano" },
+  { key: "perfil", label: "Perfil" },
 ];
 
 export function Header({ tab, onTab, userName, onNewSet }: Props) {
