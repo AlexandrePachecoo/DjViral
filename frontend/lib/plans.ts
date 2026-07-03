@@ -135,7 +135,7 @@ async function getUsedSeconds(userId: string, since: string | null): Promise<num
     const sources = (project as { sources?: { duracao: number | null }[] }).sources ?? [];
     for (const s of sources) total += s.duracao ?? 0;
   }
-  return total;
+  return Math.round(total);
 }
 
 export async function getPlanUsage(userId: string, planId: string): Promise<PlanUsage> {
