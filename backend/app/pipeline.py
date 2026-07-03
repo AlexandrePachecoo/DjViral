@@ -108,7 +108,7 @@ def _process_project(
         # Duração real do vídeo: persiste em sources.duracao (é ela que conta
         # na cota do plano — corrige a duração estimada pelo navegador) e
         # barra sets maiores que a cota restante.
-        duration = probe_duration(video_path)
+        duration = round(probe_duration(video_path))
         if duration > 0:
             client.table("sources").update({"duracao": duration}).eq(
                 "project_id", project_id

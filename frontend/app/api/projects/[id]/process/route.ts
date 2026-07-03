@@ -46,7 +46,7 @@ export async function POST(
     .limit(1)
     .maybeSingle();
   const ownSeconds = source?.duracao ?? 0;
-  const limitSeconds = usage.remainingSeconds + ownSeconds;
+  const limitSeconds = Math.floor(usage.remainingSeconds + ownSeconds);
   if (limitSeconds <= 0) {
     return NextResponse.json(
       {
