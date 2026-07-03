@@ -14,6 +14,7 @@ type Props = {
 const TABS: { key: Tab; label: string }[] = [
   { key: "gerador", label: "Gerador" },
   { key: "salvos", label: "Cortes salvos" },
+  { key: "plano", label: "Plano" },
 ];
 
 export function Header({ tab, onTab, userName, onNewSet }: Props) {

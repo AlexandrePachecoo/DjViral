@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { getPlanUsage, planOf } from "@/lib/plans";
 
 // Dispara o worker (Railway) para processar o projeto. O vídeo já foi enviado
 // ao Supabase Storage pelo navegador. Autentica com o segredo compartilhado.
@@ -32,13 +33,41 @@ export async function POST(
     );
   }
 
+  // Limites do plano para este processamento. A duração deste próprio projeto
+  // já entrou na conta de uso (foi gravada na criação), então ela é devolvida
+  // ao teto: o worker compara a duração REAL do vídeo contra `limit_seconds`
+  // e barra sets maiores que a cota (ex.: duração enviada pelo navegador
+  // errada, ou vídeo do YouTube mais longo que o esperado).
+  const usage = await getPlanUsage(user.id, user.plan);
+  const { data: source } = await supabaseAdmin
+    .from("sources")
+    .select("duracao")
+    .eq("project_id", params.id)
+    .limit(1)
+    .maybeSingle();
+  const ownSeconds = source?.duracao ?? 0;
+  const limitSeconds = usage.remainingSeconds + ownSeconds;
+  if (limitSeconds <= 0) {
+    return NextResponse.json(
+      {
+        error: "Limite de horas do plano atingido. Faça upgrade para continuar.",
+        code: "plan_limit",
+      },
+      { status: 402 }
+    );
+  }
+
   const res = await fetch(`${workerUrl}/process`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-worker-secret": secret,
     },
-    body: JSON.stringify({ project_id: params.id }),
+    body: JSON.stringify({
+      project_id: params.id,
+      limit_seconds: limitSeconds,
+      max_cuts: planOf(user.plan).maxCutsPerSet,
+    }),
   });
 
   if (!res.ok) {

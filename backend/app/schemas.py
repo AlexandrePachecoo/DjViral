@@ -4,6 +4,13 @@ from pydantic import BaseModel
 
 class ProcessRequest(BaseModel):
     project_id: str
+    # Limites do plano do usuário, calculados pela Vercel na hora do disparo.
+    # limit_seconds: duração máxima do set para caber na cota restante do
+    # plano (o worker valida contra a duração REAL do vídeo). max_cuts:
+    # máximo de cortes a gerar (ex.: 10 no teste grátis). None = sem limite
+    # de plano (usa só os defaults do worker).
+    limit_seconds: int | None = None
+    max_cuts: int | None = None
 
 
 class ProjectCreated(BaseModel):

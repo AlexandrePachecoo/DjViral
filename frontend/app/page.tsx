@@ -225,14 +225,14 @@ export default function Landing() {
           </div>
           <div className={styles.plans}>
             <div className={styles.plan}>
-              <div className={styles.planName}>Grátis</div>
+              <div className={styles.planName}>Teste grátis</div>
               <div className={styles.planPrice}>R$0</div>
-              <div className={styles.planSub}>pra sempre</div>
+              <div className={styles.planSub}>pra experimentar</div>
               <div className={styles.planFeatures}>
-                <span>✓ 1 set de até 1 hora</span>
-                <span>✓ 10 cortes verticais</span>
-                <span>✓ Legendas automáticas</span>
-                <span className={styles.featureMuted}>· Com marca d&apos;água</span>
+                <span>✓ 1 hora de set pra testar</span>
+                <span>✓ 10 cortes verticais 9:16</span>
+                <span>✓ Análise automática dos drops</span>
+                <span className={styles.featureMuted}>· Sem cartão de crédito</span>
               </div>
               <a className={styles.planCtaGhost} href={TRIAL_HREF}>
                 Começar grátis
@@ -242,18 +242,33 @@ export default function Landing() {
               <span className={styles.planBadge}>★ MAIS POPULAR</span>
               <div className={styles.planName}>Pro</div>
               <div className={styles.planPrice}>
-                R$49<span className={styles.planPriceUnit}>/mês</span>
+                R$39,90<span className={styles.planPriceUnit}>/mês</span>
               </div>
-              <div className={styles.planSub}>cobrado mensalmente</div>
+              <div className={styles.planSub}>PIX ou cartão · renova todo mês</div>
               <div className={`${styles.planFeatures} ${styles.planFeaturesPro}`}>
+                <span>✓ Até 5 horas de set por mês</span>
                 <span>✓ Sets de até 3 horas</span>
-                <span>✓ Até 12h de set por mês</span>
-                <span>✓ 10 cortes por hora de set</span>
-                <span>✓ Sem marca d&apos;água</span>
-                <span>✓ Editor pra legendar e travar o corte no minuto exato</span>
+                <span>✓ Até 30 cortes por set</span>
+                <span>✓ Re-corte no minuto exato</span>
               </div>
               <a className={styles.planCtaFill} href={TRIAL_HREF}>
-                Testar 7 dias grátis
+                Assinar Pro
+              </a>
+            </div>
+            <div className={styles.plan}>
+              <div className={styles.planName}>Premium</div>
+              <div className={styles.planPrice}>
+                R$59,90<span className={styles.planPriceUnit}>/mês</span>
+              </div>
+              <div className={styles.planSub}>PIX ou cartão · renova todo mês</div>
+              <div className={styles.planFeatures}>
+                <span>✓ Até 12 horas de set por mês</span>
+                <span>✓ Sets de até 3 horas</span>
+                <span>✓ Até 30 cortes por set</span>
+                <span>✓ Re-corte no minuto exato</span>
+              </div>
+              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+                Assinar Premium
               </a>
             </div>
           </div>

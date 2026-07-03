@@ -12,13 +12,36 @@ type Phase = "form" | "uploading" | "processing" | "done" | "error";
 type Props = {
   // Recarrega a aba "Cortes salvos" depois que o usuário salva cortes.
   onSaved: () => void;
+  // Abre a aba "Plano" quando o usuário estoura a cota e quer fazer upgrade.
+  onUpgrade: () => void;
 };
 
-export function GeneratorView({ onSaved }: Props) {
+// Duração do vídeo (em segundos) lida dos metadados no navegador, para o
+// backend validar a cota do plano antes do upload. null = não deu pra medir
+// (o worker ainda valida com a duração real).
+function readVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    video.src = url;
+  });
+}
+
+export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
+  const [limitHit, setLimitHit] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cuts, setCuts] = useState<Cut[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -50,16 +73,28 @@ export function GeneratorView({ onSaved }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name || !file) return;
+    setLimitHit(false);
     try {
-      // 1. Cria projeto + signed upload URL.
+      // 1. Cria projeto + signed upload URL. A duração (metadados do arquivo)
+      // vai junto para o backend validar a cota de horas do plano.
       setPhase("uploading");
       setMessage("Criando projeto...");
+      const duration = await readVideoDuration(file);
       const createRes = await fetch("/api/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, filename: file.name }),
+        body: JSON.stringify({
+          name,
+          filename: file.name,
+          duration_seconds: duration,
+          size_bytes: file.size,
+        }),
       });
-      if (!createRes.ok) throw new Error((await createRes.json()).error);
+      if (!createRes.ok) {
+        const data = await createRes.json();
+        if (data.code === "plan_limit") setLimitHit(true);
+        throw new Error(data.error);
+      }
       const { project_id, signedUrl } = await createRes.json();
       setProjectId(project_id);
 
@@ -83,7 +118,11 @@ export function GeneratorView({ onSaved }: Props) {
       const procRes = await fetch(`/api/projects/${project_id}/process`, {
         method: "POST",
       });
-      if (!procRes.ok) throw new Error((await procRes.json()).error);
+      if (!procRes.ok) {
+        const data = await procRes.json();
+        if (data.code === "plan_limit") setLimitHit(true);
+        throw new Error(data.error);
+      }
     } catch (err) {
       setPhase("error");
       setMessage(err instanceof Error ? err.message : "Erro inesperado");
@@ -138,12 +177,15 @@ export function GeneratorView({ onSaved }: Props) {
           name={name}
           file={file}
           message={message}
+          limitHit={limitHit}
           onName={setName}
           onFile={setFile}
           onSubmit={handleSubmit}
+          onUpgrade={onUpgrade}
           onRetry={() => {
             setPhase("form");
             setMessage("");
+            setLimitHit(false);
           }}
         />
       </div>
@@ -361,18 +403,22 @@ function UploadForm({
   name,
   file,
   message,
+  limitHit,
   onName,
   onFile,
   onSubmit,
+  onUpgrade,
   onRetry,
 }: {
   phase: Phase;
   name: string;
   file: File | null;
   message: string;
+  limitHit: boolean;
   onName: (v: string) => void;
   onFile: (f: File | null) => void;
   onSubmit: (e: React.FormEvent) => void;
+  onUpgrade: () => void;
   onRetry: () => void;
 }) {
   const busy = phase === "uploading" || phase === "processing";
@@ -456,9 +502,20 @@ function UploadForm({
       )}
 
       {phase === "error" && (
-        <button type="button" onClick={onRetry} style={{ ...ghostBtn, width: "auto", marginTop: 12, cursor: "pointer" }}>
-          Tentar de novo
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          {limitHit && (
+            <button
+              type="button"
+              onClick={onUpgrade}
+              style={{ ...btnPrimary, padding: "9px 16px", cursor: "pointer" }}
+            >
+              Ver planos
+            </button>
+          )}
+          <button type="button" onClick={onRetry} style={{ ...ghostBtn, width: "auto", cursor: "pointer" }}>
+            Tentar de novo
+          </button>
+        </div>
       )}
     </div>
   );
