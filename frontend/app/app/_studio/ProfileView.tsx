@@ -19,6 +19,7 @@ const PLAN_LABEL: Record<string, string> = {
   free: "Teste grátis",
   pro: "Pro",
   premium: "Premium",
+  admin: "Admin",
 };
 
 const danger = "#dc2626";
