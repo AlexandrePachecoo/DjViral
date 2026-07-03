@@ -93,6 +93,28 @@ A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
   - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos).
   - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
   - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
+- `s/[token]/page.tsx` — **página pública** de um set compartilhado (`/s/<token>`),
+  **fora** de `app/` (não herda o guard de sessão). Ver "Compartilhamento
+  público" abaixo.
+
+### Compartilhamento público de sets
+
+O dono pode gerar um link público de uma pasta/set (aba "Cortes salvos") para
+qualquer pessoa **ver e baixar os cortes salvos** sem login, e deixar uma
+**mensagem** exibida no topo. Como o bucket `clips` já é público (`cuts.url` =
+URL pública direta), a feature só adiciona o roteamento público, não muda o
+armazenamento dos vídeos.
+
+- `projects.share_token` (unique; NULL = não compartilhado) e
+  `projects.share_message` guardam o estado do link e a mensagem.
+- `POST /api/projects/{id}/share {enabled?, message?}` — dono only (sessão +
+  checagem de dono): gera/revoga o `share_token` e salva a `share_message`.
+- `GET /api/public/[token]` — **única rota sem sessão**; resolve o token via
+  `frontend/lib/share.ts` (`getPublicShare`) → `{setName, message, cuts}` (só
+  cortes `saved` e `ready`).
+- O painel de compartilhar fica em `app/_studio/SavedView.tsx` (por pasta);
+  `GET /api/cuts/saved` devolve `shareToken`/`shareMessage` para a UI abrir
+  sincronizada.
 
 A UI é **responsiva** (testada de ~320px até desktop). Como o estúdio usa
 estilos inline, os ajustes responsivos vivem em classes globais `dj-*` em
@@ -212,6 +234,8 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - user_id
 - name
 - status
+- share_token — token do link público (`/s/<token>`); NULL = não compartilhado
+- share_message — mensagem do dono exibida no topo da página pública (opcional)
 - date_create
 
 ### Source (vídeo original)

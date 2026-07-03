@@ -20,14 +20,23 @@ create table if not exists users (
 );
 
 create table if not exists projects (
-    id          uuid primary key default gen_random_uuid(),
-    user_id     uuid references users (id) on delete cascade,
-    name        text not null,
-    status      text not null default 'processing', -- processing | done | error
-    date_create timestamptz not null default now()
+    id            uuid primary key default gen_random_uuid(),
+    user_id       uuid references users (id) on delete cascade,
+    name          text not null,
+    status        text not null default 'processing', -- processing | done | error
+    share_token   text unique,   -- token do link público (NULL = não compartilhado)
+    share_message text,          -- mensagem do dono exibida no topo da página pública
+    date_create   timestamptz not null default now()
 );
 
 create index if not exists idx_projects_user on projects (user_id);
+
+-- Migração: compartilhamento público de um set. `share_token` (quando não-NULL)
+-- publica o projeto em /s/<token> — qualquer pessoa vê e baixa os cortes SALVOS,
+-- sem login. `share_message` é uma mensagem opcional do dono exibida no topo.
+alter table projects add column if not exists share_token text;
+alter table projects add column if not exists share_message text;
+create unique index if not exists idx_projects_share_token on projects (share_token);
 
 create table if not exists sources (
     id              uuid primary key default gen_random_uuid(),

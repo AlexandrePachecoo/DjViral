@@ -18,4 +18,8 @@ export type SavedFolder = {
   projectId: string;
   setName: string;
   cuts: Cut[];
+  // Compartilhamento público: token do link (NULL = não compartilhado) e a
+  // mensagem opcional do dono exibida no topo da página pública.
+  shareToken?: string | null;
+  shareMessage?: string | null;
 };
