@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
 import { SavedView } from "./_studio/SavedView";
+import { PlanView } from "./_studio/PlanView";
 import { theme, font } from "./_studio/theme";
 import { type ApiCut, toStudioCut } from "./_studio/cut";
 import type { SavedFolder, Tab } from "./_studio/types";
@@ -32,6 +33,12 @@ export default function Studio() {
         if (d?.user?.name) setUserName(d.user.name);
       })
       .catch(() => {});
+
+    // Voltando do checkout da AbacatePay (?billing=...): abre a aba Plano,
+    // que mostra o status do pagamento.
+    if (new URLSearchParams(window.location.search).has("billing")) {
+      setTab("plano");
+    }
   }, []);
 
   const loadSaved = useCallback(async () => {
@@ -92,8 +99,15 @@ export default function Studio() {
           padding: "38px 32px 80px",
         }}
       >
-        {tab === "gerador" && <GeneratorView key={generatorKey} onSaved={loadSaved} />}
+        {tab === "gerador" && (
+          <GeneratorView
+            key={generatorKey}
+            onSaved={loadSaved}
+            onUpgrade={() => setTab("plano")}
+          />
+        )}
         {tab === "salvos" && <SavedView folders={savedFolders} showScore={showScore} />}
+        {tab === "plano" && <PlanView />}
       </main>
     </div>
   );

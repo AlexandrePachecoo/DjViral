@@ -116,10 +116,50 @@ ganchos detalhados em [`design.md`](design.md).
   e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`.
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
-  `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão).
+  `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
+  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento) e `APP_URL`
+  (opcional, origem pública para as URLs de retorno do checkout).
 
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
 consegue disparar `POST /process` no worker.
+
+## Pagamento / planos (AbacatePay)
+
+Três planos, com cota de **horas de set** e limite de cortes por set:
+
+| Plano   | Preço       | Cota                    | Cortes por set |
+|---------|-------------|-------------------------|----------------|
+| free    | R$0         | 1 hora de set no TOTAL  | 10             |
+| pro     | R$39,90/mês | 5 horas de set por mês  | 30             |
+| premium | R$59,90/mês | 12 horas de set por mês | 30             |
+
+Cobrança via **AbacatePay** (API v2, `https://api.abacatepay.com/v2`) com
+checkout de assinatura hospedado: o usuário escolhe **PIX ou cartão** na
+própria página da AbacatePay; cartão renova automaticamente todo mês.
+
+- `frontend/lib/plans.ts` — definição dos planos + cálculo de uso do período
+  (soma `sources.duracao` dos projetos não-`error` do usuário; janela = mês da
+  assinatura para pagos, desde sempre no free).
+- `frontend/lib/abacatepay.ts` — cliente da API (produtos com `cycle=MONTHLY`
+  criados sob demanda com `externalId` fixo `djviral-{plano}-monthly`,
+  checkout de assinatura, verificação HMAC dos webhooks).
+- `POST /api/billing/checkout {plan}` — cria o checkout e a linha
+  `subscriptions` (status `pending`); devolve a URL de pagamento.
+- `GET /api/billing` — plano atual + uso (alimenta a aba "Plano" do estúdio).
+- `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook (assinatura
+  HMAC no header `X-Webhook-Signature` + secret na query; idempotência via
+  tabela `webhook_events`). `subscription.completed`/`renewed` ativam o plano
+  e o período; `payment_failed` marca `past_due`; `cancelled` rebaixa para
+  `free`. O plano efetivo é espelhado em `users.plan`.
+
+**Enforcement da cota:**
+1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do
+   arquivo) contra a cota restante → HTTP 402 com `code: "plan_limit"`.
+2. `POST /api/projects/{id}/process` envia `limit_seconds` (cota restante) e
+   `max_cuts` ao worker.
+3. O worker mede a duração REAL com ffprobe, grava em `sources.duracao` (é o
+   que conta na cota) e aborta com `status=error` se estourar `limit_seconds`;
+   `max_cuts` limita o `top_n` da análise.
 
 ## Evoluções planejadas (ainda não implementadas)
 
@@ -128,8 +168,6 @@ consegue disparar `POST /process` no worker.
 - **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
   escala real.
 - **Score mais rico:** detecção de BPM, contraste de energia pré/pós drop.
-- **Pagamento / planos:** ainda não implementado. Todo usuário nasce no plano
-  `free`; falta cobrança e limites por plano.
 
 ## Autenticação
 
@@ -145,8 +183,8 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   cadastro). A área `/app` é protegida por `app/app/layout.tsx` (redireciona
   pra `/login` sem sessão); as rotas de `/api/projects` exigem sessão e
   checam o dono do projeto.
-- **Pagamento ainda não implementado:** o cadastro é livre e todo usuário
-  entra no plano `free`.
+- O cadastro é livre e todo usuário entra no plano `free` (teste grátis);
+  upgrade via aba "Plano" do estúdio (ver "Pagamento / planos").
 
 ## Modelo de dados
 
@@ -155,8 +193,19 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - name
 - email
 - password
-- plan
+- plan (`free | pro | premium`) — espelhado pelos webhooks da AbacatePay
 - date_create
+
+### Subscription (assinatura AbacatePay)
+- id
+- user_id
+- plan (`pro | premium`)
+- status (`pending | active | past_due | cancelled`)
+- method (`PIX | CARD`)
+- provider_checkout_id (`bill_...`) / provider_subscription_id (`subs_...`)
+- external_id — nosso id enviado no checkout
+- current_period_start / current_period_end
+- created_at / updated_at
 
 ### Projeto
 - id
