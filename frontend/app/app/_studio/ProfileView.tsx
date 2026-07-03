@@ -183,15 +183,6 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
     }
   }
 
-  async function logout() {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      // mesmo se a chamada falhar, mandamos o usuário para o login.
-    }
-    window.location.href = "/login";
-  }
-
   const planLabel = me ? PLAN_LABEL[me.plan] ?? me.plan : "…";
   const isPaid = me?.plan === "pro" || me?.plan === "premium";
 
@@ -372,22 +363,6 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
             {pwSaving ? "Salvando..." : "Alterar senha"}
           </button>
         </form>
-      </Card>
-
-      {/* Sessão: sair da conta */}
-      <Card title="Sessão">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 13, color: theme.textSecondary }}>
-            Encerra a sessão neste dispositivo.
-          </div>
-          <button
-            type="button"
-            onClick={logout}
-            style={{ ...btnGhost, color: danger, borderColor: danger }}
-          >
-            Sair da conta
-          </button>
-        </div>
       </Card>
     </div>
   );
