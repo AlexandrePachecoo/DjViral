@@ -69,6 +69,16 @@ class Settings(BaseSettings):
     # Zoom-drift suave dentro dos shots de zoom (via zoompan). 0 desliga e os
     # shots ficam 100% estáticos (só a alternância wide/zoom nos beats).
     dynamic_drift: float = 0.06
+    # Teto de shots por clipe (largura do `split=N` no filtergraph). Motion
+    # alto pode gerar até ~20 shots num clipe de 60s (shot_min=3s) — o teto
+    # limita a complexidade/memória do filtro independente da cena.
+    dynamic_max_shots: int = 10
+    # Threads do FILTRO (split/scale/zoompan) do corte dinâmico, via
+    # -filter_threads/-filter_complex_threads. Mesma razão do `ffmpeg_threads`
+    # do encoder: sem limitar, o FFmpeg escalona por núcleo do host (~34 na
+    # Railway), e com vários branches de zoompan supersampleados ativos ao
+    # mesmo tempo isso pode inflar bastante o pico de memória do processo.
+    dynamic_filter_threads: int = 2
 
 
 settings = Settings()

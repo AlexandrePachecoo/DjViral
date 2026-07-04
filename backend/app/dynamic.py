@@ -121,12 +121,22 @@ def build_shot_plan(
       público a cada :data:`CROWD_EVERY` zooms quando houver público.
     - Fronteiras snapam ao beat mais próximo; sem beats, grade fixa.
     - Trechos agitados (motion alto) recebem shots mais curtos.
+    - Nunca ultrapassa :data:`settings.dynamic_max_shots` (motion alto num
+      clipe de 60s poderia gerar ~20 shots com shot_min=3s — o teto limita a
+      largura do `split=N` no filtergraph renderizado, e portanto a memória).
     """
     shot_min = settings.dynamic_shot_min
     shot_max = settings.dynamic_shot_max
     motion = wv.motion_score if wv is not None else 0.5
     # Duração-alvo dos shots: cena parada → shots longos; agitada → curtos.
     base_len = shot_max - (shot_max - shot_min) * min(1.0, motion)
+    # Teto de shots: se o base_len natural produziria mais shots que o
+    # permitido, alonga os shots até caber (perde um pouco de "urgência" na
+    # cena mais agitada, mas nunca estoura o teto). O -1 reserva espaço pra
+    # fronteira extra que `peak_at` pode inserir.
+    max_shots = max(1, settings.dynamic_max_shots)
+    min_base_len = duration / max(1, max_shots - 1)
+    base_len = max(base_len, min_base_len)
 
     # ---- Fronteiras ----
     bounds = [0.0]
