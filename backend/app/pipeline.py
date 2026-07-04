@@ -281,6 +281,60 @@ def _score_candidates(
     return scored
 
 
+def _cut_dynamic_tiered(
+    video_path: str,
+    start_sec: float,
+    clip_path: str,
+    shots: list[dynamic.Shot],
+    duration: int,
+    pre_roll: int,
+    fps: float,
+    label: str,
+) -> bool:
+    """Tenta o corte dinâmico em 2 níveis: com zoom-drift, depois sem.
+
+    O 2º nível (``force_static=True``) usa o MESMO shot plan (mesmos
+    cortes/tempos/beats), só sem zoompan/supersample — bem mais leve em
+    CPU/memória. Preserva a alternância wide/zoom no beat (o essencial do
+    estilo "dinâmico") mesmo quando só a parte pesada falha. Devolve
+    ``False`` se as duas tentativas falharem (o chamador cai pro corte seco).
+    """
+    try:
+        clipper.cut_dynamic(
+            input_file=video_path,
+            start_sec=start_sec,
+            output_path=clip_path,
+            shots=shots,
+            duration=duration,
+            pre_roll=pre_roll,
+            fps=fps,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - tenta o nível mais leve antes do seco
+        logger.exception(
+            "%s: corte dinâmico com zoom falhou — tentando sem zoompan", label
+        )
+
+    try:
+        clipper.cut_dynamic(
+            input_file=video_path,
+            start_sec=start_sec,
+            output_path=clip_path,
+            shots=shots,
+            duration=duration,
+            pre_roll=pre_roll,
+            fps=fps,
+            force_static=True,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - último nível antes do corte seco
+        logger.exception(
+            "%s: corte dinâmico sem zoompan também falhou — usando corte seco",
+            label,
+        )
+    return False
+
+
 def _render_clip(
     video_path: str,
     peak: Peak,
@@ -307,6 +361,7 @@ def _render_clip(
             and wv.motion_score < 0.1
         )
         if not boring:
+            shots = None
             try:
                 beats = visual.get_beat_times(
                     video_path, start, float(settings.clip_duration), bpm
@@ -319,21 +374,21 @@ def _render_clip(
                     src_dims["height"],
                     peak_at=peak.start_sec - start,
                 )
-                clipper.cut_dynamic(
-                    input_file=video_path,
-                    start_sec=peak.start_sec,
-                    output_path=clip_path,
-                    shots=shots,
-                    duration=settings.clip_duration,
-                    pre_roll=settings.pre_roll,
-                    fps=src_dims["fps"],
-                )
-                return
-            except Exception:  # noqa: BLE001 - dinâmico nunca perde o corte
+            except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
-                    "Corte dinâmico falhou em %.1fs — usando corte seco",
-                    peak.start_sec,
+                    "Falha ao montar o shot plan em %.1fs", peak.start_sec
                 )
+            if shots and _cut_dynamic_tiered(
+                video_path,
+                peak.start_sec,
+                clip_path,
+                shots,
+                settings.clip_duration,
+                settings.pre_roll,
+                src_dims["fps"],
+                label=f"clipe {peak.start_sec:.1f}s",
+            ):
+                return
 
     clipper.cut(
         input_file=video_path,
@@ -392,6 +447,8 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
 
         rendered = False
         if cut_style == "dynamic":
+            shots = None
+            src_dims = None
             try:
                 src_dims = probe_video(video_path)
                 if src_dims["width"] and src_dims["height"]:
@@ -415,19 +472,22 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
                         src_dims["height"],
                         peak_at=None,
                     )
-                    clipper.cut_dynamic(
-                        input_file=video_path,
-                        start_sec=inicio,
-                        output_path=clip_path,
-                        shots=shots,
-                        duration=duration,
-                        pre_roll=0,
-                        fps=src_dims["fps"],
-                    )
-                    rendered = True
-            except Exception:  # noqa: BLE001 - dinâmico nunca perde o re-corte
+            except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
-                    "Re-corte dinâmico falhou (%s) — usando corte seco", cut_id
+                    "Falha ao montar o shot plan do re-corte dinâmico (%s)", cut_id
+                )
+                shots = None
+
+            if shots and src_dims:
+                rendered = _cut_dynamic_tiered(
+                    video_path,
+                    inicio,
+                    clip_path,
+                    shots,
+                    duration,
+                    0,
+                    src_dims["fps"],
+                    label=f"recorte {cut_id}",
                 )
 
         if not rendered:
