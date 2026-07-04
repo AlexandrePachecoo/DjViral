@@ -81,7 +81,7 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 | `≤ 720px` | Header do estúdio quebra: logo + ações na 1ª linha, abas roláveis na 2ª (`.dj-header*`); padding do `main` reduz. |
 | `≤ 640px` | Estúdio: card do set e linhas da lista quebram; barra de score full-width; tabela de salvos rola na horizontal (`.dj-table-scroll`); busca full-width. |
 | `≤ 560px` | Landing: links do nav somem (sobra o CTA); botões do hero empilham. Editor: topo quebra. |
-| `≤ 420px` | Header do estúdio esconde o nome do usuário (mantém o avatar). |
+| `≤ 420px` | Header do estúdio esconde o nome do usuário (mantém o avatar); cards de estilo de corte empilham (`.dj-style-grid`). |
 
 ### Ganchos responsivos (classes `dj-*`)
 
@@ -95,6 +95,7 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 | `.dj-list-row` / `.dj-list-score` / `.dj-list-actions` | Linha da lista quebra; score e ações ocupam a largura toda. |
 | `.dj-saved-tools` / `.dj-saved-search` | Ferramentas e busca full-width. |
 | `.dj-table-scroll` / `.dj-table` | Tabela de salvos rola na horizontal com colunas legíveis. |
+| `.dj-style-grid` | Cards de estilo de corte (Seco/Dinâmico) empilham em 1 coluna. |
 
 ## Diretrizes (checklist ao mexer na UI)
 

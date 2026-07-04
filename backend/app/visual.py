@@ -1,0 +1,443 @@
+"""Análise visual das janelas candidatas a corte.
+
+Complementa o :mod:`analyzer` (áudio): para cada janela de ~60–75 s em torno de
+um pico musical, mede o quanto a IMAGEM tem potencial viral — movimento na
+cena, presença de pessoas e de público — e localiza o DJ e o público para o
+corte dinâmico (zooms). Nunca analisa o set inteiro: só as janelas candidatas,
+com frames amostrados (~2 fps) e reduzidos (640 px), lidos de um pipe do FFmpeg
+frame a frame (a janela nunca fica inteira em RAM).
+
+A detecção de pessoas usa YOLOv8n em ONNX via ``cv2.dnn`` (CPU, ~13 MB, sem
+torch). Qualquer falha — modelo ausente, cv2 quebrado — degrada para score só
+de movimento e o chamador cai nos fallbacks (zoom central / corte seco); a
+análise visual nunca derruba um job.
+
+Como o analyzer, este módulo é puro (sem FastAPI/Supabase) e testável isolado.
+"""
+import json
+import logging
+import math
+import os
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .config import settings
+
+logger = logging.getLogger("djviral.visual")
+
+try:  # opencv-python-headless; sem ele a análise degrada para motion-only
+    import cv2
+except Exception:  # noqa: BLE001 - qualquer falha de import conta como "sem cv2"
+    cv2 = None
+
+# Lado do blob de entrada do YOLOv8n (o modelo é exportado com imgsz=640).
+DETECT_INPUT = 640
+# Lado maior dos frames usados no frame differencing (movimento). Bem pequeno:
+# interessa o movimento global da cena, não detalhes.
+MOTION_SIZE = 160
+# Confiança mínima de uma detecção de pessoa e IoU do NMS.
+PERSON_CONF = 0.35
+NMS_IOU = 0.45
+# Movimento médio (|diff| normalizado 0-1 entre frames a ~2 fps) considerado
+# "cena muito agitada" — satura o motion_score em 1.
+MOTION_REF = 0.08
+# Nº de pessoas (além do DJ) que satura o crowd_score em 1.
+CROWD_REF = 6.0
+# Distância máxima (normalizada) entre centros para associar um box a uma
+# track existente entre dois frames detectados consecutivos.
+TRACK_MAX_DIST = 0.18
+
+
+@dataclass
+class Box:
+    """Box de pessoa em coordenadas NORMALIZADAS (0-1) do frame fonte."""
+
+    cx: float
+    cy: float
+    w: float
+    h: float
+    conf: float
+
+
+@dataclass
+class FrameSample:
+    """Um frame amostrado da janela: instante relativo, movimento e detecções."""
+
+    t: float                       # segundos relativos ao início da janela
+    motion: float                  # |diff| médio vs. frame anterior (0-1)
+    persons: list[Box] | None      # None = YOLO não rodou neste frame
+
+
+@dataclass
+class WindowVisual:
+    """Resultado visual de uma janela candidata."""
+
+    samples: list[FrameSample] = field(default_factory=list)
+    motion_score: float = 0.0      # 0-1
+    presence_ratio: float = 0.0    # frames com pessoa / frames detectados
+    crowd_score: float = 0.0       # 0-1 (nº de pessoas além do DJ, satura)
+    dj_box: Box | None = None      # box mediano da track dominante
+    crowd_box: Box | None = None   # box mediano do cluster de público
+    visual_score: float = 0.0      # 0-1 combinado
+    detected: bool = False         # True se o YOLO rodou em algum frame
+
+
+_net = None
+_net_failed = False
+
+
+def load_model(path: str | None = None):
+    """Carrega o YOLOv8n ONNX (com cache por processo). ``None`` se falhar.
+
+    ``None`` é o gatilho de todos os fallbacks: score motion-only e zoom
+    central em vez de zoom em pessoas. Nunca levanta exceção.
+    """
+    global _net, _net_failed
+    if _net is not None:
+        return _net
+    if _net_failed:
+        return None
+    model_path = path or settings.yolo_model_path
+    if cv2 is None:
+        logger.warning("cv2 indisponível — análise visual será motion-only")
+        _net_failed = True
+        return None
+    try:
+        if not os.path.isabs(model_path):
+            # Relativo à raiz do worker (diretório acima de app/).
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            model_path = os.path.join(base, model_path)
+        _net = cv2.dnn.readNetFromONNX(model_path)
+    except Exception:  # noqa: BLE001 - modelo ausente/corrompido → fallback
+        logger.exception("Falha ao carregar o modelo YOLO em %s", model_path)
+        _net_failed = True
+        return None
+    return _net
+
+
+def _video_dims(path: str) -> tuple[int, int]:
+    """(largura, altura) do primeiro stream de vídeo, via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        stream = json.loads(result.stdout)["streams"][0]
+        return int(stream["width"]), int(stream["height"])
+    except (KeyError, IndexError, ValueError, json.JSONDecodeError):
+        logger.warning("ffprobe não achou dimensões de %s", path)
+        return 0, 0
+
+
+def iter_frames(
+    video_path: str,
+    start_sec: float,
+    duration: float,
+    fps: float = 2.0,
+    width: int = DETECT_INPUT,
+):
+    """Itera ``(t_rel, frame_bgr)`` da janela, amostrado a ``fps``.
+
+    Um único processo FFmpeg decodifica a janela e escreve rawvideo no stdout;
+    lemos um frame por vez (nunca a janela inteira em RAM). O ``-ss`` antes do
+    ``-i`` é o MESMO padrão do clipper → o t=0 daqui coincide com o t=0 do
+    clipe renderizado.
+    """
+    src_w, src_h = _video_dims(video_path)
+    if not src_w or not src_h:
+        return
+    out_w = min(width, src_w)
+    out_h = max(2, round(src_h * out_w / src_w / 2) * 2)
+    frame_bytes = out_w * out_h * 3
+
+    cmd = [
+        "ffmpeg",
+        "-v", "error",
+        "-ss", str(max(0.0, start_sec)),
+        "-i", video_path,
+        "-t", str(duration),
+        "-vf", f"fps={fps},scale={out_w}:{out_h}",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        idx = 0
+        while True:
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            frame = np.frombuffer(buf, dtype=np.uint8).reshape(out_h, out_w, 3)
+            yield idx / fps, frame
+            idx += 1
+    finally:
+        if proc.stdout:
+            proc.stdout.close()
+        proc.terminate()
+        proc.wait()
+
+
+def detect_persons(net, frame_bgr: np.ndarray) -> list[Box]:
+    """Detecta pessoas num frame BGR e devolve boxes normalizados (0-1).
+
+    Letterbox para 640×640 (mantém proporção, borda cinza), blob 1/255,
+    saída YOLOv8 ``(1, 84, 8400)`` → filtra classe 0 (person) por confiança,
+    NMS, desfaz o letterbox e normaliza pelas dimensões do frame.
+    """
+    h, w = frame_bgr.shape[:2]
+    scale = DETECT_INPUT / max(h, w)
+    new_w, new_h = round(w * scale), round(h * scale)
+    resized = cv2.resize(frame_bgr, (new_w, new_h))
+    pad_x = (DETECT_INPUT - new_w) // 2
+    pad_y = (DETECT_INPUT - new_h) // 2
+    canvas = np.full((DETECT_INPUT, DETECT_INPUT, 3), 114, dtype=np.uint8)
+    canvas[pad_y : pad_y + new_h, pad_x : pad_x + new_w] = resized
+
+    blob = cv2.dnn.blobFromImage(canvas, scalefactor=1 / 255.0, swapRB=True)
+    net.setInput(blob)
+    out = net.forward()  # (1, 84, 8400): 4 coords + 80 classes, por âncora
+    preds = out[0].T  # (8400, 84)
+
+    confs = preds[:, 4]  # classe 0 = person
+    keep = confs >= PERSON_CONF
+    if not np.any(keep):
+        return []
+    preds, confs = preds[keep], confs[keep]
+
+    # cx,cy,w,h no espaço 640×640 do letterbox → x,y,w,h topo-esquerda p/ NMS.
+    rects = []
+    for cx, cy, bw, bh in preds[:, :4]:
+        rects.append([float(cx - bw / 2), float(cy - bh / 2), float(bw), float(bh)])
+    idxs = cv2.dnn.NMSBoxes(rects, confs.astype(float).tolist(), PERSON_CONF, NMS_IOU)
+    if len(idxs) == 0:
+        return []
+
+    boxes: list[Box] = []
+    for i in np.array(idxs).flatten():
+        x, y, bw, bh = rects[i]
+        # Desfaz o letterbox e normaliza pelo frame original.
+        cx = (x + bw / 2 - pad_x) / scale / w
+        cy = (y + bh / 2 - pad_y) / scale / h
+        nw = bw / scale / w
+        nh = bh / scale / h
+        if nw <= 0 or nh <= 0:
+            continue
+        boxes.append(
+            Box(
+                cx=float(np.clip(cx, 0, 1)),
+                cy=float(np.clip(cy, 0, 1)),
+                w=float(min(nw, 1.0)),
+                h=float(min(nh, 1.0)),
+                conf=float(confs[i]),
+            )
+        )
+    return boxes
+
+
+def _median_box(boxes: list[Box]) -> Box:
+    return Box(
+        cx=float(np.median([b.cx for b in boxes])),
+        cy=float(np.median([b.cy for b in boxes])),
+        w=float(np.median([b.w for b in boxes])),
+        h=float(np.median([b.h for b in boxes])),
+        conf=float(np.median([b.conf for b in boxes])),
+    )
+
+
+def _pick_dj_track(detected_frames: list[list[Box]]) -> tuple[Box | None, list[list[Box]]]:
+    """Escolhe a track dominante (o DJ) e devolve ``(dj_box, resto_por_frame)``.
+
+    Associação gulosa por proximidade de centro entre frames detectados
+    consecutivos. A track do DJ é a de maior soma de "peso de protagonista"
+    (área × centralidade × confiança) vezes a persistência (fração dos frames
+    em que aparece). O box devolvido é a MEDIANA da track — imune a flicker
+    de detecção. ``resto_por_frame`` são as demais pessoas de cada frame
+    (candidatas a público).
+    """
+    tracks: list[dict] = []  # {"boxes": [(frame_idx, Box)], "last": Box}
+    for f_idx, persons in enumerate(detected_frames):
+        used = set()
+        for box in persons:
+            best, best_dist = None, TRACK_MAX_DIST
+            for t_idx, track in enumerate(tracks):
+                if t_idx in used:
+                    continue
+                last = track["last"]
+                dist = math.hypot(box.cx - last.cx, box.cy - last.cy)
+                if dist < best_dist:
+                    best, best_dist = t_idx, dist
+            if best is None:
+                tracks.append({"boxes": [(f_idx, box)], "last": box})
+                used.add(len(tracks) - 1)
+            else:
+                tracks[best]["boxes"].append((f_idx, box))
+                tracks[best]["last"] = box
+                used.add(best)
+
+    if not tracks:
+        return None, [[] for _ in detected_frames]
+
+    n_frames = max(1, len(detected_frames))
+
+    def protagonism(track: dict) -> float:
+        weight = 0.0
+        for _, b in track["boxes"]:
+            centrality = 1.0 - min(1.0, abs(b.cx - 0.5) * 2)
+            weight += b.w * b.h * (0.35 + 0.65 * centrality) * b.conf
+        return weight * (len(track["boxes"]) / n_frames)
+
+    dj_track = max(tracks, key=protagonism)
+    dj_ids = {id(b) for _, b in dj_track["boxes"]}
+    rest = [[b for b in persons if id(b) not in dj_ids] for persons in detected_frames]
+    return _median_box([b for _, b in dj_track["boxes"]]), rest
+
+
+def analyze_window(
+    video_path: str,
+    start_sec: float,
+    duration: float,
+    net=None,
+    detect_every: int = 3,
+    fps: float = 2.0,
+) -> WindowVisual:
+    """Analisa uma janela candidata e devolve o :class:`WindowVisual`.
+
+    ``detect_every``: roda o YOLO a cada N frames amostrados (os demais só
+    contribuem para o movimento). Com ``net=None`` a janela é avaliada apenas
+    pelo movimento (``visual_score = motion_score``).
+    """
+    samples: list[FrameSample] = []
+    prev_gray: np.ndarray | None = None
+
+    for idx, (t, frame) in enumerate(iter_frames(video_path, start_sec, duration, fps)):
+        if cv2 is not None:
+            small = cv2.resize(frame, (MOTION_SIZE, MOTION_SIZE * frame.shape[0] // frame.shape[1]))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        else:
+            # Sem cv2: downsample por stride + média dos canais (mais grosso,
+            # mas mantém o sinal de movimento).
+            stride = max(1, frame.shape[1] // MOTION_SIZE)
+            gray = frame[::stride, ::stride].mean(axis=2).astype(np.float32)
+        motion = 0.0
+        if prev_gray is not None and prev_gray.shape == gray.shape:
+            motion = float(np.abs(gray - prev_gray).mean() / 255.0)
+        prev_gray = gray
+
+        persons: list[Box] | None = None
+        if net is not None and idx % max(1, detect_every) == 0:
+            try:
+                persons = detect_persons(net, frame)
+            except Exception:  # noqa: BLE001 - inferência nunca derruba o job
+                logger.exception("Falha na detecção de pessoas (t=%.1fs)", t)
+        samples.append(FrameSample(t=t, motion=motion, persons=persons))
+
+    wv = WindowVisual(samples=samples)
+    if not samples:
+        return wv
+
+    motions = np.array([s.motion for s in samples[1:]] or [0.0])
+    raw = 0.5 * float(motions.mean()) + 0.5 * float(np.percentile(motions, 90))
+    wv.motion_score = float(np.clip(raw / MOTION_REF, 0.0, 1.0))
+
+    detected_frames = [s.persons for s in samples if s.persons is not None]
+    wv.detected = len(detected_frames) > 0
+    if wv.detected:
+        with_person = sum(1 for p in detected_frames if p)
+        wv.presence_ratio = with_person / len(detected_frames)
+
+        wv.dj_box, rest = _pick_dj_track(detected_frames)
+
+        # Público: frames com 3+ pessoas além do DJ. O box do público é a
+        # mediana do bounding box do cluster nesses frames.
+        crowd_counts = [len(r) for r in rest]
+        crowd_frames = [r for r in rest if len(r) >= 3]
+        if crowd_counts:
+            wv.crowd_score = float(
+                np.clip(np.median(crowd_counts) / CROWD_REF, 0.0, 1.0)
+            )
+        if crowd_frames:
+            hulls = []
+            for persons in crowd_frames:
+                x0 = min(b.cx - b.w / 2 for b in persons)
+                x1 = max(b.cx + b.w / 2 for b in persons)
+                y0 = min(b.cy - b.h / 2 for b in persons)
+                y1 = max(b.cy + b.h / 2 for b in persons)
+                hulls.append(
+                    Box(cx=(x0 + x1) / 2, cy=(y0 + y1) / 2, w=x1 - x0, h=y1 - y0, conf=1.0)
+                )
+            wv.crowd_box = _median_box(hulls)
+
+        wv.visual_score = float(
+            np.clip(
+                0.5 * wv.motion_score
+                + 0.25 * wv.presence_ratio
+                + 0.25 * wv.crowd_score,
+                0.0,
+                1.0,
+            )
+        )
+    else:
+        wv.visual_score = wv.motion_score
+    return wv
+
+
+def get_beat_times(
+    video_path: str,
+    start_sec: float,
+    duration: float,
+    bpm_hint: int = 0,
+) -> list[float]:
+    """Instantes dos beats (s, relativos à janela) via ``librosa.beat_track``.
+
+    Extrai só o áudio da janela (mono 22.05 kHz) — custo desprezível para
+    60–75 s. Lista vazia se não detectar beats (o chamador usa grade fixa).
+    """
+    import librosa
+    import soundfile as sf
+
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-v", "error",
+            "-ss", str(max(0.0, start_sec)),
+            "-i", video_path,
+            "-t", str(duration),
+            "-vn",
+            "-ac", "1",
+            "-ar", "22050",
+            "-c:a", "pcm_s16le",
+            wav_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 or not os.path.getsize(wav_path):
+            return []
+        y, sr = sf.read(wav_path, dtype="float32")
+        if y.ndim > 1:
+            y = y.mean(axis=1)
+        y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+        _, beat_frames = librosa.beat.beat_track(
+            y=y, sr=sr, start_bpm=float(bpm_hint) if bpm_hint else 120.0
+        )
+        times = librosa.frames_to_time(beat_frames, sr=sr)
+        return [float(t) for t in np.atleast_1d(times)]
+    except Exception:  # noqa: BLE001 - sem beats → grade fixa no chamador
+        logger.exception("Falha ao detectar beats da janela %.1fs", start_sec)
+        return []
+    finally:
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
