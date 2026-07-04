@@ -17,7 +17,7 @@ export async function POST(
   // Só o dono do projeto pode dispará-lo.
   const { data: project } = await supabaseAdmin
     .from("projects")
-    .select("id, user_id")
+    .select("id, user_id, cut_style, max_cuts")
     .eq("id", params.id)
     .single();
   if (!project || project.user_id !== user.id) {
@@ -57,6 +57,12 @@ export async function POST(
     );
   }
 
+  // Quantidade de cortes: a escolha feita na criação do projeto, re-clampada
+  // ao máximo do plano ATUAL (protege contra downgrade entre criação e
+  // process). Sem escolha (NULL), usa o teto do plano.
+  const planMax = planOf(user.plan).maxCutsPerSet;
+  const maxCuts = Math.min(Math.max(1, project.max_cuts ?? planMax), planMax);
+
   const res = await fetch(`${workerUrl}/process`, {
     method: "POST",
     headers: {
@@ -66,7 +72,8 @@ export async function POST(
     body: JSON.stringify({
       project_id: params.id,
       limit_seconds: limitSeconds,
-      max_cuts: planOf(user.plan).maxCutsPerSet,
+      max_cuts: maxCuts,
+      cut_style: project.cut_style ?? "basic",
     }),
   });
 

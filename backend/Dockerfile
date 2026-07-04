@@ -12,6 +12,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# Modelo de detecção de pessoas (YOLOv8n ONNX) usado pela análise visual.
+COPY models ./models
 
 # Railway injeta $PORT. Default 8000 para rodar local.
 ENV PORT=8000

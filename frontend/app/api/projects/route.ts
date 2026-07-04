@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { getPlanUsage } from "@/lib/plans";
+import { getPlanUsage, planOf } from "@/lib/plans";
 import { canonicalYoutubeUrl, extractYoutubeId } from "@/lib/youtube";
 
 // Lista os projetos do usuário autenticado (mais recentes primeiro). O estúdio
@@ -35,13 +35,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "não autenticado" }, { status: 401 });
   }
 
-  const { name, filename, youtube_url, duration_seconds, size_bytes } =
+  const { name, filename, youtube_url, duration_seconds, size_bytes, cut_style, max_cuts } =
     await req.json();
   if (!name || (!filename && !youtube_url)) {
     return NextResponse.json(
       { error: "name e (filename ou youtube_url) são obrigatórios" },
       { status: 400 }
     );
+  }
+
+  // Preferências de geração (opcionais). O estilo é validado estrito; a
+  // quantidade aceita 1..30 e é clampada ao máximo do plano — a UI já limita,
+  // o clamp cobre chamadas diretas à API (e é reaplicado no /process).
+  const cutStyle = cut_style ?? "basic";
+  if (cutStyle !== "basic" && cutStyle !== "dynamic") {
+    return NextResponse.json(
+      { error: "cut_style deve ser 'basic' ou 'dynamic'" },
+      { status: 400 }
+    );
+  }
+  let maxCuts: number | null = null;
+  if (max_cuts !== undefined && max_cuts !== null) {
+    if (!Number.isInteger(max_cuts) || max_cuts < 1 || max_cuts > 30) {
+      return NextResponse.json(
+        { error: "max_cuts deve ser um inteiro entre 1 e 30" },
+        { status: 400 }
+      );
+    }
+    maxCuts = Math.min(max_cuts, planOf(user.plan).maxCutsPerSet);
   }
 
   // Valida o link antes de criar qualquer linha no banco.
@@ -82,7 +103,13 @@ export async function POST(req: NextRequest) {
   // 1. Cria o projeto (vinculado ao usuário autenticado)
   const { data: project, error: projErr } = await supabaseAdmin
     .from("projects")
-    .insert({ name, status: "processing", user_id: user.id })
+    .insert({
+      name,
+      status: "processing",
+      user_id: user.id,
+      cut_style: cutStyle,
+      max_cuts: maxCuts,
+    })
     .select("id")
     .single();
   if (projErr || !project) {
