@@ -11,6 +11,9 @@ class ProcessRequest(BaseModel):
     # de plano (usa só os defaults do worker).
     limit_seconds: int | None = None
     max_cuts: int | None = None
+    # Estilo de corte escolhido na criação do projeto: 'basic' (corte seco,
+    # crop central fixo) ou 'dynamic' (zooms no DJ/público no ritmo da batida).
+    cut_style: str = "basic"
 
 
 class ProjectCreated(BaseModel):

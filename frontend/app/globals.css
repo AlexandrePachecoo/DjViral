@@ -188,6 +188,14 @@ body {
   }
 }
 
+/* Novo set: os 2 cards de estilo de corte (Seco / Dinâmico) empilham em
+   telas muito estreitas. */
+@media (max-width: 420px) {
+  .dj-style-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* O wrapper de scroll da tabela é inofensivo no desktop (não há overflow). */
 .dj-table-scroll {
   overflow-x: auto;

@@ -40,11 +40,16 @@ efêmero, sem FFmpeg nativo, sem worker de longa duração).
 
 ```
 Navegador (Vercel UI)
-  1. POST /api/projects {name}       → cria project + source, gera signed upload URL
+  1. POST /api/projects {name, cut_style?, max_cuts?}
+                                     → cria project + source, gera signed upload URL
+                                       (cut_style: 'basic' seco | 'dynamic' com zooms;
+                                        max_cuts: 1..30, clampado ao plano)
   2. PUT do vídeo DIRETO no Supabase Storage (signed URL) — não passa pela Vercel
   3. POST /api/projects/{id}/process → Vercel chama o worker Railway
-                                        POST /process {project_id} (header X-Worker-Secret)
-  4. Worker (background): baixa o mp4 do Supabase → analyzer → clipper
+                                        POST /process {project_id, limit_seconds,
+                                        max_cuts, cut_style} (header X-Worker-Secret)
+  4. Worker (background): baixa o mp4 do Supabase → analyzer (áudio) → visual
+                          (re-rank + alvos de zoom) → clipper (seco ou dinâmico)
                           → upload dos clipes → insere cuts → project.status=done
   5. Navegador faz polling em GET /api/projects/{id} até status=done
 ```
@@ -65,17 +70,45 @@ YouTube quando necessário.
 1. `analyzer.py` — FFmpeg extrai o áudio para um WAV temporário (mono
    22050 Hz) e o librosa lê em **blocos** (`librosa.stream`): calcula **RMS**
    (energia), **onset strength** (fluxo espectral, impacto dos beats) e
-   contraste de energia pré/pós drop; normaliza e combina num *score de
-   viralidade*; `scipy.signal.find_peaks` seleciona os `TOP_N` picos. O BPM é
-   estimado pela mediana de 3 janelas curtas (o tempograma do set inteiro
-   custaria GB de RAM). Pico de memória constante (~100–150 MB) independente
-   da duração do set.
-2. `clipper.py` — FFmpeg corta ~60s de vídeo em torno de cada pico (re-encode
-   para corte preciso; seek com clamp em 0).
-3. `pipeline.py` — orquestra download → analyze → cut → upload → persiste
-   `cuts`. O download do vídeo é em **streaming** (chunks para disco, nunca o
-   arquivo inteiro em RAM) e um semáforo limita jobs pesados simultâneos
-   (`MAX_CONCURRENT_JOBS`, default 1).
+   contraste de energia pré/pós drop; normaliza e combina num *score musical*;
+   `scipy.signal.find_peaks` seleciona os picos. O BPM é estimado pela mediana
+   de 3 janelas curtas (o tempograma do set inteiro custaria GB de RAM). Pico
+   de memória constante (~100–150 MB) independente da duração do set.
+2. `visual.py` — análise visual SÓ das janelas candidatas (~60s em torno de
+   cada pico de áudio, nunca o set inteiro): frames amostrados (~2 fps,
+   640 px) lidos frame a frame de um pipe do FFmpeg, **movimento** (frame
+   differencing) e **detecção de pessoas** com YOLOv8n ONNX via `cv2.dnn`
+   (CPU, modelo commitado em `backend/models/yolov8n.onnx`, sem torch).
+   Deriva o `visual_score` (0-1), o box do **DJ** (track dominante, box
+   mediano — imune a flicker) e o box do **público** (frames com 3+ pessoas
+   além do DJ). `get_beat_times` detecta os beats da janela para alinhar os
+   cortes do estilo dinâmico. Qualquer falha (modelo ausente, cv2 quebrado)
+   degrada para score de movimento — a fase visual nunca derruba um job.
+3. **Score combinado** — o áudio gera mais candidatos que o pedido
+   (`min(2N, 45)`), cada janela ganha `score = 0.6*musical + 0.4*visual`
+   (pesos em config), re-ranqueia e ficam os N melhores. Um *time budget*
+   (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
+   as janelas restantes ficam só com o score musical. As parcelas são
+   persistidas em `cuts.score_musical` / `cuts.score_visual`.
+4. `clipper.py` + `dynamic.py` — dois estilos de corte, escolhidos por
+   projeto (`projects.cut_style`):
+   - **`basic` (seco)** — `clipper.cut()`: crop central 9:16 fixo + re-encode
+     (comportamento original).
+   - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
+     de 3–8s (wide ↔ zoom no DJ ↔ zoom no público) com fronteiras alinhadas
+     aos beats e punch-in no DJ exatamente no drop; `clipper.cut_dynamic()`
+     renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
+     shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
+     alternância cortada no beat + drift suave opcional via `zoompan` com
+     supersample 2× anti-jitter; áudio `-map 0:a` contínuo). Fallbacks: sem
+     pessoa detectada → zoom central; cena parada e vazia, ou erro no render
+     → corte seco. O corte nunca é perdido por causa do zoom.
+5. `pipeline.py` — orquestra download → analyze → visual/re-rank → cut →
+   upload → persiste `cuts`. O download do vídeo é em **streaming** (chunks
+   para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs
+   pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1). O re-corte
+   (`POST /recut`) respeita o `cut_style` do projeto: num projeto dinâmico,
+   re-roda a análise visual só na janela nova e regenera os zooms.
 
 ### Frontend / UI (`frontend/app/`)
 
@@ -135,7 +168,11 @@ ganchos detalhados em [`design.md`](design.md).
 
 - **Worker (`backend/.env`):** `SUPABASE_URL`, `SUPABASE_KEY` (service role),
   `SUPABASE_BUCKET=clips`, `SOURCES_BUCKET=sources`, `WORKER_SECRET`,
-  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`.
+  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`. Análise visual/corte
+  dinâmico (opcionais): `VISUAL_ENABLED`, `YOLO_MODEL_PATH`, `VISUAL_FPS`,
+  `VISUAL_DETECT_EVERY`, `VISUAL_CANDIDATES_FACTOR`, `VISUAL_CANDIDATES_CAP`,
+  `VISUAL_BUDGET_SECONDS`, `SCORE_MUSIC_WEIGHT`, `DYNAMIC_SHOT_MIN/MAX`,
+  `DYNAMIC_ZOOM_MAX`, `DYNAMIC_DRIFT` (0 desliga o zoompan).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
@@ -176,20 +213,26 @@ própria página da AbacatePay; cartão renova automaticamente todo mês.
 
 **Enforcement da cota:**
 1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do
-   arquivo) contra a cota restante → HTTP 402 com `code: "plan_limit"`.
-2. `POST /api/projects/{id}/process` envia `limit_seconds` (cota restante) e
-   `max_cuts` ao worker.
+   arquivo) contra a cota restante → HTTP 402 com `code: "plan_limit"`; o
+   `max_cuts` escolhido pelo usuário (slider do formulário, 1..30) é clampado
+   ao `maxCutsPerSet` do plano e persistido em `projects.max_cuts`.
+2. `POST /api/projects/{id}/process` envia `limit_seconds` (cota restante),
+   `max_cuts` (escolha do usuário re-clampada ao plano ATUAL — protege contra
+   downgrade entre criação e process) e `cut_style` ao worker.
 3. O worker mede a duração REAL com ffprobe, grava em `sources.duracao` (é o
    que conta na cota) e aborta com `status=error` se estourar `limit_seconds`;
-   `max_cuts` limita o `top_n` da análise.
+   `max_cuts` limita quantos cortes são gerados (o áudio gera mais candidatos
+   e o re-rank visual fica com os N melhores).
 
 ## Evoluções planejadas (ainda não implementadas)
 
 - **Upload resumável (TUS):** o upload atual é um PUT único na signed URL,
   frágil para vídeos de vários GB. Migrar para o upload resumável do Supabase.
 - **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
-  escala real.
-- **Score mais rico:** detecção de BPM, contraste de energia pré/pós drop.
+  escala real (o corte dinâmico deixa os jobs mais longos; a fila serial do
+  semáforo cresce mais rápido).
+- **Tuning do corte dinâmico:** pesos do score visual, durações de shot e
+  intensidade de zoom calibrados com sets reais de balada (pouca luz, laser).
 
 ## Autenticação
 
@@ -236,6 +279,8 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - status
 - share_token — token do link público (`/s/<token>`); NULL = não compartilhado
 - share_message — mensagem do dono exibida no topo da página pública (opcional)
+- cut_style (`basic | dynamic`) — estilo de corte escolhido na criação
+- max_cuts — quantidade de cortes pedida (NULL = máximo do plano)
 - date_create
 
 ### Source (vídeo original)
@@ -262,7 +307,9 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - inicio
 - fim
 - duracao
-- score (potencial viral)
+- score (potencial viral) — combinado: `0.6*score_musical + 0.4*score_visual`
+- score_musical / score_visual — parcelas do score (NULL em cortes antigos ou
+  quando a análise visual não rodou)
 - url
 - status (`ready | processing | error`) — `processing` enquanto o worker
   regenera o vídeo num re-corte (`POST /recut`)

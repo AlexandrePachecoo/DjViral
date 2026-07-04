@@ -79,6 +79,19 @@ alter table sources add column if not exists source_type text not null default '
 create index if not exists idx_sources_project on sources (project_id);
 create index if not exists idx_cuts_project on cuts (project_id);
 
+-- Migração: preferências de geração escolhidas na criação do projeto.
+-- `cut_style`: 'basic' (corte seco, crop central fixo) | 'dynamic' (zoom no
+-- DJ/público sincronizado com a batida). `max_cuts`: quantos cortes o usuário
+-- pediu (NULL = máximo do plano; sempre clampado ao plano ao disparar o worker).
+alter table projects add column if not exists cut_style text not null default 'basic';
+alter table projects add column if not exists max_cuts integer;
+
+-- Migração: decomposição do score do corte. `score` passa a ser o combinado
+-- (musical + visual); as parcelas ficam disponíveis para a UI. Cortes antigos
+-- ficam com as parcelas NULL.
+alter table cuts add column if not exists score_musical double precision;
+alter table cuts add column if not exists score_visual double precision;
+
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)
 -- ---------------------------------------------------------------------------

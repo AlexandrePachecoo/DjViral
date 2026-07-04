@@ -34,7 +34,11 @@ def process(
         raise HTTPException(status_code=401, detail="Segredo inválido")
 
     background_tasks.add_task(
-        process_project, body.project_id, body.limit_seconds, body.max_cuts
+        process_project,
+        body.project_id,
+        body.limit_seconds,
+        body.max_cuts,
+        body.cut_style,
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
 

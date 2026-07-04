@@ -9,6 +9,10 @@ import { type ApiCut, toStudioCut, downloadUrl } from "./cut";
 // cortes prontos (seleção/salvar) ou erro.
 type Phase = "form" | "uploading" | "processing" | "done" | "error";
 
+// Estilo de corte: 'basic' = corte seco (enquadramento central fixo);
+// 'dynamic' = zooms no DJ/público cortados no ritmo da batida.
+type CutStyle = "basic" | "dynamic";
+
 type Props = {
   // Recarrega a aba "Cortes salvos" depois que o usuário salva cortes.
   onSaved: () => void;
@@ -40,6 +44,11 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [cutStyle, setCutStyle] = useState<CutStyle>("basic");
+  // Quantidade de cortes desejada e o teto do plano (free=10, pagos=30).
+  // Começa em 10 (teto do free) e sobe quando o /api/billing responder.
+  const [numCuts, setNumCuts] = useState(10);
+  const [maxCuts, setMaxCuts] = useState(10);
   const [message, setMessage] = useState("");
   const [limitHit, setLimitHit] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -48,6 +57,30 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Teto de cortes do plano do usuário (mesma fonte da aba Plano). Enquanto
+  // não responde, a UI fica no teto do free (10) — só limita, nunca libera
+  // além do plano (o backend re-clampa de qualquer forma).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/billing");
+        if (!res.ok) return;
+        const data = await res.json();
+        const planMax = data?.usage?.maxCutsPerSet;
+        if (!cancelled && typeof planMax === "number" && planMax > 0) {
+          setMaxCuts(planMax);
+          setNumCuts(planMax);
+        }
+      } catch {
+        // segue com o default de 10
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Polling do status enquanto o worker processa (mesmo padrão do MVP).
   useEffect(() => {
@@ -88,6 +121,8 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
           filename: file.name,
           duration_seconds: duration,
           size_bytes: file.size,
+          cut_style: cutStyle,
+          max_cuts: numCuts,
         }),
       });
       if (!createRes.ok) {
@@ -178,8 +213,13 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
           file={file}
           message={message}
           limitHit={limitHit}
+          cutStyle={cutStyle}
+          numCuts={numCuts}
+          maxCuts={maxCuts}
           onName={setName}
           onFile={setFile}
+          onCutStyle={setCutStyle}
+          onNumCuts={setNumCuts}
           onSubmit={handleSubmit}
           onUpgrade={onUpgrade}
           onRetry={() => {
@@ -404,8 +444,13 @@ function UploadForm({
   file,
   message,
   limitHit,
+  cutStyle,
+  numCuts,
+  maxCuts,
   onName,
   onFile,
+  onCutStyle,
+  onNumCuts,
   onSubmit,
   onUpgrade,
   onRetry,
@@ -415,13 +460,31 @@ function UploadForm({
   file: File | null;
   message: string;
   limitHit: boolean;
+  cutStyle: CutStyle;
+  numCuts: number;
+  maxCuts: number;
   onName: (v: string) => void;
   onFile: (f: File | null) => void;
+  onCutStyle: (s: CutStyle) => void;
+  onNumCuts: (n: number) => void;
   onSubmit: (e: React.FormEvent) => void;
   onUpgrade: () => void;
   onRetry: () => void;
 }) {
   const busy = phase === "uploading" || phase === "processing";
+
+  const styleOptions: { id: CutStyle; title: string; desc: string }[] = [
+    {
+      id: "basic",
+      title: "Corte seco",
+      desc: "Enquadramento fixo no centro. Processamento mais rápido.",
+    },
+    {
+      id: "dynamic",
+      title: "Corte dinâmico",
+      desc: "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais.",
+    },
+  ];
 
   return (
     <div
@@ -473,6 +536,88 @@ function UploadForm({
           disabled={busy}
           style={inputStyle}
         />
+
+        {/* Estilo de corte */}
+        <div>
+          <div style={fieldLabel}>Estilo de corte</div>
+          <div
+            className="dj-style-grid"
+            role="radiogroup"
+            aria-label="Estilo de corte"
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
+          >
+            {styleOptions.map((opt) => {
+              const active = cutStyle === opt.id;
+              return (
+                <div
+                  key={opt.id}
+                  role="radio"
+                  aria-checked={active}
+                  tabIndex={busy ? -1 : 0}
+                  onClick={() => !busy && onCutStyle(opt.id)}
+                  onKeyDown={(e) => {
+                    if (!busy && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault();
+                      onCutStyle(opt.id);
+                    }
+                  }}
+                  style={{
+                    padding: "12px 13px",
+                    borderRadius: 10,
+                    cursor: busy ? "default" : "pointer",
+                    opacity: busy ? 0.6 : 1,
+                    background: active ? theme.accentSoft : theme.surface,
+                    border: `1px solid ${active ? theme.accentBorder : theme.borderStrong}`,
+                    boxShadow: active ? `0 0 0 1px ${theme.accentBorder}` : "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      font: `500 14px ${font.display}`,
+                      color: active ? theme.accent : theme.textPrimary,
+                      marginBottom: 3,
+                    }}
+                  >
+                    {opt.title}
+                  </div>
+                  <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.4 }}>
+                    {opt.desc}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Quantidade de cortes */}
+        <div>
+          <div style={{ ...fieldLabel, display: "flex", justifyContent: "space-between" }}>
+            <span>Quantidade de cortes</span>
+            <span style={{ color: theme.accent, fontWeight: 600 }}>{numCuts}</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={maxCuts}
+            value={Math.min(numCuts, maxCuts)}
+            onChange={(e) => onNumCuts(Number(e.target.value))}
+            disabled={busy}
+            aria-label="Quantidade de cortes"
+            style={{ width: "100%", accentColor: theme.accent }}
+          />
+          <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
+            Seu plano permite até {maxCuts} cortes por set.{" "}
+            {maxCuts < 30 && (
+              <span
+                onClick={onUpgrade}
+                style={{ color: theme.accent, cursor: "pointer", textDecoration: "underline" }}
+              >
+                Ver planos
+              </span>
+            )}
+          </div>
+        </div>
+
         <button
           type="submit"
           disabled={busy || !name || !file}
@@ -520,6 +665,12 @@ function UploadForm({
     </div>
   );
 }
+
+const fieldLabel: React.CSSProperties = {
+  fontSize: 13,
+  color: theme.textSecondary,
+  marginBottom: 7,
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
