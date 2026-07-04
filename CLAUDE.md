@@ -100,9 +100,14 @@ YouTube quando necessário.
      renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
      shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
      alternância cortada no beat + drift suave opcional via `zoompan` com
-     supersample 2× anti-jitter; áudio `-map 0:a` contínuo). Fallbacks: sem
-     pessoa detectada → zoom central; cena parada e vazia, ou erro no render
-     → corte seco. O corte nunca é perdido por causa do zoom.
+     supersample 2× anti-jitter; áudio `-map 0:a` contínuo). Sem pessoa
+     detectada → zoom central. O render em si tem **3 níveis de fallback**
+     (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
+     plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
+     leve em CPU/memória) → corte seco. `clipper._run_ffmpeg` roda todo
+     FFmpeg com timeout (evita job travado) e, se falhar, distingue erro real
+     de filtro vs. processo morto por sinal externo (ex. OOM) na mensagem —
+     o corte nunca é perdido por causa do zoom.
 5. `pipeline.py` — orquestra download → analyze → visual/re-rank → cut →
    upload → persiste `cuts`. O download do vídeo é em **streaming** (chunks
    para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs

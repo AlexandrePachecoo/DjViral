@@ -1,9 +1,82 @@
 """Wrapper sobre o FFmpeg para cortar clipes de vídeo em torno de um pico."""
 import os
+import re
 import subprocess
 
 from .config import settings
 from .dynamic import Shot
+
+# Linhas de progresso do FFmpeg (uma por frame/flush, separadas por \r, não
+# \n) — não são erro, só spam. Filtradas antes de compor a mensagem de falha
+# para o texto de erro real (se existir) não ficar escondido no meio delas.
+_PROGRESS_LINE = re.compile(r"^\s*(frame=|size=)")
+# Linhas ruidosas mas inofensivas que também não ajudam a diagnosticar.
+_NOISE_LINE = re.compile(r"^\s*(Input #|Stream mapping:|Press \[q\])")
+
+
+def _clean_stderr_tail(stderr: str, n: int = 30) -> str:
+    """Últimas ``n`` linhas REAIS do stderr, sem o spam de progresso do FFmpeg.
+
+    O FFmpeg emite uma linha de progresso (``frame=...``) por frame/flush,
+    separadas por ``\\r`` (não ``\\n``); pegar só a cauda bruta do stderr quase
+    sempre cai no meio de uma dessas linhas e esconde qualquer texto de erro
+    real que exista antes dela.
+    """
+    lines = stderr.splitlines()
+    real_lines = [
+        ln for ln in lines if not _PROGRESS_LINE.match(ln) and not _NOISE_LINE.match(ln)
+    ]
+    return "\n".join(real_lines[-n:])
+
+
+def _ffmpeg_failure(error_prefix: str, returncode: int, stderr: str) -> RuntimeError:
+    """Monta uma mensagem de erro legível a partir do resultado do FFmpeg.
+
+    Detecta processo morto por SINAL (``returncode`` negativo em POSIX —
+    tipicamente SIGKILL de um OOM killer externo) e nomeia isso explicitamente
+    em vez de deixar o chamador adivinhar. Se não sobrar nenhuma linha real
+    depois de filtrar o progresso, isso por si só é informativo: o FFmpeg não
+    chegou a reportar um erro, o processo provavelmente morreu externamente.
+    """
+    tail = _clean_stderr_tail(stderr)
+    if returncode < 0:
+        cause = f"processo morto pelo sinal {-returncode} (provável kill externo/OOM)"
+    elif not tail.strip():
+        cause = (
+            f"saiu com código {returncode} sem mensagem de erro (só progresso) "
+            "— processo provavelmente morto externamente"
+        )
+    else:
+        cause = f"código {returncode}"
+    detail = f"\n{tail}" if tail.strip() else ""
+    return RuntimeError(f"{error_prefix}: {cause}{detail}")
+
+
+def _run_ffmpeg(
+    cmd: list[str], output_path: str, duration: float, error_prefix: str
+) -> None:
+    """Roda um comando FFmpeg com timeout e traduz falhas num erro legível.
+
+    Sem timeout, um FFmpeg travado prende o job (e o semáforo de concorrência)
+    indefinidamente sem nunca aparecer no log. O timeout é generoso (mín. 2
+    min, ou 8x a duração do clipe) — folga de sobra pra qualquer render real,
+    curto o suficiente pra nunca travar um job pra sempre.
+    """
+    timeout = max(120.0, duration * 8)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{error_prefix}: FFmpeg travou (> {timeout:.0f}s) e foi encerrado"
+        ) from None
+
+    if result.returncode != 0:
+        raise _ffmpeg_failure(error_prefix, result.returncode, result.stderr)
+    if not os.path.exists(output_path):
+        # Raro (returncode 0 mas sem arquivo) — mesma limpeza de stderr.
+        raise _ffmpeg_failure(f"{error_prefix} (sem arquivo de saída)", 0, result.stderr)
 
 
 def cut(
@@ -52,10 +125,7 @@ def cut(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or not os.path.exists(output_path):
-        raise RuntimeError(f"FFmpeg falhou ao cortar clipe: {result.stderr[-2000:]}")
-
+    _run_ffmpeg(cmd, output_path, duration, "FFmpeg falhou ao cortar clipe")
     return output_path
 
 
@@ -67,6 +137,7 @@ def cut_dynamic(
     duration: int = 60,
     pre_roll: int = 5,
     fps: float = 30.0,
+    force_static: bool = False,
 ) -> str:
     """Corta um clipe "dinâmico": um enquadramento (shot) por trecho, com os
     cortes alinhados aos beats e zoom-drift suave opcional dentro dos shots.
@@ -85,6 +156,12 @@ def cut_dynamic(
     - ``concat`` re-emenda os branches. O áudio vai direto do input
       (``-map 0:a``) — os cortes são só no vídeo, o áudio é contínuo por
       construção.
+
+    ``force_static=True`` ignora o ``drift`` de TODOS os shots (nenhum vira
+    zoompan/supersample — todos usam o branch estático, igual aos shots
+    ``wide``). É o 2º nível do fallback do pipeline: mesmo shot plan (mesmos
+    cortes/tempos/beats), sem a parte mais pesada em CPU/memória, para quando
+    a versão com zoom falha num container mais apertado.
     """
     if not shots:
         raise ValueError("cut_dynamic exige ao menos um shot")
@@ -100,7 +177,7 @@ def cut_dynamic(
             f"[v{i}]trim=start={shot.t0:.3f}:end={shot.t1:.3f},"
             f"setpts=PTS-STARTPTS,crop={cw}:{ch}:{cx}:{cy}"
         )
-        if shot.drift:
+        if shot.drift and not force_static:
             # Rampa linear de zoom ao longo do shot (frames do shot = F).
             # Supersample 2x antes do zoompan: o x/y inteiro do zoompan em
             # resolução final treme; em 2x o erro cai para meio pixel.
@@ -134,6 +211,14 @@ def cut_dynamic(
         "-i", input_file,
         "-t", str(duration),
         "-threads", str(settings.ffmpeg_threads),
+        # Sem isso o FFmpeg escalona o filtro (split/scale/zoompan) em uma
+        # thread por núcleo do host (~34 na Railway) — a mesma classe de
+        # problema que -threads já resolve pro encoder, nunca estendida pro
+        # lado do filtro. Com vários branches de zoompan supersampleados
+        # (2160x3840) ativos ao mesmo tempo, isso pode inflar bastante o pico
+        # de memória do processo.
+        "-filter_threads", str(settings.dynamic_filter_threads),
+        "-filter_complex_threads", str(settings.dynamic_filter_threads),
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "0:a?",
@@ -144,11 +229,9 @@ def cut_dynamic(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or not os.path.exists(output_path):
-        raise RuntimeError(
-            "FFmpeg falhou no corte dinâmico: "
-            f"{result.stderr[-2000:]}\nfiltergraph: {filter_complex}"
-        )
+    try:
+        _run_ffmpeg(cmd, output_path, duration, "FFmpeg falhou no corte dinâmico")
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc}\nfiltergraph: {filter_complex}") from exc
 
     return output_path
