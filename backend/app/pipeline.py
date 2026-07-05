@@ -417,19 +417,22 @@ def _render_clip(
     O corte dinâmico exige as dimensões da fonte e vale a pena quando há
     gente detectada OU movimento na cena; janela parada e vazia fica no corte
     seco (zoom no nada só chama atenção para o vazio). ``ai`` (do diretor de IA,
-    quando disponível) dirige o enquadramento no shot plan e pode marcar a cena
-    como ``worthy=False`` (força corte seco). Qualquer erro do render dinâmico
-    cai para o corte seco — o clipe nunca é perdido.
+    quando disponível) dirige o enquadramento no shot plan — inclusive com os
+    boxes de enquadramento dela quando o YOLO não achou ninguém — e pode marcar
+    a cena como ``worthy=False`` (força corte seco). Qualquer erro do render
+    dinâmico cai para o corte seco — o clipe nunca é perdido.
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
-        # Detecção rodou, não achou ninguém e a cena está parada → seco. A IA
-        # também pode declarar a cena "não digna" de zooms (worthy=False).
+        # Detecção rodou, não achou ninguém e a cena está parada → seco... a
+        # menos que a IA tenha visto o DJ onde o YOLO falhou (cena escura); e a
+        # IA também pode declarar a cena "não digna" de zooms (worthy=False).
         boring = (
             wv is not None
             and wv.detected
             and wv.dj_box is None
             and wv.motion_score < 0.1
+            and (ai is None or ai.dj_box is None)
         ) or (ai is not None and not ai.worthy)
         if not boring:
             shots = None

@@ -14,11 +14,13 @@ na heurística local (áudio + YOLO).
 import base64
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 
 from . import visual
 from .config import settings
+from .visual import Box
 
 logger = logging.getLogger("djviral.ai_director")
 
@@ -29,6 +31,12 @@ except Exception:  # noqa: BLE001 - qualquer falha de import conta como "sem cv2
 
 # Enquadramentos válidos que o modelo pode escolher como protagonista da janela.
 VALID_SUBJECTS = {"dj", "crowd", "wide"}
+# Lado mínimo (fração do frame) de um box de enquadramento vindo do modelo;
+# menor que isso é degenerado (ponto/linha) e não serve para enquadrar.
+MIN_BOX_SIDE = 0.02
+# Confiança atribuída aos boxes da IA (estimativa de cena, não detecção por
+# frame como o YOLO). Só informativa: o crop não usa a confiança.
+AI_BOX_CONF = 0.5
 # Largura dos frames enviados ao modelo (menor que a detecção; a IA julga a cena,
 # não precisa de resolução alta).
 FRAME_WIDTH = 512
@@ -47,12 +55,19 @@ class AIDirection:
       fronteiras extras de punch-in no shot plan.
     - ``worthy``: se a cena tem energia suficiente para justificar zooms (senão
       reforça a decisão de corte seco).
+    - ``dj_box`` / ``crowd_box``: enquadramento do DJ e do público visto pelo
+      modelo (:class:`app.visual.Box`, coordenadas normalizadas 0-1). Usados
+      pelo shot plan quando o YOLO não achou ninguém (balada escura, laser,
+      contraluz) — a IA "vê" a cena semanticamente onde a detecção falha.
+      ``None`` = o modelo não localizou (ou não devolveu um box válido).
     """
 
     hype_score: float = 0.0
     subject: str = "wide"
     moments: list[float] = field(default_factory=list)
     worthy: bool = True
+    dj_box: Box | None = None
+    crowd_box: Box | None = None
 
 
 _PROMPT = (
@@ -71,7 +86,15 @@ _PROMPT = (
     "não houver pico claro.\n"
     '- "worthy": true se a cena tem movimento/energia que justifique zooms '
     "dinâmicos; false se é estática/vazia demais (corte seco é melhor).\n"
-    'Exemplo: {{"hype": 0.8, "subject": "crowd", "moments": [12.5], "worthy": true}}'
+    '- "dj_box": onde o DJ/artista está no quadro, como [cx, cy, w, h] em '
+    "frações 0.0-1.0 do frame (centro x, centro y, largura, altura do retângulo "
+    "que o enquadra com a cabine); use a posição típica ao longo dos frames, e "
+    "null se não estiver visível.\n"
+    '- "crowd_box": idem para a massa do público (o retângulo que cobre a '
+    "aglomeração), ou null se não houver público visível.\n"
+    'Exemplo: {{"hype": 0.8, "subject": "crowd", "moments": [12.5], '
+    '"worthy": true, "dj_box": [0.5, 0.35, 0.22, 0.4], "crowd_box": '
+    "[0.5, 0.78, 0.85, 0.4]}}"
     "{hint}"
 )
 
@@ -161,7 +184,12 @@ def _hint(wv) -> str:
     if wv.crowd_box is not None:
         parts.append("há um cluster de público na cena")
     if not parts:
-        return ""
+        # YOLO rodou e não achou ninguém (cena escura/laser/contraluz): o
+        # enquadramento do corte vai depender só dos boxes da IA.
+        return (
+            "\nContexto: a detecção local de pessoas não localizou ninguém "
+            "(cena escura?); capriche em dj_box/crowd_box se conseguir vê-los."
+        )
     return "\nContexto da detecção local: " + "; ".join(parts) + "."
 
 
@@ -181,6 +209,31 @@ def _parse_json(text: str) -> dict | None:
         except (ValueError, TypeError):
             return None
     return None
+
+
+def _coerce_box(value) -> Box | None:
+    """Sanea um box ``[cx, cy, w, h]`` (frações 0-1) vindo do modelo.
+
+    Aceita lista/tupla de 4 números ou dict ``{cx, cy, w, h}``. Devolve ``None``
+    para qualquer coisa fora do contrato (null, não-numérico, NaN/inf, centro
+    fora do frame, lado degenerado) — o chamador trata como "não localizado".
+    """
+    if isinstance(value, dict):
+        value = [value.get(k) for k in ("cx", "cy", "w", "h")]
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        cx, cy, w, h = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (cx, cy, w, h)):
+        return None
+    if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+        return None
+    w, h = min(w, 1.0), min(h, 1.0)
+    if w < MIN_BOX_SIDE or h < MIN_BOX_SIDE:
+        return None
+    return Box(cx=cx, cy=cy, w=w, h=h, conf=AI_BOX_CONF)
 
 
 def _coerce(out: dict, duration: float) -> AIDirection:
@@ -217,6 +270,8 @@ def _coerce(out: dict, duration: float) -> AIDirection:
         subject=subject,
         moments=deduped[:3],
         worthy=bool(out.get("worthy", True)),
+        dj_box=_coerce_box(out.get("dj_box")),
+        crowd_box=_coerce_box(out.get("crowd_box")),
     )
 
 
