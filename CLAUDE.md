@@ -79,9 +79,10 @@ YouTube quando necessário.
    640 px) lidos frame a frame de um pipe do FFmpeg, **movimento** (frame
    differencing) e **detecção de pessoas** com YOLOv8n ONNX via `cv2.dnn`
    (CPU, modelo commitado em `backend/models/yolov8n.onnx`, sem torch).
-   Deriva o `visual_score` (0-1), o box do **DJ** (track dominante, box
-   mediano — imune a flicker) e o box do **público** (frames com 3+ pessoas
-   além do DJ). `get_beat_times` detecta os beats da janela para alinhar os
+   Deriva o `visual_score` (0-1), o box do **DJ** (track dominante: box
+   mediano global, a track no tempo `dj_track` e sua persistência
+   `dj_track_ratio`, consumidos pelo corte dinâmico) e o box do **público**
+   (frames com 3+ pessoas além do DJ). `get_beat_times` detecta os beats da janela para alinhar os
    cortes do estilo dinâmico. Qualquer falha (modelo ausente, cv2 quebrado)
    degrada para score de movimento — a fase visual nunca derruba um job.
 3. **Score combinado** — o áudio gera mais candidatos que o pedido
@@ -111,13 +112,20 @@ YouTube quando necessário.
      (comportamento original).
    - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
      de 3–8s (wide ↔ zoom no DJ ↔ zoom no público) com fronteiras alinhadas
-     aos beats e punch-in no DJ exatamente no drop. Quando o diretor de IA
-     rodou (passo 3b), o `subject` enviesa o protagonista (ex.: `crowd`
-     prioriza o público), os `moments` viram fronteiras extras de punch-in nos
-     auges visuais (não só no drop musical) e os `dj_box`/`crowd_box` da IA
-     preenchem o enquadramento onde o YOLO não achou ninguém — balada escura/
-     laser deixa de cair no zoom central (o box do YOLO, quando existe, sempre
-     vence: mediana de track > estimativa de cena). `clipper.cut_dynamic()`
+     aos beats e punch-in no DJ exatamente no drop (o punch-in **sempre
+     aproxima**; fronteiras da grade coladas a um punch são removidas para não
+     gerar shot-relâmpago). O enquadramento do DJ é **por shot** (mediana da
+     `dj_track` dentro do trecho — segue o DJ pela cabine; o box global da
+     janela é só o fallback) e o **wide é ancorado no protagonista** (o crop
+     9:16 de um 16:9 mostra ~1/3 da largura; wide no centro do frame perdia o
+     DJ no canto do palco). Quando o diretor de IA rodou (passo 3b), o
+     `subject` enviesa o protagonista (ex.: `crowd` prioriza o público), os
+     `moments` viram fronteiras extras de punch-in nos auges visuais (não só
+     no drop musical) e os `dj_box`/`crowd_box` da IA assumem o enquadramento
+     quando o YOLO não achou ninguém OU quando a track é fraca/intermitente
+     (`dj_track_ratio < 0.3`, flicker de balada escura/laser) — uma track
+     sólida do YOLO continua vencendo a estimativa de cena da IA.
+     `clipper.cut_dynamic()`
      renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
      shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
      alternância cortada no beat + drift suave opcional via `zoompan` com
