@@ -2,7 +2,7 @@
 import math
 
 from app.ai_director import AIDirection
-from app.dynamic import build_shot_plan
+from app.dynamic import _pan_path, build_shot_plan
 from app.visual import Box, WindowVisual
 from app.config import settings
 
@@ -238,3 +238,162 @@ def test_respects_max_shots_with_many_moments():
         peak_at=5.0, ai=ai,
     )
     _assert_invariants(shots)  # inclui o teto de max_shots
+
+
+# ---- Pan contínuo dentro do shot (a câmera segue o DJ) ----
+
+def _moving_track(cx0=0.3, cx1=0.7, t0=0.0, t1=60.0, step=1.0, cy=0.4):
+    """Track sintética: DJ anda de cx0 até cx1 em [t0, t1], 1 detecção/s."""
+    track = []
+    t = t0
+    while t <= t1 + 1e-6:
+        f = (t - t0) / (t1 - t0)
+        box = Box(cx=cx0 + (cx1 - cx0) * f, cy=cy, w=0.12, h=0.35, conf=0.9)
+        track.append((round(t, 3), box))
+        t += step
+    return track
+
+
+def test_pan_path_follows_moving_track():
+    track = _moving_track(0.3, 0.7, 0.0, 10.0)
+    path = _pan_path(track, 0.0, 10.0, crop_w=420, crop_h=746, src_w=SRC_W, src_h=SRC_H)
+    assert path is not None and len(path) >= 2
+    xs = [x for _, x, _ in path]
+    assert xs[-1] > xs[0]  # a câmera acompanha o deslocamento p/ a direita
+    ts = [t for t, _, _ in path]
+    assert ts == sorted(ts) and 0.0 <= ts[0] and ts[-1] <= 10.0
+
+
+def test_pan_path_none_when_dj_still():
+    # Jitter abaixo da zona morta: a câmera não se move (sem micro-tremor).
+    track = [
+        (float(t), Box(cx=0.5 + (0.005 if t % 2 else -0.005), cy=0.4, w=0.12, h=0.35, conf=0.9))
+        for t in range(0, 11)
+    ]
+    assert _pan_path(track, 0.0, 10.0, 420, 746, SRC_W, SRC_H) is None
+
+
+def test_pan_path_respects_setting(monkeypatch):
+    monkeypatch.setattr(settings, "dynamic_pan", False)
+    track = _moving_track(0.2, 0.8, 0.0, 10.0)
+    assert _pan_path(track, 0.0, 10.0, 420, 746, SRC_W, SRC_H) is None
+
+
+def test_pan_path_limits_speed():
+    # DJ "teleporta" (0.2 → 0.8 em 1s): o pan anda no máximo max_speed/s.
+    track = [
+        (0.0, Box(cx=0.2, cy=0.4, w=0.12, h=0.35, conf=0.9)),
+        (0.5, Box(cx=0.2, cy=0.4, w=0.12, h=0.35, conf=0.9)),
+        (1.0, Box(cx=0.8, cy=0.4, w=0.12, h=0.35, conf=0.9)),
+        (1.5, Box(cx=0.8, cy=0.4, w=0.12, h=0.35, conf=0.9)),
+    ]
+    path = _pan_path(track, 0.0, 8.0, 420, 746, SRC_W, SRC_H)
+    assert path is not None
+    for (ta, xa, _), (tb, xb, _) in zip(path, path[1:]):
+        if tb > ta:
+            speed = abs(xb - xa) / (tb - ta) / SRC_W  # fração do frame/s
+            assert speed <= settings.dynamic_pan_max_speed + 1e-6
+
+
+def test_shot_with_path_has_zero_drift_and_keeps_dj_in_frame():
+    wv = _wv()
+    # Movimento rápido o suficiente para vencer a zona morta dentro de um
+    # shot (drift lento fica por conta do recentro por shot, sem pan).
+    wv.dj_track = _moving_track(0.1, 0.9, 0.0, 60.0)
+    shots = build_shot_plan(wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H)
+    _assert_invariants(shots)
+    panned = [s for s in shots if s.path]
+    assert panned, "track em movimento deve gerar pelo menos um shot com pan"
+    for s in panned:
+        assert s.drift == 0.0  # pan e zoompan não compõem
+        cw, ch, _cx, _cy = s.crop
+        for tr, x, y in s.path:
+            # No instante do keyframe, o centro do DJ (track crua) está dentro
+            # do crop [x, x+w] × [y, y+h].
+            t_abs = s.t0 + tr
+            _t, box = min(wv.dj_track, key=lambda p: abs(p[0] - t_abs))
+            assert x <= box.cx * SRC_W <= x + cw
+            assert y <= box.cy * SRC_H <= y + ch
+    # Shots de zoom estáticos continuam com push-in.
+    static_zooms = [s for s in shots if s.kind not in ("wide",) and not s.path]
+    for s in static_zooms:
+        assert s.drift >= 0
+
+
+# ---- Narrativa: story da IA e rotação com dançarino ----
+
+def test_ai_story_drives_shot_sequence():
+    ai = AIDirection(
+        hype_score=0.8,
+        subject="dj",
+        worthy=True,
+        story=[(0.0, "wide"), (12.0, "dj"), (24.0, "crowd"), (40.0, "dj")],
+    )
+    shots = build_shot_plan(
+        _wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    # Cada passo da story vira fronteira e comanda o kind até o próximo passo.
+    for t, kind in ((12.0, "dj"), (24.0, "crowd"), (40.0, "dj")):
+        hit = [s for s in shots if math.isclose(s.t0, t, abs_tol=1e-6)]
+        assert hit, f"esperava fronteira da story em t={t}"
+        assert hit[0].kind == kind
+    assert shots[0].kind == "wide"
+    for s in shots:
+        if 24.0 - 1e-6 <= s.t0 < 40.0 - 1e-6:
+            assert s.kind == "crowd"
+
+
+def test_story_dancer_falls_back_without_box():
+    # Story pede "dancer" mas ninguém dançando foi localizado → degrada para
+    # o que a cena tem (crowd), nunca um kind sem box.
+    ai = AIDirection(
+        hype_score=0.8,
+        subject="dj",
+        worthy=True,
+        story=[(0.0, "dj"), (20.0, "dancer")],
+    )
+    shots = build_shot_plan(
+        _wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    assert all(s.kind != "dancer" for s in shots)
+    hit = next(s for s in shots if math.isclose(s.t0, 20.0, abs_tol=1e-6))
+    assert hit.kind == "crowd"
+
+
+def test_dancer_joins_post_drop_rotation():
+    wv = _wv()
+    wv.dancer_box = Box(cx=0.75, cy=0.65, w=0.1, h=0.3, conf=0.8)
+    wv.dancer_track = _moving_track(0.7, 0.8, 0.0, 60.0, cy=0.65)
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=5.0
+    )
+    _assert_invariants(shots)
+    kinds = [s.kind for s in shots]
+    assert "dancer" in kinds  # o dançarino entra na rotação pós-drop
+    # E o dançarino nunca aparece antes do drop.
+    drop = next(s for s in shots if math.isclose(s.t0, 5.0, abs_tol=1e-6))
+    assert drop.kind == "dj"
+    for s in shots:
+        if s.t1 <= 5.0 + 1e-6:
+            assert s.kind != "dancer"
+
+
+def test_ai_dancer_box_fills_in_without_yolo_dancer():
+    # Sem dançarino do YOLO, o dancer_box da IA habilita o shot "dancer".
+    ai = AIDirection(
+        hype_score=0.8,
+        subject="dj",
+        worthy=True,
+        story=[(0.0, "dj"), (20.0, "dancer")],
+        dancer_box=Box(cx=0.8, cy=0.7, w=0.1, h=0.3, conf=0.5),
+    )
+    shots = build_shot_plan(
+        _wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    hit = next(s for s in shots if math.isclose(s.t0, 20.0, abs_tol=1e-6))
+    assert hit.kind == "dancer"
+    w, _h, x, _y = hit.crop
+    assert x + w / 2 > SRC_W * 0.6  # enquadra o box da IA à direita
