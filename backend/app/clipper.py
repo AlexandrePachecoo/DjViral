@@ -129,13 +129,28 @@ def cut(
     return output_path
 
 
+def _smoothstep(frac_expr: str) -> str:
+    """``f*f*(3-2*f)`` — ease-in/ease-out puro, em função de uma fração 0-1.
+
+    Substitui a interpolação LINEAR por uma curva que começa e termina devagar
+    (derivada 0 nas pontas): é o que tira a sensação de câmera "mecânica" de um
+    pan/zoom com velocidade constante. Vale exatamente 0 em f=0, 1 em f=1 e 0.5
+    em f=0.5 — mesmo valor do linear no meio do caminho, só a trajetória entre
+    os extremos muda.
+    """
+    return f"(({frac_expr})*({frac_expr})*(3-2*({frac_expr})))"
+
+
 def _pan_expr(points: list[tuple[float, int]]) -> str:
-    """Expressão FFmpeg piecewise-linear em ``t`` para os keyframes de pan.
+    """Expressão FFmpeg piecewise, com easing, em ``t`` para os keyframes de pan.
 
     ``points`` são ``(t relativo ao shot, valor)`` crescentes em t. Dentro do
     branch (pós ``setpts=PTS-STARTPTS``) o ``t`` do filtro ``crop`` é o tempo
     desde o início do shot; antes do primeiro keyframe segura o primeiro
-    valor, depois do último segura o último (sem extrapolar).
+    valor, depois do último segura o último (sem extrapolar). Cada segmento
+    interpola com :func:`_smoothstep` em vez de linear — a câmera desacelera
+    ao chegar em cada keyframe, em vez de andar em velocidade constante e
+    freiar de repente.
     """
     expr = str(points[-1][1])
     for i in range(len(points) - 1, 0, -1):
@@ -143,7 +158,8 @@ def _pan_expr(points: list[tuple[float, int]]) -> str:
         tb, vb = points[i]
         if tb - ta <= 1e-6:
             continue
-        seg = f"({va}+{vb - va}*(t-{ta:.3f})/{tb - ta:.3f})"
+        frac = f"(t-{ta:.3f})/{tb - ta:.3f}"
+        seg = f"({va}+{vb - va}*{_smoothstep(frac)})"
         expr = f"if(lt(t,{tb:.3f}),{seg},{expr})"
     if points[0][0] > 0:
         expr = f"if(lt(t,{points[0][0]:.3f}),{points[0][1]},{expr})"
@@ -171,11 +187,16 @@ def cut_dynamic(
     - cada branch faz ``trim`` do seu trecho + ``crop`` + ``scale``. O filtro
       ``crop`` do FFmpeg não anima largura/altura (zoom animado via expressão
       não é possível), mas avalia x/y POR FRAME: shots com ``path`` (keyframes
-      de pan da track do DJ/dançarino) usam expressões piecewise-lineares em
-      ``t`` para a câmera SEGUIR a pessoa dentro do shot;
-    - shots com ``drift`` ganham um ``zoompan`` com rampa linear de zoom,
-      sobre supersample 2× (mata o jitter de arredondamento inteiro do
-      zoompan);
+      de pan da track do DJ/dançarino) usam expressões piecewise com easing
+      (:func:`_pan_expr`/:func:`_smoothstep`) para a câmera SEGUIR a pessoa
+      dentro do shot;
+    - shots com ``drift`` ganham um ``zoompan`` com rampa de zoom (também com
+      easing), sobre supersample 2× (mata o jitter de arredondamento inteiro
+      do zoompan). ``path`` e ``drift`` PODEM coexistir no mesmo shot: o pan
+      (via ``crop``) desloca a câmera seguindo a pessoa e o zoom (via
+      ``zoompan`` em cima do resultado já panorâmico) aproxima ao mesmo
+      tempo — é o que dá o efeito Ken Burns (pan + zoom simultâneos) em vez
+      de um OU outro por shot;
     - ``concat`` re-emenda os branches. O áudio vai direto do input
       (``-map 0:a``) — os cortes são só no vídeo, o áudio é contínuo por
       construção.
@@ -209,15 +230,18 @@ def cut_dynamic(
             f"setpts=PTS-STARTPTS,{crop_f}"
         )
         if shot.drift and not force_static:
-            # Rampa linear de zoom ao longo do shot (frames do shot = F).
+            # Rampa de zoom (com easing) ao longo do shot (frames do shot = F).
             # Supersample 2x antes do zoompan: o x/y inteiro do zoompan em
-            # resolução final treme; em 2x o erro cai para meio pixel.
+            # resolução final treme; em 2x o erro cai para meio pixel. Quando
+            # o shot também tem ``path`` (pan), este zoompan roda EM CIMA do
+            # crop já panorâmico (centrado): pan e zoom acontecem juntos.
             frames = max(1, round((shot.t1 - shot.t0) * fps))
             drift = abs(shot.drift)
+            smooth = _smoothstep(f"on/{frames}")
             if shot.drift > 0:  # aproxima
-                z_expr = f"min({1 + drift:.4f},1+{drift:.4f}*on/{frames})"
+                z_expr = f"min({1 + drift:.4f},1+{drift:.4f}*{smooth})"
             else:  # afasta
-                z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*on/{frames})"
+                z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*{smooth})"
             chain += (
                 f",scale={w * 2}:{h * 2}"
                 f",zoompan=z='{z_expr}'"

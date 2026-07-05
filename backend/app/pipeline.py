@@ -261,21 +261,27 @@ def _score_candidates(
 ) -> list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]]:
     """Roda a análise das janelas candidatas e re-ranqueia.
 
-    Duas etapas:
+    Quatro etapas:
     1. Score LOCAL por janela = ``score_music_weight * musical + (1 - peso) *
        visual`` (áudio + YOLO), como antes. Janela sem análise visual (visual
        desligado, budget estourado ou erro) fica só com o score musical.
-    2. Se ``use_ai`` e houver chave, o diretor de IA roda nas TOP-K janelas por
-       score local (teto ``ai_director_max_calls`` + budget de tempo próprio);
-       o hype entra no score final: ``(1 - w_hype) * base + w_hype * hype``.
-       Sem IA, o score final é o próprio local (comportamento atual).
+    2. Se ``use_ai``, a TRIAGEM da IA roda em lotes cobrindo TODOS os
+       candidatos (barata: poucos keyframes pequenos, várias janelas por
+       chamada) e ajusta o score: ``adjusted = (1-w1)*base + w1*hype_lite``.
+       Diferente da direção profunda, isto nunca corta candidatos por um
+       top-K — só reordena.
+    3. A DIREÇÃO PROFUNDA da IA roda nas TOP-K janelas pelo score AJUSTADO
+       (teto ``ai_director_max_calls`` + budget de tempo próprio); o hype
+       profundo refina o score final: ``final = (1-w2)*adjusted + w2*hype``.
+    4. Sem IA (ou sem chave), o score final é o local de sempre.
 
-    A fase visual e a de IA nunca derrubam o job.
+    Nenhuma das fases (visual, triagem, direção) derruba o job.
     """
     if not settings.visual_enabled or not peaks:
         return [(peak, None, None, peak.score) for peak in peaks]
 
     net = visual.load_model()
+    net_face = visual.load_face_model() if cut_style == "dynamic" else None
     if cut_style == "dynamic":
         detect_every = settings.visual_detect_every
     else:
@@ -296,6 +302,7 @@ def _score_candidates(
                     net=net,
                     detect_every=detect_every,
                     fps=settings.visual_fps,
+                    net_face=net_face,
                 )
             except Exception:  # noqa: BLE001 - análise visual nunca é fatal
                 logger.exception(
@@ -314,13 +321,49 @@ def _score_candidates(
         )
         scored.append((peak, wv, base))
 
-    # ---- 2) diretor de IA nas top-K janelas (opcional) ----
-    ai_map: dict[int, "ai_director.AIDirection"] = {}
     ai_on = use_ai and settings.ai_director_enabled and bool(settings.anthropic_api_key)
+    if ai_on:
+        ai_director.reset_usage()
+
+    # ---- 2) triagem da IA em TODOS os candidatos (opcional, barata) ----
+    adjusted_map: dict[int, float] = {id(peak): base for peak, _wv, base in scored}
+    if ai_on and settings.ai_triage_group_size > 0:
+        triage_deadline = time.monotonic() + settings.ai_triage_budget_seconds
+        w1 = min(1.0, max(0.0, settings.score_hype_lite_weight))
+        group_size = max(1, settings.ai_triage_group_size)
+        n_triaged = 0
+        for i in range(0, len(scored), group_size):
+            if time.monotonic() >= triage_deadline:
+                logger.warning(
+                    "Budget de triagem de IA (%ss) estourado — candidatos "
+                    "restantes ficam só com o score local",
+                    settings.ai_triage_budget_seconds,
+                )
+                break
+            group = scored[i : i + group_size]
+            windows = [
+                (
+                    id(peak),
+                    max(0.0, peak.start_sec - settings.pre_roll),
+                    float(settings.clip_duration),
+                )
+                for peak, _wv, _base in group
+            ]
+            triage_map = ai_director.triage_group(video_path, windows)
+            for peak, _wv, base in group:
+                triage = triage_map.get(id(peak))
+                if triage is not None:
+                    n_triaged += 1
+                    adjusted_map[id(peak)] = (1 - w1) * base + w1 * triage.hype
+        logger.info("Triagem de IA: %d/%d janelas avaliadas", n_triaged, len(scored))
+
+    # ---- 3) direção profunda da IA nas top-K janelas pelo score ajustado ----
+    ai_map: dict[int, "ai_director.AIDirection"] = {}
     if ai_on:
         ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
         calls = 0
-        for peak, wv, _base in sorted(scored, key=lambda it: it[2], reverse=True):
+        ordered = sorted(scored, key=lambda it: adjusted_map[id(it[0])], reverse=True)
+        for peak, wv, _base in ordered:
             if calls >= settings.ai_director_max_calls or time.monotonic() >= ai_deadline:
                 break
             calls += 1
@@ -332,16 +375,20 @@ def _score_candidates(
             )
             if ai is not None:
                 ai_map[id(peak)] = ai
+        usage = ai_director.get_usage()
         logger.info(
-            "Diretor de IA: %d chamadas, %d direções aproveitadas", calls, len(ai_map)
+            "Diretor de IA: %d chamadas de direção, %d direções aproveitadas, "
+            "custo estimado do job ~$%.4f (%d chamadas no total)",
+            calls, len(ai_map), usage["usd"], usage["calls"],
         )
 
-    # ---- 3) score final (base + hype) e re-rank ----
-    w_hype = min(1.0, max(0.0, settings.score_hype_weight))
+    # ---- 4) score final (ajustado + hype profundo) e re-rank ----
+    w2 = min(1.0, max(0.0, settings.score_hype_weight))
     result: list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]] = []
-    for peak, wv, base in scored:
+    for peak, wv, _base in scored:
+        adjusted = adjusted_map[id(peak)]
         ai = ai_map.get(id(peak))
-        final = (1 - w_hype) * base + w_hype * ai.hype_score if ai is not None else base
+        final = (1 - w2) * adjusted + w2 * ai.hype_score if ai is not None else adjusted
         result.append((peak, wv, ai, final))
 
     result.sort(key=lambda item: item[3], reverse=True)
@@ -528,6 +575,7 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
                 src_dims = probe_video(video_path)
                 if src_dims["width"] and src_dims["height"]:
                     net = visual.load_model() if settings.visual_enabled else None
+                    net_face = visual.load_face_model()
                     wv = visual.analyze_window(
                         video_path,
                         inicio,
@@ -535,6 +583,7 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
                         net=net,
                         detect_every=settings.visual_detect_every,
                         fps=settings.visual_fps,
+                        net_face=net_face,
                     )
                     beats = visual.get_beat_times(video_path, inicio, float(duration))
                     # peak_at=None: o usuário escolheu o trecho à mão, não há

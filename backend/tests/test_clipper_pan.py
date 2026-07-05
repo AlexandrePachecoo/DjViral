@@ -7,7 +7,8 @@ import tempfile
 
 import pytest
 
-from app.clipper import _pan_expr, cut_dynamic
+from app import clipper
+from app.clipper import _pan_expr, _smoothstep, cut_dynamic
 from app.dynamic import Shot
 
 
@@ -43,6 +44,81 @@ def test_pan_expr_skips_degenerate_segments():
     expr = _pan_expr([(0.0, 10), (0.0, 50), (2.0, 90)])
     assert _eval(expr, 1.0) == pytest.approx(70)
     assert _eval(expr, 3.0) == 90
+
+
+# ---- _smoothstep: easing (ex-linear) da interpolação de pan/zoom ----
+
+def test_smoothstep_matches_edges_and_midpoint():
+    for f, expected in ((0.0, 0.0), (0.5, 0.5), (1.0, 1.0)):
+        expr = _smoothstep(str(f))
+        assert eval(expr, {"__builtins__": {}}, {}) == pytest.approx(expected)
+
+
+def test_pan_expr_eases_away_from_linear_off_midpoint():
+    # Fora do meio do segmento, o smoothstep se afasta do linear (mais devagar
+    # perto das pontas) — é o que tira a sensação de velocidade constante.
+    expr = _pan_expr([(0.0, 0), (4.0, 100)])
+    linear_at_quarter = 25.0  # 100 * 0.25
+    eased_at_quarter = _eval(expr, 1.0)  # t=1.0 é 25% do segmento [0,4]
+    assert eased_at_quarter < linear_at_quarter
+    assert eased_at_quarter == pytest.approx(100 * (0.25**2) * (3 - 2 * 0.25))
+
+
+def test_cut_dynamic_combines_pan_and_drift_in_same_branch(monkeypatch):
+    # Shot com path E drift: o filtergraph deve conter TANTO o crop com x/y
+    # animado (pan) QUANTO um zoompan (zoom) na mesma branch — Ken Burns.
+    captured: dict = {}
+
+    def _fake_run(cmd, output_path, duration, error_prefix):
+        captured["cmd"] = cmd
+
+    monkeypatch.setattr(clipper, "_run_ffmpeg", _fake_run)
+    shots = [
+        Shot(
+            t0=0.0, t1=4.0, kind="dj", crop=(150, 266, 100, 40), drift=0.06,
+            path=[(0.0, 100, 40), (2.0, 300, 60), (4.0, 400, 80)],
+        ),
+    ]
+    cut_dynamic(
+        input_file="src.mp4",
+        start_sec=0.0,
+        output_path="out.mp4",
+        shots=shots,
+        duration=4,
+        pre_roll=0,
+        fps=30.0,
+    )
+    filter_complex = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
+    assert "crop=150:266:x='" in filter_complex
+    assert "zoompan=" in filter_complex
+
+
+def test_cut_dynamic_force_static_drops_zoompan_but_keeps_pan(monkeypatch):
+    captured: dict = {}
+
+    def _fake_run(cmd, output_path, duration, error_prefix):
+        captured["cmd"] = cmd
+
+    monkeypatch.setattr(clipper, "_run_ffmpeg", _fake_run)
+    shots = [
+        Shot(
+            t0=0.0, t1=4.0, kind="dj", crop=(150, 266, 100, 40), drift=0.06,
+            path=[(0.0, 100, 40), (2.0, 300, 60), (4.0, 400, 80)],
+        ),
+    ]
+    cut_dynamic(
+        input_file="src.mp4",
+        start_sec=0.0,
+        output_path="out.mp4",
+        shots=shots,
+        duration=4,
+        pre_roll=0,
+        fps=30.0,
+        force_static=True,
+    )
+    filter_complex = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
+    assert "crop=150:266:x='" in filter_complex
+    assert "zoompan=" not in filter_complex
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg ausente")

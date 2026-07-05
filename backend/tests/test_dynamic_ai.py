@@ -1,6 +1,8 @@
 """Testes de `build_shot_plan` com a direção de IA (subject + moments)."""
 import math
 
+import pytest
+
 from app.ai_director import AIDirection
 from app.dynamic import _pan_path, build_shot_plan
 from app.visual import Box, WindowVisual
@@ -295,7 +297,7 @@ def test_pan_path_limits_speed():
             assert speed <= settings.dynamic_pan_max_speed + 1e-6
 
 
-def test_shot_with_path_has_zero_drift_and_keeps_dj_in_frame():
+def test_shot_with_path_also_keeps_drift_and_dj_in_frame():
     wv = _wv()
     # Movimento rápido o suficiente para vencer a zona morta dentro de um
     # shot (drift lento fica por conta do recentro por shot, sem pan).
@@ -305,7 +307,7 @@ def test_shot_with_path_has_zero_drift_and_keeps_dj_in_frame():
     panned = [s for s in shots if s.path]
     assert panned, "track em movimento deve gerar pelo menos um shot com pan"
     for s in panned:
-        assert s.drift == 0.0  # pan e zoompan não compõem
+        assert s.drift > 0.0  # pan e zoom coexistem (Ken Burns)
         cw, ch, _cx, _cy = s.crop
         for tr, x, y in s.path:
             # No instante do keyframe, o centro do DJ (track crua) está dentro
@@ -378,6 +380,119 @@ def test_dancer_joins_post_drop_rotation():
     for s in shots:
         if s.t1 <= 5.0 + 1e-6:
             assert s.kind != "dancer"
+
+
+# ---- Continuidade de câmera entre shots do mesmo kind ----
+
+def _continuity_wv() -> WindowVisual:
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.3
+    left = Box(cx=0.3, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    right = Box(cx=0.7, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    # Track em dois clusters CONSTANTES (sem movimento dentro de cada shot,
+    # então sem pan próprio) — um antes do corte pra "crowd", outro depois.
+    wv.dj_track = [(float(t), left) for t in range(0, 10)] + [
+        (float(t), right) for t in range(20, 30)
+    ]
+    wv.dj_box = left
+    wv.crowd_box = Box(cx=0.5, cy=0.75, w=0.8, h=0.4, conf=1.0)
+    return wv
+
+
+def _continuity_shots():
+    ai = AIDirection(
+        hype_score=0.5,
+        subject="dj",
+        worthy=True,
+        story=[(0.0, "dj"), (10.0, "crowd"), (20.0, "dj")],
+    )
+    shots = build_shot_plan(
+        _continuity_wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    # Pega o 1º shot do cluster "esquerdo" (t<10, box cx=0.3) e o 1º shot do
+    # cluster "direito" (t>=20, box cx=0.7) — ambos "dj", mas com o alvo bruto
+    # da track em posições bem diferentes.
+    first_dj = next(s for s in shots if s.kind == "dj" and s.t0 < 10.0)
+    second_dj = next(s for s in shots if s.kind == "dj" and s.t0 >= 20.0)
+    return first_dj, second_dj
+
+
+def test_camera_continuity_pulls_static_shot_toward_previous_position():
+    _first_dj, second_dj = _continuity_shots()
+    w, _h, x2, _y2 = second_dj.crop
+    cx2 = (x2 + w / 2) / SRC_W
+    # Sem continuidade o 2º cluster centraria perto de cx=0.7 (alvo bruto da
+    # track); com a continuidade (peso default) puxando em direção ao fim do
+    # 1º cluster (perto de cx=0.3), o resultado fica visivelmente abaixo disso.
+    assert cx2 < 0.68
+
+
+def test_camera_continuity_disabled_matches_raw_target(monkeypatch):
+    monkeypatch.setattr(settings, "dynamic_camera_continuity", 0.0)
+    _first_dj, second_dj = _continuity_shots()
+    w, _h, x2, _y2 = second_dj.crop
+    cx2 = (x2 + w / 2) / SRC_W
+    assert cx2 == pytest.approx(0.7, abs=0.03)
+
+
+# ---- Rosto: nudge de centralização + bônus de zoom limitado (Fase 6) ----
+
+def test_face_anchor_only_touches_cy():
+    from app.dynamic import _face_anchor
+
+    box = Box(cx=0.4, cy=0.5, w=0.2, h=0.4, conf=0.9)
+    biased = _face_anchor(box, face_bias_y=-0.3)
+    assert biased.cx == box.cx and biased.w == box.w and biased.h == box.h
+    assert biased.cy < box.cy  # rosto acima do centro → puxa cy pra cima
+
+
+def test_face_anchor_none_bias_is_noop():
+    from app.dynamic import _face_anchor
+
+    box = Box(cx=0.4, cy=0.5, w=0.2, h=0.4, conf=0.9)
+    assert _face_anchor(box, None) == box
+
+
+def test_face_anchor_disabled_by_config(monkeypatch):
+    from app.dynamic import _face_anchor
+
+    monkeypatch.setattr(settings, "face_enabled", False)
+    box = Box(cx=0.4, cy=0.5, w=0.2, h=0.4, conf=0.9)
+    assert _face_anchor(box, -0.3) == box
+
+
+def _small_dj_wv() -> WindowVisual:
+    # Box de pessoa pequena o bastante pro TETO de zoom (não a margem do
+    # corpo) ser o fator limitante da altura do crop — só assim o bônus de
+    # zoom do rosto (que só desloca o teto) fica visível no crop resultante.
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.5
+    wv.dj_box = Box(cx=0.5, cy=0.4, w=0.08, h=0.15, conf=0.9)
+    wv.crowd_box = Box(cx=0.5, cy=0.75, w=0.8, h=0.4, conf=1.0)
+    return wv
+
+
+def test_no_face_zoom_bonus_without_face_bias():
+    no_face = _small_dj_wv()
+    no_face.dj_face_bias_y = None  # sem rosto detectado
+
+    with_face = _small_dj_wv()
+    with_face.dj_face_bias_y = -0.2  # rosto detectado na track
+
+    shots_no_face = build_shot_plan(
+        no_face, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    shots_with_face = build_shot_plan(
+        with_face, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    punch_no_face = next(s for s in shots_no_face if math.isclose(s.t0, 30.0, abs_tol=1e-6))
+    punch_with_face = next(s for s in shots_with_face if math.isclose(s.t0, 30.0, abs_tol=1e-6))
+    _w1, h1, _x1, _y1 = punch_no_face.crop
+    _w2, h2, _x2, _y2 = punch_with_face.crop
+    assert h2 < h1  # só o com rosto detectado ganha o bônus (crop menor = mais zoom)
 
 
 def test_ai_dancer_box_fills_in_without_yolo_dancer():
