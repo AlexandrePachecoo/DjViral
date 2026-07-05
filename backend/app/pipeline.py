@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 
-from . import analyzer, clipper, dynamic, visual, youtube
+from . import ai_director, analyzer, clipper, dynamic, visual, youtube
 from .analyzer import Peak
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
@@ -113,6 +113,7 @@ def process_project(
     limit_seconds: int | None = None,
     max_cuts: int | None = None,
     cut_style: str = "basic",
+    use_ai_director: bool = False,
 ) -> None:
     """Pipeline completo, rodado em background.
 
@@ -126,10 +127,12 @@ def process_project(
     processamento é abortado se estourar a cota; ``max_cuts`` reduz o número
     de clipes gerados (ex.: 10 no teste grátis). ``cut_style`` é a escolha do
     usuário na criação do projeto: 'basic' (corte seco) ou 'dynamic' (zooms no
-    DJ/público no ritmo da batida).
+    DJ/público no ritmo da batida). ``use_ai_director`` liga a camada de IA de
+    visão (só planos pagos; pedido pela Vercel) — avalia a vibe do público para
+    re-ranquear os cortes e dirigir os zooms; degrada para a heurística local.
     """
     with _job_slots:
-        _process_project(project_id, limit_seconds, max_cuts, cut_style)
+        _process_project(project_id, limit_seconds, max_cuts, cut_style, use_ai_director)
 
 
 def _process_project(
@@ -137,6 +140,7 @@ def _process_project(
     limit_seconds: int | None = None,
     max_cuts: int | None = None,
     cut_style: str = "basic",
+    use_ai_director: bool = False,
 ) -> None:
     client = get_client()
     video_path: str | None = None
@@ -177,21 +181,26 @@ def _process_project(
             "Projeto %s: %d picos candidatos (%d BPM)", project_id, len(peaks), bpm
         )
 
-        candidates = _score_candidates(video_path, peaks, cut_style)[:n_final]
+        candidates = _score_candidates(
+            video_path, peaks, cut_style, use_ai_director
+        )[:n_final]
 
         src_dims = probe_video(video_path) if cut_style == "dynamic" else None
 
-        for idx, (peak, wv, final_score) in enumerate(candidates):
+        for idx, (peak, wv, ai, final_score) in enumerate(candidates):
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 clip_path = tmp.name
             try:
-                _render_clip(video_path, peak, wv, cut_style, clip_path, src_dims, bpm)
+                _render_clip(
+                    video_path, peak, wv, cut_style, clip_path, src_dims, bpm, ai
+                )
 
                 dest_name = f"{project_id}/clipe_{idx + 1}_{int(peak.start_sec)}s.mp4"
                 url = upload_clip(clip_path, dest_name)
 
                 start = max(0.0, peak.start_sec - settings.pre_roll)
-                client.table("cuts").insert(
+                _insert_cut(
+                    client,
                     {
                         "project_id": project_id,
                         "titulo": f"Drop {idx + 1} · {bpm} BPM",
@@ -201,9 +210,10 @@ def _process_project(
                         "score": final_score,
                         "score_musical": peak.score,
                         "score_visual": wv.visual_score if wv is not None else None,
+                        "score_hype": ai.hype_score if ai is not None else None,
                         "url": url,
-                    }
-                ).execute()
+                    },
+                )
             finally:
                 if os.path.exists(clip_path):
                     os.remove(clip_path)
@@ -223,21 +233,47 @@ def _process_project(
             os.remove(video_path)
 
 
+def _insert_cut(client, row: dict) -> None:
+    """Insere um ``cut``, tolerando bancos sem a coluna ``score_hype``.
+
+    ``score_hype`` foi adicionada com o diretor de IA; se o banco ainda não
+    aplicou a migração, o PostgREST rejeita a coluna — nesse caso reinserimos
+    sem ela em vez de derrubar o job.
+    """
+    try:
+        client.table("cuts").insert(row).execute()
+    except Exception:  # noqa: BLE001 - coluna ausente não deve perder o corte
+        if "score_hype" not in row:
+            raise
+        logger.warning(
+            "Insert de cut falhou; tentando sem score_hype (coluna ausente?)"
+        )
+        client.table("cuts").insert(
+            {k: v for k, v in row.items() if k != "score_hype"}
+        ).execute()
+
+
 def _score_candidates(
     video_path: str,
     peaks: list[Peak],
     cut_style: str,
-) -> list[tuple[Peak, WindowVisual | None, float]]:
-    """Roda a análise visual das janelas candidatas e re-ranqueia.
+    use_ai: bool = False,
+) -> list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]]:
+    """Roda a análise das janelas candidatas e re-ranqueia.
 
-    Score final = ``score_music_weight * musical + (1 - peso) * visual``.
-    Janela sem análise visual (visual desligado, budget de tempo estourado ou
-    erro) fica só com o score musical — a fase visual nunca derruba o job.
-    No corte seco a detecção de pessoas é bem mais esparsa (só para o score);
-    no dinâmico é densa (os boxes viram alvos de zoom).
+    Duas etapas:
+    1. Score LOCAL por janela = ``score_music_weight * musical + (1 - peso) *
+       visual`` (áudio + YOLO), como antes. Janela sem análise visual (visual
+       desligado, budget estourado ou erro) fica só com o score musical.
+    2. Se ``use_ai`` e houver chave, o diretor de IA roda nas TOP-K janelas por
+       score local (teto ``ai_director_max_calls`` + budget de tempo próprio);
+       o hype entra no score final: ``(1 - w_hype) * base + w_hype * hype``.
+       Sem IA, o score final é o próprio local (comportamento atual).
+
+    A fase visual e a de IA nunca derrubam o job.
     """
     if not settings.visual_enabled or not peaks:
-        return [(peak, None, peak.score) for peak in peaks]
+        return [(peak, None, None, peak.score) for peak in peaks]
 
     net = visual.load_model()
     if cut_style == "dynamic":
@@ -247,6 +283,7 @@ def _score_candidates(
     deadline = time.monotonic() + settings.visual_budget_seconds
     w_music = settings.score_music_weight
 
+    # ---- 1) score local (áudio + YOLO) ----
     scored: list[tuple[Peak, WindowVisual | None, float]] = []
     for peak in peaks:
         wv: WindowVisual | None = None
@@ -270,15 +307,45 @@ def _score_candidates(
                 "score musical",
                 settings.visual_budget_seconds,
             )
-        final = (
+        base = (
             w_music * peak.score + (1 - w_music) * wv.visual_score
             if wv is not None
             else peak.score
         )
-        scored.append((peak, wv, final))
+        scored.append((peak, wv, base))
 
-    scored.sort(key=lambda item: item[2], reverse=True)
-    return scored
+    # ---- 2) diretor de IA nas top-K janelas (opcional) ----
+    ai_map: dict[int, "ai_director.AIDirection"] = {}
+    ai_on = use_ai and settings.ai_director_enabled and bool(settings.anthropic_api_key)
+    if ai_on:
+        ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
+        calls = 0
+        for peak, wv, _base in sorted(scored, key=lambda it: it[2], reverse=True):
+            if calls >= settings.ai_director_max_calls or time.monotonic() >= ai_deadline:
+                break
+            calls += 1
+            ai = ai_director.direct(
+                video_path,
+                max(0.0, peak.start_sec - settings.pre_roll),
+                float(settings.clip_duration),
+                wv,
+            )
+            if ai is not None:
+                ai_map[id(peak)] = ai
+        logger.info(
+            "Diretor de IA: %d chamadas, %d direções aproveitadas", calls, len(ai_map)
+        )
+
+    # ---- 3) score final (base + hype) e re-rank ----
+    w_hype = min(1.0, max(0.0, settings.score_hype_weight))
+    result: list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]] = []
+    for peak, wv, base in scored:
+        ai = ai_map.get(id(peak))
+        final = (1 - w_hype) * base + w_hype * ai.hype_score if ai is not None else base
+        result.append((peak, wv, ai, final))
+
+    result.sort(key=lambda item: item[3], reverse=True)
+    return result
 
 
 def _cut_dynamic_tiered(
@@ -343,23 +410,27 @@ def _render_clip(
     clip_path: str,
     src_dims: dict | None,
     bpm: int,
+    ai: "ai_director.AIDirection | None" = None,
 ) -> None:
     """Renderiza um clipe no estilo pedido, com fallback para o corte seco.
 
     O corte dinâmico exige as dimensões da fonte e vale a pena quando há
     gente detectada OU movimento na cena; janela parada e vazia fica no corte
-    seco (zoom no nada só chama atenção para o vazio). Qualquer erro do
-    render dinâmico cai para o corte seco — o clipe nunca é perdido.
+    seco (zoom no nada só chama atenção para o vazio). ``ai`` (do diretor de IA,
+    quando disponível) dirige o enquadramento no shot plan e pode marcar a cena
+    como ``worthy=False`` (força corte seco). Qualquer erro do render dinâmico
+    cai para o corte seco — o clipe nunca é perdido.
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
-        # Detecção rodou, não achou ninguém e a cena está parada → seco.
+        # Detecção rodou, não achou ninguém e a cena está parada → seco. A IA
+        # também pode declarar a cena "não digna" de zooms (worthy=False).
         boring = (
             wv is not None
             and wv.detected
             and wv.dj_box is None
             and wv.motion_score < 0.1
-        )
+        ) or (ai is not None and not ai.worthy)
         if not boring:
             shots = None
             try:
@@ -373,6 +444,7 @@ def _render_clip(
                     src_dims["width"],
                     src_dims["height"],
                     peak_at=peak.start_sec - start,
+                    ai=ai,
                 )
             except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(

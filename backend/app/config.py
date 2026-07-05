@@ -80,5 +80,33 @@ class Settings(BaseSettings):
     # mesmo tempo isso pode inflar bastante o pico de memória do processo.
     dynamic_filter_threads: int = 2
 
+    # ---- Diretor de IA (visão / "vibe" do público) ----
+    # Camada opcional de IA de visão (Claude) que roda por janela candidata:
+    # avalia a energia do público, o protagonista visual e os instantes de auge.
+    # Alimenta o re-rank dos cortes (hype) e o corte dinâmico (enquadramento +
+    # punch-in). Só roda quando o disparo do /process pede (planos pagos) E há
+    # chave da API. Qualquer falha degrada para a heurística local (nunca derruba
+    # o job), igual à fase visual do YOLO.
+    ai_director_enabled: bool = True
+    # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
+    anthropic_api_key: str = ""
+    # Modelo de visão. Haiku é rápido/barato e suficiente para classificar vibe;
+    # suba para claude-opus-4-8 se quiser o máximo de qualidade.
+    ai_director_model: str = "claude-haiku-4-5"
+    # Teto de chamadas à IA por job (gasta o orçamento nas janelas mais
+    # promissoras pelo score local; independe do nº de candidatos).
+    ai_director_max_calls: int = 15
+    # Quantos keyframes amostrar por janela para enviar ao modelo.
+    ai_director_frames: int = 5
+    # Teto de tempo (s) da fase de IA por job; estourou, as janelas restantes
+    # ficam só com o score local (análogo a visual_budget_seconds).
+    ai_director_budget_seconds: int = 180
+    # Timeout (s) de cada chamada individual à API.
+    ai_director_timeout: float = 30.0
+    # Peso do hype da IA no score final: final = (1-peso)*base + peso*hype, onde
+    # base é o score local (musical+visual). 0 = ignora o hype. Sem IA na janela,
+    # o score fica só no base (compatível com o comportamento atual).
+    score_hype_weight: float = 0.35
+
 
 settings = Settings()

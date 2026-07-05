@@ -63,6 +63,11 @@ export async function POST(
   const planMax = planOf(user.plan).maxCutsPerSet;
   const maxCuts = Math.min(Math.max(1, project.max_cuts ?? planMax), planMax);
 
+  // Diretor de IA de visão (vibe do público → re-rank + zooms dirigidos): só
+  // para planos pagos (pro/premium/admin). No worker ainda depende da flag
+  // VISUAL/AI habilitada e da ANTHROPIC_API_KEY — sem chave, degrada sozinho.
+  const aiDirector = user.plan !== "free";
+
   const res = await fetch(`${workerUrl}/process`, {
     method: "POST",
     headers: {
@@ -74,6 +79,7 @@ export async function POST(
       limit_seconds: limitSeconds,
       max_cuts: maxCuts,
       cut_style: project.cut_style ?? "basic",
+      ai_director: aiDirector,
     }),
   });
 
