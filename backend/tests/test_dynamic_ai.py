@@ -86,6 +86,70 @@ def test_moments_out_of_range_ignored():
     _assert_invariants(shots)
 
 
+def test_ai_boxes_fill_in_when_yolo_missed():
+    # YOLO rodou e não achou ninguém (cena escura) mas a IA localizou o DJ e o
+    # público: os boxes da IA viram o enquadramento (não cai no zoom central).
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.5
+    ai = AIDirection(
+        hype_score=0.7,
+        subject="dj",
+        worthy=True,
+        dj_box=Box(cx=0.3, cy=0.4, w=0.2, h=0.45, conf=0.5),
+        crowd_box=Box(cx=0.6, cy=0.8, w=0.7, h=0.35, conf=0.5),
+    )
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    kinds = {s.kind for s in shots}
+    assert "dj" in kinds and "center" not in kinds
+    # O crop do DJ segue o box da IA (à esquerda do frame), não o centro.
+    dj_shot = next(s for s in shots if s.kind == "dj")
+    w, _h, x, _y = dj_shot.crop
+    assert x + w / 2 < SRC_W / 2  # centrado em cx=0.3, não em 0.5
+
+
+def test_yolo_box_wins_over_ai_box():
+    # Quando o YOLO tem box, o da IA não substitui (mediana de track > estimativa).
+    wv = _wv()  # dj_box em cx=0.5
+    ai = AIDirection(
+        hype_score=0.7,
+        subject="dj",
+        worthy=True,
+        dj_box=Box(cx=0.1, cy=0.1, w=0.1, h=0.1, conf=0.5),
+    )
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    dj_shot = next(s for s in shots if s.kind == "dj")
+    w, _h, x, _y = dj_shot.crop
+    # Centro do crop ~no centro do frame (box do YOLO), não no canto da IA.
+    assert abs((x + w / 2) - SRC_W / 2) < SRC_W * 0.15
+
+
+def test_ai_crowd_box_enables_crowd_subject_without_yolo():
+    # Sem nenhum box do YOLO, subject=crowd da IA + crowd_box da IA fazem o
+    # público virar protagonista (antes: caía no zoom central).
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.6
+    ai = AIDirection(
+        hype_score=0.9,
+        subject="crowd",
+        worthy=True,
+        crowd_box=Box(cx=0.5, cy=0.75, w=0.8, h=0.4, conf=0.5),
+    )
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    first_zoom = next(s for s in shots if s.kind != "wide")
+    assert first_zoom.kind == "crowd"
+
+
 def test_respects_max_shots_with_many_moments():
     ai = AIDirection(
         hype_score=0.9,

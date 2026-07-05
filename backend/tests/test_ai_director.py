@@ -9,7 +9,8 @@ import types
 import pytest
 
 from app import ai_director
-from app.ai_director import AIDirection, _coerce, _parse_json
+from app.ai_director import AIDirection, _coerce, _coerce_box, _parse_json
+from app.visual import Box
 
 
 # ---- _parse_json: tolerante a cercas/ruído ----
@@ -65,6 +66,57 @@ def test_coerce_nan_hype():
     assert out.subject == "dj"
 
 
+# ---- _coerce_box: boxes de enquadramento da IA ----
+
+def test_coerce_box_valid_list():
+    box = _coerce_box([0.5, 0.35, 0.22, 0.4])
+    assert isinstance(box, Box)
+    assert box.cx == 0.5 and box.cy == 0.35
+    assert box.w == 0.22 and box.h == 0.4
+
+
+def test_coerce_box_valid_dict():
+    box = _coerce_box({"cx": 0.4, "cy": 0.6, "w": 0.3, "h": 0.5})
+    assert isinstance(box, Box)
+    assert box.cx == 0.4 and box.h == 0.5
+
+
+def test_coerce_box_clamps_oversized_sides():
+    box = _coerce_box([0.5, 0.5, 1.4, 2.0])
+    assert box is not None
+    assert box.w == 1.0 and box.h == 1.0
+
+
+def test_coerce_box_rejects_garbage():
+    assert _coerce_box(None) is None
+    assert _coerce_box("no meio") is None
+    assert _coerce_box([0.5, 0.5, 0.2]) is None            # 3 valores
+    assert _coerce_box([0.5, 0.5, 0.2, "x"]) is None       # não numérico
+    assert _coerce_box([float("nan"), 0.5, 0.2, 0.2]) is None
+    assert _coerce_box([1.5, 0.5, 0.2, 0.2]) is None       # centro fora do frame
+    assert _coerce_box([0.5, 0.5, 0.001, 0.2]) is None     # lado degenerado
+    assert _coerce_box([0.5, 0.5, -0.2, 0.2]) is None      # lado negativo
+
+
+def test_coerce_wires_boxes_into_direction():
+    out = _coerce(
+        {
+            "hype": 0.6,
+            "subject": "dj",
+            "dj_box": [0.5, 0.35, 0.2, 0.45],
+            "crowd_box": None,
+        },
+        duration=60.0,
+    )
+    assert out.dj_box is not None and out.dj_box.cy == 0.35
+    assert out.crowd_box is None
+
+
+def test_coerce_boxes_default_none():
+    out = _coerce({"hype": 0.5}, duration=60.0)
+    assert out.dj_box is None and out.crowd_box is None
+
+
 # ---- direct(): integração com cliente/frames fake ----
 
 def _fake_client(text: str):
@@ -87,7 +139,8 @@ def _reset_client():
 
 def test_direct_happy_path(monkeypatch):
     monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
-        '{"hype": 0.82, "subject": "crowd", "moments": [12.5], "worthy": true}'
+        '{"hype": 0.82, "subject": "crowd", "moments": [12.5], "worthy": true, '
+        '"dj_box": [0.48, 0.3, 0.2, 0.42], "crowd_box": [0.5, 0.8, 0.9, 0.35]}'
     ))
     monkeypatch.setattr(
         ai_director, "_sample_frames", lambda *a, **k: [(0.0, "Zm9v"), (30.0, "YmFy")]
@@ -98,6 +151,8 @@ def test_direct_happy_path(monkeypatch):
     assert out.subject == "crowd"
     assert out.moments == [12.5]
     assert out.worthy is True
+    assert out.dj_box is not None and out.dj_box.cx == pytest.approx(0.48)
+    assert out.crowd_box is not None and out.crowd_box.cy == pytest.approx(0.8)
 
 
 def test_direct_no_client_returns_none(monkeypatch):
