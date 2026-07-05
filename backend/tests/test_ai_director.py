@@ -115,6 +115,55 @@ def test_coerce_wires_boxes_into_direction():
 def test_coerce_boxes_default_none():
     out = _coerce({"hype": 0.5}, duration=60.0)
     assert out.dj_box is None and out.crowd_box is None
+    assert out.dancer_box is None and out.story == []
+
+
+# ---- _coerce_story: roteiro de câmera ----
+
+def test_coerce_story_valid_steps():
+    out = _coerce(
+        {
+            "story": [
+                {"t": 0, "subject": "wide"},
+                {"t": 10, "subject": "dj"},
+                [20, "dancer"],  # par [t, subject] também é aceito
+                {"t": 35.5, "subject": "crowd"},
+            ]
+        },
+        duration=60.0,
+    )
+    assert out.story == [(0.0, "wide"), (10.0, "dj"), (20.0, "dancer"), (35.5, "crowd")]
+
+
+def test_coerce_story_filters_garbage():
+    out = _coerce(
+        {
+            "story": [
+                {"t": -5, "subject": "dj"},        # t negativo
+                {"t": 61, "subject": "dj"},        # fora da janela
+                {"t": 10, "subject": "palco"},     # subject inválido
+                {"t": "x", "subject": "dj"},       # t não numérico
+                "dj aos 20s",                       # formato inválido
+                {"t": 20, "subject": "DJ"},        # case-insensitive → ok
+                {"t": 21, "subject": "crowd"},     # colado (< shot_min) → descartado
+            ]
+        },
+        duration=60.0,
+    )
+    assert out.story == [(20.0, "dj")]
+
+
+def test_coerce_story_caps_steps():
+    out = _coerce(
+        {"story": [{"t": float(t), "subject": "dj"} for t in range(0, 56, 5)]},
+        duration=60.0,
+    )
+    assert len(out.story) == 6  # MAX_STORY_STEPS
+
+
+def test_coerce_wires_dancer_box():
+    out = _coerce({"dancer_box": [0.3, 0.7, 0.1, 0.25]}, duration=60.0)
+    assert out.dancer_box is not None and out.dancer_box.cx == pytest.approx(0.3)
 
 
 # ---- direct(): integração com cliente/frames fake ----

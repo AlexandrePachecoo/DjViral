@@ -48,9 +48,10 @@ class Settings(BaseSettings):
     # Frames amostrados por segundo nas janelas candidatas.
     visual_fps: float = 2.0
     # Roda o YOLO a cada N frames amostrados no estilo dinâmico (precisa de
-    # boxes densos p/ derivar os alvos de zoom). No corte seco a detecção é
-    # bem mais esparsa (1 a cada ~8 s), só para o score.
-    visual_detect_every: int = 3
+    # boxes densos p/ derivar os alvos de zoom e o pan que segue o DJ — a
+    # 2 fps, N=2 dá 1 detecção/s). No corte seco a detecção é bem mais
+    # esparsa (1 a cada ~8 s), só para o score.
+    visual_detect_every: int = 2
     # O áudio gera `min(N * factor, cap)` janelas candidatas; a análise visual
     # re-ranqueia e ficam as N pedidas. O cap segura o tempo de job em sets
     # longos (45 janelas ≈ 10–25 min de análise visual).
@@ -69,6 +70,18 @@ class Settings(BaseSettings):
     # Zoom-drift suave dentro dos shots de zoom (via zoompan). 0 desliga e os
     # shots ficam 100% estáticos (só a alternância wide/zoom nos beats).
     dynamic_drift: float = 0.06
+    # Pan contínuo dentro dos shots de zoom: o crop segue a track do DJ
+    # (x/y animados por frame no filtro crop; o nível de zoom fica fixo).
+    # False = crop estático por shot (comportamento anterior).
+    dynamic_pan: bool = True
+    # Zona morta do pan: deslocamento mínimo do centro da pessoa (fração do
+    # frame) para a câmera se mover — abaixo disso o crop fica parado (evita
+    # micro-jitter quando o DJ está no lugar).
+    dynamic_pan_deadband: float = 0.04
+    # Velocidade máxima do pan (fração da largura do frame por segundo) —
+    # acima disso a câmera "atrasa" e alcança no keyframe seguinte, em vez
+    # de chicotear atrás do DJ.
+    dynamic_pan_max_speed: float = 0.10
     # Teto de shots por clipe (largura do `split=N` no filtergraph). Motion
     # alto pode gerar até ~20 shots num clipe de 60s (shot_min=3s) — o teto
     # limita a complexidade/memória do filtro independente da cena.

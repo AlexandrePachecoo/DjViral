@@ -31,6 +31,11 @@ except Exception:  # noqa: BLE001 - qualquer falha de import conta como "sem cv2
 
 # Enquadramentos válidos que o modelo pode escolher como protagonista da janela.
 VALID_SUBJECTS = {"dj", "crowd", "wide"}
+# Alvos válidos de um passo da story (roteiro de câmera): os subjects mais o
+# "dancer" (pessoa do público dançando em destaque, quando o modelo a viu).
+STORY_SUBJECTS = VALID_SUBJECTS | {"dancer"}
+# Máximo de passos aproveitados da story.
+MAX_STORY_STEPS = 6
 # Lado mínimo (fração do frame) de um box de enquadramento vindo do modelo;
 # menor que isso é degenerado (ponto/linha) e não serve para enquadrar.
 MIN_BOX_SIDE = 0.02
@@ -55,9 +60,14 @@ class AIDirection:
       fronteiras extras de punch-in no shot plan.
     - ``worthy``: se a cena tem energia suficiente para justificar zooms (senão
       reforça a decisão de corte seco).
-    - ``dj_box`` / ``crowd_box``: enquadramento do DJ e do público visto pelo
-      modelo (:class:`app.visual.Box`, coordenadas normalizadas 0-1). Usados
-      pelo shot plan quando o YOLO não achou ninguém (balada escura, laser,
+    - ``story``: roteiro de câmera — lista ordenada de ``(t, subject)`` dizendo
+      para onde a câmera olha a partir de cada instante (``subject`` em
+      :data:`STORY_SUBJECTS`); comanda a sequência de shots do corte dinâmico
+      no lugar da rotação heurística. Vazia = sem roteiro (alternância local).
+    - ``dj_box`` / ``crowd_box`` / ``dancer_box``: enquadramento do DJ, do
+      público e da pessoa dançando em destaque vistos pelo modelo
+      (:class:`app.visual.Box`, coordenadas normalizadas 0-1). Usados pelo
+      shot plan quando o YOLO não achou ninguém (balada escura, laser,
       contraluz) — a IA "vê" a cena semanticamente onde a detecção falha.
       ``None`` = o modelo não localizou (ou não devolveu um box válido).
     """
@@ -66,8 +76,10 @@ class AIDirection:
     subject: str = "wide"
     moments: list[float] = field(default_factory=list)
     worthy: bool = True
+    story: list[tuple[float, str]] = field(default_factory=list)
     dj_box: Box | None = None
     crowd_box: Box | None = None
+    dancer_box: Box | None = None
 
 
 _PROMPT = (
@@ -92,9 +104,19 @@ _PROMPT = (
     "null se não estiver visível.\n"
     '- "crowd_box": idem para a massa do público (o retângulo que cobre a '
     "aglomeração), ou null se não houver público visível.\n"
+    '- "dancer_box": idem para UMA pessoa do público dançando em destaque (a '
+    "que mais renderia um zoom), ou null se ninguém se destacar.\n"
+    '- "story": roteiro de câmera para o corte dinâmico — lista ordenada de '
+    'até 6 passos {{"t": segundos, "subject": "dj"|"crowd"|"dancer"|"wide"}} '
+    "dizendo para onde a câmera olha a partir do instante t. Monte uma "
+    "narrativa com intenção: abrir a cena, focar o artista no auge, mostrar "
+    'quem está dançando, voltar ao DJ. Use "dancer" só se dancer_box existir; '
+    "lista vazia se preferir a alternância automática.\n"
     'Exemplo: {{"hype": 0.8, "subject": "crowd", "moments": [12.5], '
     '"worthy": true, "dj_box": [0.5, 0.35, 0.22, 0.4], "crowd_box": '
-    "[0.5, 0.78, 0.85, 0.4]}}"
+    '[0.5, 0.78, 0.85, 0.4], "dancer_box": [0.3, 0.7, 0.1, 0.25], '
+    '"story": [{{"t": 0, "subject": "wide"}}, {{"t": 5, "subject": "dj"}}, '
+    '{{"t": 14, "subject": "dancer"}}, {{"t": 22, "subject": "dj"}}]}}'
     "{hint}"
 )
 
@@ -270,9 +292,43 @@ def _coerce(out: dict, duration: float) -> AIDirection:
         subject=subject,
         moments=deduped[:3],
         worthy=bool(out.get("worthy", True)),
+        story=_coerce_story(out.get("story"), duration),
         dj_box=_coerce_box(out.get("dj_box")),
         crowd_box=_coerce_box(out.get("crowd_box")),
+        dancer_box=_coerce_box(out.get("dancer_box")),
     )
+
+
+def _coerce_story(value, duration: float) -> list[tuple[float, str]]:
+    """Sanea a story ``[{t, subject}]`` (ou pares ``[t, subject]``) do modelo.
+
+    Passos com t fora de ``[0, duration)`` ou subject fora de
+    :data:`STORY_SUBJECTS` são descartados; o resto é ordenado por t e
+    espaçado em pelo menos ``dynamic_shot_min`` (passos colados não viram
+    shots). Lista vazia = sem roteiro.
+    """
+    steps: list[tuple[float, str]] = []
+    for step in value or []:
+        if isinstance(step, dict):
+            raw_t, raw_subj = step.get("t"), step.get("subject")
+        elif isinstance(step, (list, tuple)) and len(step) == 2:
+            raw_t, raw_subj = step
+        else:
+            continue
+        try:
+            t = float(raw_t)
+        except (TypeError, ValueError):
+            continue
+        subj = str(raw_subj or "").strip().lower()
+        if not math.isfinite(t) or not 0.0 <= t < duration or subj not in STORY_SUBJECTS:
+            continue
+        steps.append((round(t, 3), subj))
+    steps.sort(key=lambda s: s[0])
+    spaced: list[tuple[float, str]] = []
+    for t, subj in steps:
+        if not spaced or t - spaced[-1][0] >= settings.dynamic_shot_min:
+            spaced.append((t, subj))
+    return spaced[:MAX_STORY_STEPS]
 
 
 def direct(

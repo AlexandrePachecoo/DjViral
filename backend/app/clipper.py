@@ -129,6 +129,27 @@ def cut(
     return output_path
 
 
+def _pan_expr(points: list[tuple[float, int]]) -> str:
+    """Expressão FFmpeg piecewise-linear em ``t`` para os keyframes de pan.
+
+    ``points`` são ``(t relativo ao shot, valor)`` crescentes em t. Dentro do
+    branch (pós ``setpts=PTS-STARTPTS``) o ``t`` do filtro ``crop`` é o tempo
+    desde o início do shot; antes do primeiro keyframe segura o primeiro
+    valor, depois do último segura o último (sem extrapolar).
+    """
+    expr = str(points[-1][1])
+    for i in range(len(points) - 1, 0, -1):
+        ta, va = points[i - 1]
+        tb, vb = points[i]
+        if tb - ta <= 1e-6:
+            continue
+        seg = f"({va}+{vb - va}*(t-{ta:.3f})/{tb - ta:.3f})"
+        expr = f"if(lt(t,{tb:.3f}),{seg},{expr})"
+    if points[0][0] > 0:
+        expr = f"if(lt(t,{points[0][0]:.3f}),{points[0][1]},{expr})"
+    return expr
+
+
 def cut_dynamic(
     input_file: str,
     start_sec: float,
@@ -147,9 +168,11 @@ def cut_dynamic(
     decode só, sem arquivos intermediários — via ``filter_complex``:
 
     - ``split`` duplica o vídeo decodificado em um branch por shot;
-    - cada branch faz ``trim`` do seu trecho + ``crop`` ESTÁTICO (o filtro
-      ``crop`` do FFmpeg não anima largura/altura — só x/y são por frame,
-      então zoom animado via expressão não é possível) + ``scale``;
+    - cada branch faz ``trim`` do seu trecho + ``crop`` + ``scale``. O filtro
+      ``crop`` do FFmpeg não anima largura/altura (zoom animado via expressão
+      não é possível), mas avalia x/y POR FRAME: shots com ``path`` (keyframes
+      de pan da track do DJ/dançarino) usam expressões piecewise-lineares em
+      ``t`` para a câmera SEGUIR a pessoa dentro do shot;
     - shots com ``drift`` ganham um ``zoompan`` com rampa linear de zoom,
       sobre supersample 2× (mata o jitter de arredondamento inteiro do
       zoompan);
@@ -161,7 +184,9 @@ def cut_dynamic(
     zoompan/supersample — todos usam o branch estático, igual aos shots
     ``wide``). É o 2º nível do fallback do pipeline: mesmo shot plan (mesmos
     cortes/tempos/beats), sem a parte mais pesada em CPU/memória, para quando
-    a versão com zoom falha num container mais apertado.
+    a versão com zoom falha num container mais apertado. O pan (``path``) é
+    barato — só expressões no ``crop``, sem supersample — e é MANTIDO nesse
+    nível.
     """
     if not shots:
         raise ValueError("cut_dynamic exige ao menos um shot")
@@ -173,9 +198,15 @@ def cut_dynamic(
     parts = [f"[0:v]split={n}" + "".join(f"[v{i}]" for i in range(n))]
     for i, shot in enumerate(shots):
         cw, ch, cx, cy = shot.crop
+        if shot.path and len(shot.path) >= 2:
+            x_expr = _pan_expr([(t, x) for t, x, _ in shot.path])
+            y_expr = _pan_expr([(t, y) for t, _, y in shot.path])
+            crop_f = f"crop={cw}:{ch}:x='{x_expr}':y='{y_expr}'"
+        else:
+            crop_f = f"crop={cw}:{ch}:{cx}:{cy}"
         chain = (
             f"[v{i}]trim=start={shot.t0:.3f}:end={shot.t1:.3f},"
-            f"setpts=PTS-STARTPTS,crop={cw}:{ch}:{cx}:{cy}"
+            f"setpts=PTS-STARTPTS,{crop_f}"
         )
         if shot.drift and not force_static:
             # Rampa linear de zoom ao longo do shot (frames do shot = F).
