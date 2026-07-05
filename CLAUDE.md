@@ -81,8 +81,10 @@ YouTube quando necessário.
    (CPU, modelo commitado em `backend/models/yolov8n.onnx`, sem torch).
    Deriva o `visual_score` (0-1), o box do **DJ** (track dominante: box
    mediano global, a track no tempo `dj_track` e sua persistência
-   `dj_track_ratio`, consumidos pelo corte dinâmico) e o box do **público**
-   (frames com 3+ pessoas além do DJ). `get_beat_times` detecta os beats da janela para alinhar os
+   `dj_track_ratio`, consumidos pelo corte dinâmico), o box do **público**
+   (frames com 3+ pessoas além do DJ) e o **dançarino** (`dancer_box` /
+   `dancer_track`: melhor track secundária persistente E com movimento
+   próprio — alvo do shot "dancer" do corte dinâmico). `get_beat_times` detecta os beats da janela para alinhar os
    cortes do estilo dinâmico. Qualquer falha (modelo ausente, cv2 quebrado)
    degrada para score de movimento — a fase visual nunca derruba um job.
 3. **Score combinado** — o áudio gera mais candidatos que o pedido
@@ -98,8 +100,11 @@ YouTube quando necessário.
    próprio): amostra ~5 keyframes (reaproveita `visual.iter_frames`), encoda em
    JPEG e pergunta ao modelo a **vibe do público** (`hype`), o **protagonista**
    (`subject`: dj/crowd/wide), os **momentos de auge** (`moments`), se a cena é
-   digna de zoom (`worthy`) e o **enquadramento** do DJ e do público
-   (`dj_box`/`crowd_box`, `[cx, cy, w, h]` em frações 0-1 do frame; saneados em
+   digna de zoom (`worthy`), o **roteiro de câmera** (`story`: até 6 passos
+   `{t, subject}` com subject dj/crowd/dancer/wide — a sequência de shots que
+   o modelo recomenda para o trecho) e o **enquadramento** do DJ, do público
+   e da pessoa dançando em destaque (`dj_box`/`crowd_box`/`dancer_box`,
+   `[cx, cy, w, h]` em frações 0-1 do frame; saneados em
    `_coerce_box`). O hype entra no score final
    (`(1-w_hype)*base + w_hype*hype`, `SCORE_HYPE_WEIGHT`) e a direção alimenta o
    corte dinâmico (ver passo 4). É a primeira dependência de API de IA do projeto;
@@ -111,30 +116,38 @@ YouTube quando necessário.
    - **`basic` (seco)** — `clipper.cut()`: crop central 9:16 fixo + re-encode
      (comportamento original).
    - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
-     de 3–8s (wide ↔ zoom no DJ ↔ zoom no público) com fronteiras alinhadas
-     aos beats e punch-in no DJ exatamente no drop (o punch-in **sempre
-     aproxima**; fronteiras da grade coladas a um punch são removidas para não
-     gerar shot-relâmpago). O enquadramento do DJ é **por shot** (mediana da
-     `dj_track` dentro do trecho — segue o DJ pela cabine; o box global da
-     janela é só o fallback) e o **wide é ancorado no protagonista** (o crop
-     9:16 de um 16:9 mostra ~1/3 da largura; wide no centro do frame perdia o
-     DJ no canto do palco). Quando o diretor de IA rodou (passo 3b), o
-     `subject` enviesa o protagonista (ex.: `crowd` prioriza o público), os
-     `moments` viram fronteiras extras de punch-in nos auges visuais (não só
-     no drop musical) e os `dj_box`/`crowd_box` da IA assumem o enquadramento
-     quando o YOLO não achou ninguém OU quando a track é fraca/intermitente
-     (`dj_track_ratio < 0.3`, flicker de balada escura/laser) — uma track
-     sólida do YOLO continua vencendo a estimativa de cena da IA.
-     `clipper.cut_dynamic()`
-     renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
-     shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
-     alternância cortada no beat + drift suave opcional via `zoompan` com
-     supersample 2× anti-jitter; áudio `-map 0:a` contínuo). Sem pessoa
-     detectada (nem pelo YOLO, nem pela IA) → zoom central. O render em si
-     tem **3 níveis de fallback**
+     de 3–8s com um **arco narrativo**: abertura (wide/protagonista com
+     push-in), punch-in apertado no protagonista exatamente no drop e, depois
+     dele, rotação intencional protagonista ↔ dançarino/público com wide de
+     respiro (zooms **sempre aproximam** — sem drift alternado cego;
+     fronteiras alinhadas aos beats; as coladas a um punch são removidas para
+     não gerar shot-relâmpago). O enquadramento do DJ/dançarino é **por
+     shot** (mediana da track dentro do trecho; o box global da janela é só o
+     fallback) e a câmera **panoramiza dentro do shot** seguindo a track
+     (`_pan_path`: keyframes suavizados com zona morta `DYNAMIC_PAN_DEADBAND`
+     e teto de velocidade `DYNAMIC_PAN_MAX_SPEED`) — é o que mantém a pessoa
+     no quadro quando ela se move DURANTE o shot; o **wide é ancorado no
+     protagonista** (o crop 9:16 de um 16:9 mostra ~1/3 da largura; wide no
+     centro do frame perdia o DJ no canto do palco). Quando o diretor de IA
+     rodou (passo 3b), a `story` comanda a sequência de shots no lugar da
+     rotação heurística (kinds sem box degradam: dancer→crowd→dj→center), o
+     `subject` enviesa o protagonista, os `moments` viram fronteiras extras
+     de punch-in nos auges visuais e os `dj_box`/`crowd_box`/`dancer_box` da
+     IA assumem o enquadramento quando o YOLO não achou ninguém OU quando a
+     track é fraca/intermitente (`dj_track_ratio < 0.3`, flicker de balada
+     escura/laser) — uma track sólida do YOLO continua vencendo a estimativa
+     de cena da IA. `clipper.cut_dynamic()`
+     renderiza tudo num único FFmpeg (`split` → `trim`+`crop` por shot →
+     `concat`; o filtro `crop` não anima w/h — o "zoom" é a alternância
+     cortada no beat + drift suave opcional via `zoompan` com supersample 2×
+     anti-jitter — mas avalia **x/y por frame**: shots com pan usam expressões
+     piecewise-lineares em `t` para seguir a pessoa; áudio `-map 0:a`
+     contínuo). Sem pessoa detectada (nem pelo YOLO, nem pela IA) → zoom
+     central. O render em si tem **3 níveis de fallback**
      (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
      plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
-     leve em CPU/memória) → corte seco. `clipper._run_ffmpeg` roda todo
+     leve em CPU/memória; o pan é barato e é MANTIDO nesse nível) → corte
+     seco. `clipper._run_ffmpeg` roda todo
      FFmpeg com timeout (evita job travado) e, se falhar, distingue erro real
      de filtro vs. processo morto por sinal externo (ex. OOM) na mensagem —
      o corte nunca é perdido por causa do zoom.
@@ -207,7 +220,9 @@ ganchos detalhados em [`design.md`](design.md).
   dinâmico (opcionais): `VISUAL_ENABLED`, `YOLO_MODEL_PATH`, `VISUAL_FPS`,
   `VISUAL_DETECT_EVERY`, `VISUAL_CANDIDATES_FACTOR`, `VISUAL_CANDIDATES_CAP`,
   `VISUAL_BUDGET_SECONDS`, `SCORE_MUSIC_WEIGHT`, `DYNAMIC_SHOT_MIN/MAX`,
-  `DYNAMIC_ZOOM_MAX`, `DYNAMIC_DRIFT` (0 desliga o zoompan). Diretor de IA
+  `DYNAMIC_ZOOM_MAX`, `DYNAMIC_DRIFT` (0 desliga o zoompan), `DYNAMIC_PAN`
+  (false desliga o pan que segue o DJ), `DYNAMIC_PAN_DEADBAND`,
+  `DYNAMIC_PAN_MAX_SPEED`. Diretor de IA
   (opcional, só planos pagos): `ANTHROPIC_API_KEY` (vazio = IA desligada),
   `AI_DIRECTOR_ENABLED`, `AI_DIRECTOR_MODEL` (default `claude-haiku-4-5`),
   `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`, `AI_DIRECTOR_BUDGET_SECONDS`,
