@@ -106,10 +106,32 @@ class WindowVisual:
     crowd_box: Box | None = None   # box mediano do cluster de público
     visual_score: float = 0.0      # 0-1 combinado
     detected: bool = False         # True se o YOLO rodou em algum frame
+    # True se a MAIORIA dos frames amostrados estava escura (luma abaixo de
+    # `visual_low_light_luma_threshold`) — balada/laser. O CLAHE já roda nesse
+    # caso (ver `_maybe_enhance_low_light`), mas o flag também vira uma dica
+    # explícita no prompt do diretor de IA (a detecção local é menos confiável).
+    low_light: bool = False
+    # Viés vertical do rosto dentro da box de pessoa (mediana de
+    # ``(face.cy - box.cy) / box.h`` nas detecções da track): ``None`` = sem
+    # rosto detectado na track (YuNet ausente, ninguém de frente pra câmera
+    # etc.) — o corte dinâmico usa isso só pra afinar o `y` do crop (nunca o
+    # zoom/enquadramento), ver `app/dynamic.py::crop_for_kind`.
+    dj_face_bias_y: float | None = None
+    dancer_face_bias_y: float | None = None
 
 
 _net = None
 _net_failed = False
+_face_net = None
+_face_net_failed = False
+
+
+def _resolve_model_path(model_path: str) -> str:
+    """Caminho absoluto de um modelo relativo à raiz do worker (acima de ``app/``)."""
+    if os.path.isabs(model_path):
+        return model_path
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, model_path)
 
 
 def load_model(path: str | None = None):
@@ -129,16 +151,110 @@ def load_model(path: str | None = None):
         _net_failed = True
         return None
     try:
-        if not os.path.isabs(model_path):
-            # Relativo à raiz do worker (diretório acima de app/).
-            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            model_path = os.path.join(base, model_path)
-        _net = cv2.dnn.readNetFromONNX(model_path)
+        _net = cv2.dnn.readNetFromONNX(_resolve_model_path(model_path))
     except Exception:  # noqa: BLE001 - modelo ausente/corrompido → fallback
         logger.exception("Falha ao carregar o modelo YOLO em %s", model_path)
         _net_failed = True
         return None
     return _net
+
+
+def load_face_model(path: str | None = None):
+    """Carrega o detector de rosto YuNet (cache por processo). ``None`` se falhar.
+
+    ``None`` é o gatilho do fallback: sem rosto, o corte dinâmico usa só o
+    box de corpo do YOLO/IA (comportamento anterior à Fase 6). Nunca levanta
+    exceção — igual ao ``load_model`` do YOLO.
+    """
+    global _face_net, _face_net_failed
+    if _face_net is not None:
+        return _face_net
+    if _face_net_failed:
+        return None
+    if not settings.face_enabled:
+        _face_net_failed = True
+        return None
+    model_path = path or settings.face_model_path
+    if cv2 is None:
+        _face_net_failed = True
+        return None
+    resolved = _resolve_model_path(model_path)
+    if not os.path.exists(resolved):
+        logger.info("Modelo de rosto ausente em %s — sinal de rosto desligado", resolved)
+        _face_net_failed = True
+        return None
+    try:
+        _face_net = cv2.FaceDetectorYN_create(
+            resolved, "", (320, 320), score_threshold=settings.face_conf
+        )
+    except Exception:  # noqa: BLE001 - modelo ausente/corrompido → fallback
+        logger.exception("Falha ao carregar o modelo de rosto em %s", resolved)
+        _face_net_failed = True
+        return None
+    return _face_net
+
+
+# Fração superior da altura da box de pessoa usada como região de busca do
+# rosto (cabeça) — nunca a box inteira, pra manter a detecção barata e focada.
+FACE_HEAD_REGION_FRACTION = 0.35
+# Lado mínimo (px) da região recortada pra valer a pena rodar o detector.
+FACE_MIN_REGION_PX = 12
+
+
+def detect_face_in_region(net_face, frame_bgr: np.ndarray, box: Box) -> Box | None:
+    """Detecta um rosto na região da CABEÇA de ``box`` (top da pessoa).
+
+    Roda só no recorte da box JÁ ESCOLHIDA (DJ/dançarino) — nunca uma passada
+    full-frame. Devolve o box do rosto em coordenadas normalizadas do FRAME
+    INTEIRO (não da região recortada), ou ``None`` (sem rosto, região
+    pequena demais, ou qualquer falha do detector).
+    """
+    if net_face is None:
+        return None
+    h, w = frame_bgr.shape[:2]
+    x0 = int(max(0, (box.cx - box.w / 2) * w))
+    x1 = int(min(w, (box.cx + box.w / 2) * w))
+    y0 = int(max(0, (box.cy - box.h / 2) * h))
+    y1 = int(min(h, y0 + box.h * h * FACE_HEAD_REGION_FRACTION))
+    if x1 - x0 < FACE_MIN_REGION_PX or y1 - y0 < FACE_MIN_REGION_PX:
+        return None
+    region = frame_bgr[y0:y1, x0:x1]
+    try:
+        net_face.setInputSize((region.shape[1], region.shape[0]))
+        _ok, faces = net_face.detect(region)
+    except Exception:  # noqa: BLE001 - detecção de rosto nunca derruba o job
+        logger.exception("Falha na detecção de rosto")
+        return None
+    if faces is None or len(faces) == 0:
+        return None
+    # Maior rosto da região (mais provável de ser o protagonista, não alguém
+    # ao fundo que entrou na box por acaso).
+    best = max(faces, key=lambda f: float(f[2]) * float(f[3]))
+    fx, fy, fw, fh = (float(v) for v in best[:4])
+    if fw < settings.face_min_size_px or fh < settings.face_min_size_px:
+        return None
+    return Box(
+        cx=(x0 + fx + fw / 2) / w,
+        cy=(y0 + fy + fh / 2) / h,
+        w=fw / w,
+        h=fh / h,
+        conf=float(best[-1]),
+    )
+
+
+def _face_bias_y(pairs: list[tuple[int, Box]], faces: dict[int, Box | None]) -> float | None:
+    """Viés vertical mediano ``(face.cy - box.cy) / box.h`` da track.
+
+    ``None`` se nenhuma detecção da track tiver rosto associado.
+    """
+    diffs = [
+        (faces[id(box)].cy - box.cy) / box.h
+        for _idx, box in pairs
+        if faces.get(id(box)) is not None and box.h > 0
+    ]
+    if not diffs:
+        return None
+    return float(np.median(diffs))
 
 
 def _video_dims(path: str) -> tuple[int, int]:
@@ -378,6 +494,28 @@ def _pick_dancer_track(
     return _median_box([b for _, b in pairs]), pairs
 
 
+def _maybe_enhance_low_light(frame_bgr: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Aplica CLAHE (contraste local, canal L do LAB) se o frame estiver escuro.
+
+    Balada/festival = pouca luz + laser/strobe: o YOLO perde detecções nesse
+    cenário (é por isso que o box da IA existe como fallback). CLAHE realça o
+    contraste LOCAL sem ser enganado por um pico de brilho transitório (um
+    flash de laser), diferente de aplicar gamma fixo no frame inteiro. Só roda
+    quando o luma médio fica abaixo do limiar — em cena bem iluminada é
+    puro custo (poucos ms) sem ganho, então nem tenta. Devolve
+    ``(frame_processado, era_escuro)``.
+    """
+    luma = float(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).mean())
+    if luma >= settings.visual_low_light_luma_threshold:
+        return frame_bgr, False
+    lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=settings.visual_low_light_clahe_clip, tileGridSize=(8, 8))
+    enhanced_l = clahe.apply(l_chan)
+    enhanced = cv2.merge((enhanced_l, a_chan, b_chan))
+    return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR), True
+
+
 def analyze_window(
     video_path: str,
     start_sec: float,
@@ -385,17 +523,34 @@ def analyze_window(
     net=None,
     detect_every: int = 3,
     fps: float = 2.0,
+    net_face=None,
 ) -> WindowVisual:
     """Analisa uma janela candidata e devolve o :class:`WindowVisual`.
 
     ``detect_every``: roda o YOLO a cada N frames amostrados (os demais só
     contribuem para o movimento). Com ``net=None`` a janela é avaliada apenas
-    pelo movimento (``visual_score = motion_score``).
+    pelo movimento (``visual_score = motion_score``). ``net_face`` (opcional,
+    de :func:`load_face_model`) roda YuNet na região da cabeça de CADA pessoa
+    detectada nesses mesmos frames (mesma cadência do YOLO, sem passada
+    extra) — usado depois para derivar ``dj_face_bias_y``/``dancer_face_bias_y``
+    da track escolhida.
     """
     samples: list[FrameSample] = []
     prev_gray: np.ndarray | None = None
+    dark_frames = 0
+    total_frames = 0
+    faces_by_box_id: dict[int, Box | None] = {}
 
     for idx, (t, frame) in enumerate(iter_frames(video_path, start_sec, duration, fps)):
+        total_frames += 1
+        if cv2 is not None and settings.visual_low_light_enabled:
+            try:
+                frame, is_dark = _maybe_enhance_low_light(frame)
+            except Exception:  # noqa: BLE001 - CLAHE nunca derruba o job
+                logger.exception("Falha no realce de baixa luz (t=%.1fs)", t)
+                is_dark = False
+            if is_dark:
+                dark_frames += 1
         if cv2 is not None:
             small = cv2.resize(frame, (MOTION_SIZE, MOTION_SIZE * frame.shape[0] // frame.shape[1]))
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -415,11 +570,17 @@ def analyze_window(
                 persons = detect_persons(net, frame)
             except Exception:  # noqa: BLE001 - inferência nunca derruba o job
                 logger.exception("Falha na detecção de pessoas (t=%.1fs)", t)
+            if persons and net_face is not None:
+                # Só nas pessoas JÁ detectadas neste frame — nunca uma
+                # passada full-frame extra do detector de rosto.
+                for box in persons:
+                    faces_by_box_id[id(box)] = detect_face_in_region(net_face, frame, box)
         samples.append(FrameSample(t=t, motion=motion, persons=persons))
 
     wv = WindowVisual(samples=samples)
     if not samples:
         return wv
+    wv.low_light = total_frames > 0 and (dark_frames / total_frames) > 0.5
 
     motions = np.array([s.motion for s in samples[1:]] or [0.0])
     raw = 0.5 * float(motions.mean()) + 0.5 * float(np.percentile(motions, 90))
@@ -435,11 +596,13 @@ def analyze_window(
         wv.dj_box, dj_pairs, rest, other_tracks = _pick_dj_track(detected_frames)
         wv.dj_track = [(detected_samples[i].t, box) for i, box in dj_pairs]
         wv.dj_track_ratio = len(dj_pairs) / len(detected_frames)
+        wv.dj_face_bias_y = _face_bias_y(dj_pairs, faces_by_box_id)
 
         wv.dancer_box, dancer_pairs = _pick_dancer_track(
             other_tracks, len(detected_frames)
         )
         wv.dancer_track = [(detected_samples[i].t, box) for i, box in dancer_pairs]
+        wv.dancer_face_bias_y = _face_bias_y(dancer_pairs, faces_by_box_id)
 
         # Público: frames com 3+ pessoas além do DJ. O box do público é a
         # mediana do bounding box do cluster nesses frames.

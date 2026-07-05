@@ -22,7 +22,10 @@ from dataclasses import dataclass
 import librosa
 import numpy as np
 import soundfile as sf
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
+
+from .config import settings
 
 # Taxa de amostragem alvo. Mono em 22050 Hz é suficiente para detectar energia e
 # onsets, e mantém o uso de memória aceitável mesmo em sets longos.
@@ -34,19 +37,6 @@ FRAME_LENGTH = 2048  # janela do RMS e n_fft do espectrograma mel
 # bloco custa ~100 MB entre sinal e espectrograma, independente da duração
 # total do set.
 BLOCK_LENGTH = 4096
-
-# O BPM global é estimado em janelas curtas (mediana de 3 janelas em 25%, 50%
-# e 75% do set). O tempograma do librosa cresce linearmente com o áudio
-# analisado (~740 MB para 10 min!), então janelas curtas são obrigatórias.
-TEMPO_WINDOW_SECONDS = 60
-
-# Distância mínima entre dois picos, em segundos, para não gerar clipes
-# sobrepostos.
-MIN_GAP_SECONDS = 30
-
-# Janela (em segundos) usada para medir o contraste de energia em torno de um
-# drop: comparamos a energia média logo depois vs. logo antes de cada frame.
-CONTRAST_WINDOW_SECONDS = 4
 
 
 @dataclass
@@ -183,9 +173,10 @@ def _estimate_bpm(onset_env: np.ndarray, sr: int) -> int:
     """Estima o BPM global pela mediana de até 3 janelas curtas do envelope.
 
     Janelas em 25%, 50% e 75% do set: robusto a um break/silêncio pontual e
-    com custo de memória fixo (uma janela de ``TEMPO_WINDOW_SECONDS`` por vez).
+    com custo de memória fixo (uma janela de ``analyzer_tempo_window_seconds``
+    por vez).
     """
-    window = int(TEMPO_WINDOW_SECONDS * sr / HOP_LENGTH)
+    window = int(settings.analyzer_tempo_window_seconds * sr / HOP_LENGTH)
     if len(onset_env) <= window:
         segments = [onset_env]
     else:
@@ -206,6 +197,62 @@ def _estimate_bpm(onset_env: np.ndarray, sr: int) -> int:
     if not bpms:
         return 0
     return int(round(float(np.median(bpms))))
+
+
+def _dedup_peaks(peak_idx: np.ndarray, score: np.ndarray, frames_per_second: float) -> np.ndarray:
+    """Funde picos vizinhos que são o MESMO platô sustentado (ex.: um drop que
+    se repete a cada loop de 16 compassos), mantendo só o mais alto.
+
+    Diferente da distância mínima do ``find_peaks`` (que só barra picos MUITO
+    próximos), esta janela é maior (:data:`analyzer_dedup_window_seconds`) e
+    olha o VALE entre os dois picos: se o score não desce o bastante entre
+    eles (``analyzer_dedup_trough_ratio`` do menor dos dois), é a mesma
+    "colina" e não dois momentos distintos.
+    """
+    if len(peak_idx) < 2:
+        return peak_idx
+    window = max(1, int(settings.analyzer_dedup_window_seconds * frames_per_second))
+    order = sorted(int(i) for i in peak_idx)
+    kept: list[int] = [order[0]]
+    for idx in order[1:]:
+        prev = kept[-1]
+        if idx - prev <= window:
+            trough = float(np.min(score[prev : idx + 1]))
+            lower = min(score[prev], score[idx])
+            if lower > 0 and trough >= settings.analyzer_dedup_trough_ratio * lower:
+                if score[idx] > score[prev]:
+                    kept[-1] = idx  # mesmo platô: fica o mais alto
+                continue
+        kept.append(idx)
+    return np.array(kept)
+
+
+def _pick_peaks(score: np.ndarray, frames_per_second: float) -> np.ndarray:
+    """Índices de frame dos picos de ``score`` (baseline local + prominência + dedup).
+
+    Separado de :func:`analyze` para ser testável com um ``score`` sintético,
+    sem precisar decodificar áudio real.
+    """
+    # Baseline LOCAL (média móvel) em vez de um limiar global (mean*1.5, cego
+    # a um set com trechos bem mais quietos/mais saturados que a média
+    # inteira): um pico só conta se se destacar do CONTEXTO ao redor dele.
+    baseline_window = max(1, int(settings.analyzer_baseline_window_seconds * frames_per_second))
+    baseline = uniform_filter1d(score, size=baseline_window, mode="nearest")
+    relative = np.clip(score - baseline, 0, None)
+
+    # find_peaks trabalha em índices de frame. Convertemos a distância mínima
+    # (segundos) para frames: 1 frame ≈ HOP_LENGTH amostras. ``prominence`` (em
+    # vez de ``height``) é relativo por natureza — não depende da média global.
+    min_distance = max(1, int(settings.analyzer_min_gap_seconds * frames_per_second))
+
+    peak_idx, _ = find_peaks(
+        relative,
+        prominence=settings.analyzer_peak_prominence,
+        distance=min_distance,
+    )
+    if len(peak_idx) == 0:
+        return peak_idx
+    return _dedup_peaks(peak_idx, score, frames_per_second)
 
 
 def analyze(path: str, top_n: int = 30) -> tuple[list[Peak], int]:
@@ -230,27 +277,18 @@ def analyze(path: str, top_n: int = 30) -> tuple[list[Peak], int]:
     frames_per_second = sr / HOP_LENGTH
 
     # Sinal 3: contraste de energia pré/pós drop.
-    contrast_window = max(1, int(CONTRAST_WINDOW_SECONDS * frames_per_second))
+    contrast_window = max(1, int(settings.analyzer_contrast_window_seconds * frames_per_second))
     contrast = _energy_contrast(rms, contrast_window)
 
     # Combina os três sinais normalizados. Um bom corte é alto em energia E em
     # impacto E vem logo após um buildup (contraste alto = drop).
     score = (
-        0.4 * _normalize(rms)
-        + 0.3 * _normalize(onset_env)
-        + 0.3 * _normalize(contrast)
+        settings.analyzer_weight_rms * _normalize(rms)
+        + settings.analyzer_weight_onset * _normalize(onset_env)
+        + settings.analyzer_weight_contrast * _normalize(contrast)
     )
 
-    # find_peaks trabalha em índices de frame. Convertemos a distância mínima
-    # (segundos) para frames: 1 frame ≈ HOP_LENGTH amostras.
-    min_distance = max(1, int(MIN_GAP_SECONDS * frames_per_second))
-
-    peak_idx, _ = find_peaks(
-        score,
-        height=float(np.mean(score) * 1.5),
-        distance=min_distance,
-    )
-
+    peak_idx = _pick_peaks(score, frames_per_second)
     if len(peak_idx) == 0:
         return [], bpm
 
