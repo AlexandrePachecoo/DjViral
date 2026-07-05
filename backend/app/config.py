@@ -38,6 +38,36 @@ class Settings(BaseSettings):
     # velocidade real (a CPU da VM é limitada de qualquer forma).
     ffmpeg_threads: int = 2
 
+    # ---- Análise de áudio (analyzer.py) ----
+    # Pesos dos três sinais no score combinado (RMS/onset/contraste). Somam 1.0
+    # no default; expostos só para permitir calibrar sem redeploy.
+    analyzer_weight_rms: float = 0.4
+    analyzer_weight_onset: float = 0.3
+    analyzer_weight_contrast: float = 0.3
+    # Distância mínima entre dois picos, em segundos, para não gerar clipes
+    # sobrepostos.
+    analyzer_min_gap_seconds: int = 30
+    # Janela (s) usada para medir o contraste de energia em torno de um drop.
+    analyzer_contrast_window_seconds: int = 4
+    # Janela (s) de cada uma das 3 amostras usadas para estimar o BPM global.
+    analyzer_tempo_window_seconds: int = 60
+    # Janela (s) da baseline local (média móvel) subtraída do score antes do
+    # peak-picking — troca o limiar GLOBAL (mean*1.5, cego a trechos mais
+    # quietos ou mais saturados do set) por um limiar RELATIVO ao contexto
+    # local de cada trecho.
+    analyzer_baseline_window_seconds: int = 60
+    # Prominência mínima (no score já subtraído da baseline, ~0-1) para um
+    # pico contar — descarta ruído/micro-flutuações sem depender de um valor
+    # absoluto por set.
+    analyzer_peak_prominence: float = 0.05
+    # Janela (s) de deduplicação: dois picos dentro dela que não "descem" o
+    # bastante entre si (ver `analyzer_dedup_trough_ratio`) são o mesmo platô
+    # sustentado (ex.: o mesmo drop repetido) — fica só o mais alto.
+    analyzer_dedup_window_seconds: int = 90
+    # Se o vale entre dois picos próximos não cair abaixo desta fração do
+    # menor dos dois, eles são fundidos num só.
+    analyzer_dedup_trough_ratio: float = 0.85
+
     # ---- Análise visual (score combinado + corte dinâmico) ----
     # Desliga toda a fase visual (score volta a ser 100% musical e o corte
     # dinâmico degrada para zoom central).
@@ -62,6 +92,39 @@ class Settings(BaseSettings):
     visual_budget_seconds: int = 900
     # Peso da parte musical no score final (visual = 1 - este valor).
     score_music_weight: float = 0.6
+    # Pré-processamento de baixa luz (balada/laser escuros): CLAHE (contraste
+    # local) no frame ANTES do YOLO/motion quando o brilho médio (luma) fica
+    # abaixo do limiar — melhora a detecção sem ser enganado por picos de
+    # brilho transitórios (strobe/laser), diferente de um gamma fixo.
+    visual_low_light_enabled: bool = True
+    visual_low_light_luma_threshold: float = 60.0
+    visual_low_light_clahe_clip: float = 2.0
+    # Track do YOLO presente em menos que esta fração dos frames detectados é
+    # "fraca" (flicker em cena escura): o box da IA, quando existe, assume o
+    # enquadramento no lugar da mediana de meia dúzia de detecções tremidas.
+    dynamic_ai_box_takeover_ratio: float = 0.3
+
+    # ---- Detecção de rosto (sinal de ancoragem, NÃO de corte fechado) ----
+    # Roda YuNet só na região da CABEÇA da box já escolhida (DJ/dançarino) —
+    # nunca uma passada full-frame nem um punch-in genérico. Refina a
+    # centralização vertical do crop e, em shots já "tight" (punch-in no
+    # drop/auge), dá um bônus PEQUENO de zoom — nunca troca o enquadramento
+    # por um close-up de rosto (a dança/controladora continuam no quadro).
+    face_enabled: bool = True
+    face_model_path: str = "models/face_detection_yunet.onnx"
+    # Confiança mínima de uma detecção de rosto (score do YuNet).
+    face_conf: float = 0.6
+    # Lado mínimo (px, na região recortada da cabeça) de um rosto detectado
+    # pra contar — evita reagir a falsos-positivos minúsculos.
+    face_min_size_px: int = 20
+    # Peso do ajuste vertical do crop em direção ao rosto (0 = desliga; 1 =
+    # centraliza total no rosto). É um NUDGE, não um travamento — só toca o
+    # `y` do crop, nunca `w`/`h`/zoom.
+    face_anchor_weight: float = 0.3
+    # Bônus de zoom (adicional ao zoom normal do shot) SÓ em shots já
+    # marcados como "tight"/punch-in E com rosto detectado — teto bem abaixo
+    # de `dynamic_zoom_max`, pra nunca virar um close-up genérico.
+    face_zoom_bonus: float = 0.15
 
     # ---- Corte dinâmico (zooms) ----
     dynamic_shot_min: float = 3.0   # duração mínima de um shot (s)
@@ -92,34 +155,63 @@ class Settings(BaseSettings):
     # Railway), e com vários branches de zoompan supersampleados ativos ao
     # mesmo tempo isso pode inflar bastante o pico de memória do processo.
     dynamic_filter_threads: int = 2
+    # Continuidade de câmera entre shots do MESMO kind (dj/dancer/crowd): um
+    # shot estático (sem pan próprio) tem seu enquadramento puxado uma fração
+    # em direção a onde a câmera estava no FIM do último shot desse kind, em
+    # vez de saltar direto para o alvo — o "operador de câmera" revisita o
+    # sujeito em vez de resetar o enquadramento a cada corte. 0 = desliga
+    # (comportamento anterior, cada shot 100% independente).
+    dynamic_camera_continuity: float = 0.35
 
     # ---- Diretor de IA (visão / "vibe" do público) ----
-    # Camada opcional de IA de visão (Claude) que roda por janela candidata:
-    # avalia a energia do público, o protagonista visual e os instantes de auge.
-    # Alimenta o re-rank dos cortes (hype) e o corte dinâmico (enquadramento +
-    # punch-in). Só roda quando o disparo do /process pede (planos pagos) E há
-    # chave da API. Qualquer falha degrada para a heurística local (nunca derruba
-    # o job), igual à fase visual do YOLO.
+    # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
+    # barata cobre TODOS os candidatos (nenhum fica de fora só por causa do
+    # score local), e a direção profunda (boxes/story) roda só nas melhores
+    # janelas pelo score já ajustado pela triagem. Só roda quando o disparo do
+    # /process pede (planos pagos) E há chave da API. Qualquer falha degrada
+    # para a heurística local (nunca derruba o job), igual à fase visual do YOLO.
     ai_director_enabled: bool = True
     # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
     anthropic_api_key: str = ""
-    # Modelo de visão. Haiku é rápido/barato e suficiente para classificar vibe;
-    # suba para claude-opus-4-8 se quiser o máximo de qualidade.
-    ai_director_model: str = "claude-haiku-4-5"
-    # Teto de chamadas à IA por job (gasta o orçamento nas janelas mais
-    # promissoras pelo score local; independe do nº de candidatos).
-    ai_director_max_calls: int = 15
-    # Quantos keyframes amostrar por janela para enviar ao modelo.
+    # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
+    # roda no top-K; Sonnet dá enquadramento e roteiro de câmera bem melhores
+    # que Haiku pelo custo adicional (poucas chamadas por job).
+    ai_director_model: str = "claude-sonnet-5"
+    # Teto de chamadas da direção profunda por job (gasta o orçamento nas
+    # janelas mais promissoras pelo score AJUSTADO pela triagem).
+    ai_director_max_calls: int = 20
+    # Quantos keyframes amostrar por janela para a direção profunda.
     ai_director_frames: int = 5
-    # Teto de tempo (s) da fase de IA por job; estourou, as janelas restantes
-    # ficam só com o score local (análogo a visual_budget_seconds).
+    # Largura (px) dos frames enviados à direção profunda.
+    ai_director_frame_width: int = 640
+    # Teto de tempo (s) da direção profunda por job; estourou, as janelas
+    # restantes ficam só com o score ajustado da triagem.
     ai_director_budget_seconds: int = 180
     # Timeout (s) de cada chamada individual à API.
     ai_director_timeout: float = 30.0
-    # Peso do hype da IA no score final: final = (1-peso)*base + peso*hype, onde
-    # base é o score local (musical+visual). 0 = ignora o hype. Sem IA na janela,
-    # o score fica só no base (compatível com o comportamento atual).
+    # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
+    # + peso*hype. Janela sem direção profunda fica só no score ajustado.
     score_hype_weight: float = 0.35
+
+    # Modelo da TRIAGEM (barata, cobre todos os candidatos) — fica em Haiku
+    # mesmo com a direção profunda em Sonnet, pra o custo por janela ficar baixo.
+    ai_triage_model: str = "claude-haiku-4-5"
+    # Quantos candidatos por chamada de triagem (1 chamada avalia várias janelas
+    # de uma vez — é o que torna cobrir TODOS os candidatos barato).
+    ai_triage_group_size: int = 6
+    # Keyframes por janela na triagem (bem menos que a direção profunda —
+    # só precisa classificar hype/worthy, não localizar boxes).
+    ai_triage_frames_per_window: int = 2
+    # Largura (px) dos frames da triagem (menor que a direção profunda).
+    ai_triage_frame_width: int = 256
+    # Teto de tempo (s) da fase de triagem por job (separado do budget da
+    # direção profunda).
+    ai_triage_budget_seconds: int = 90
+    # Peso do hype "lite" da triagem no score ajustado (usado ANTES do corte
+    # do top-K da direção profunda): adjusted = (1-peso)*base + peso*hype_lite.
+    # É o que deixa uma janela mal ranqueada localmente mas bem avaliada
+    # visualmente sobreviver ao corte do top-K.
+    score_hype_lite_weight: float = 0.20
 
 
 settings = Settings()

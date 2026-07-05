@@ -25,10 +25,6 @@ CENTER_ZOOM = 1.3
 # Margem vertical do enquadramento do DJ: a altura do crop é ~1.9x a altura
 # da pessoa detectada (enquadra busto, cabine e um respiro).
 DJ_BOX_MARGIN = 1.9
-# Track do YOLO presente em menos que esta fração dos frames detectados é
-# "fraca" (flicker em cena escura): o box da IA, quando existe, assume o
-# enquadramento no lugar da mediana de meia dúzia de detecções tremidas.
-AI_BOX_TAKEOVER_RATIO = 0.3
 # Folga (s) em volta do shot ao juntar as detecções da track para o
 # enquadramento por shot (pega detecções vizinhas quando o shot é curto).
 TRACK_LOCAL_PAD = 0.75
@@ -48,8 +44,9 @@ class Shot:
     (ex.: 0.06 = aproxima 6%; negativo afasta; 0 = estático). ``path``
     (opcional) são keyframes ``(t relativo ao início do shot, x, y)`` do canto
     do crop: a câmera PANORAMIZA seguindo a pessoa (o filtro ``crop`` avalia
-    x/y por frame; w/h continuam fixos). ``path`` e ``drift`` são mutuamente
-    exclusivos — shot com path tem drift 0.
+    x/y por frame; w/h continuam fixos). ``path`` e ``drift`` PODEM coexistir
+    (Ken Burns: pan + zoom simultâneos) — o renderizador aplica o pan via
+    ``crop`` e o zoom via um ``zoompan`` em cima do resultado já panorâmico.
     """
 
     t0: float
@@ -235,6 +232,24 @@ def _inflate_for_span(
     return Box(cx=box.cx, cy=box.cy, w=box.w, h=box.h + span, conf=box.conf)
 
 
+def _face_anchor(box: Box, face_bias_y: float | None) -> Box:
+    """Nudge vertical do crop em direção ao rosto (Fase 6 do plano de melhorias).
+
+    ``face_bias_y`` é a mediana de ``(face.cy - box.cy) / box.h`` observada na
+    track (ver ``visual._face_bias_y``) — tipicamente negativa (o rosto fica
+    acima do centro geométrico do corpo). Só desloca ``cy``: ``w``/``h`` (e
+    portanto o zoom) NUNCA mudam aqui — o enquadramento continua mostrando o
+    corpo/dança/controladora, só para de arriscar cortar a cabeça no topo do
+    quadro. Sem rosto detectado (``None``) ou feature desligada, devolve o box
+    intacto.
+    """
+    if face_bias_y is None or not settings.face_enabled:
+        return box
+    weight = min(1.0, max(0.0, settings.face_anchor_weight))
+    new_cy = min(1.0, max(0.0, box.cy + face_bias_y * box.h * weight))
+    return Box(cx=box.cx, cy=new_cy, w=box.w, h=box.h, conf=box.conf)
+
+
 def _snap_to_beat(t: float, beats: list[float]) -> float:
     if not beats:
         return t
@@ -267,13 +282,14 @@ def build_shot_plan(
       ``ai.moments`` adicionam punch-ins nos auges visuais. ``ai.dj_box`` /
       ``ai.crowd_box`` / ``ai.dancer_box`` completam o enquadramento onde o
       YOLO falhou: nenhuma pessoa achada OU track fraca/intermitente (presente
-      em menos de :data:`AI_BOX_TAKEOVER_RATIO` dos frames detectados —
+      em menos de :data:`settings.dynamic_ai_box_takeover_ratio` dos frames detectados —
       flicker de cena escura); uma track sólida do YOLO sempre vence a
       estimativa da IA.
     - Shots de DJ/dançarino são enquadrados POR SHOT (mediana da track no
       trecho, via :func:`_local_box`) e a câmera PANORAMIZA dentro do shot
-      seguindo a track (:func:`_pan_path`) — é o que mantém a pessoa no quadro
-      quando ela se move durante o shot. O wide é ancorado no protagonista.
+      seguindo a track (:func:`_pan_path`), AO MESMO TEMPO em que aproxima
+      (``drift``) — pan e zoom coexistem no shot (efeito Ken Burns), em vez
+      de escolher um ou outro. O wide é ancorado no protagonista.
     - Fronteiras snapam ao beat mais próximo; sem beats, grade fixa.
     - Trechos agitados (motion alto) recebem shots mais curtos.
     - Nunca ultrapassa :data:`settings.dynamic_max_shots` (o teto limita a
@@ -388,11 +404,16 @@ def build_shot_plan(
     dj_track = list(wv.dj_track) if wv is not None else []
     dancer_box = wv.dancer_box if wv is not None else None
     dancer_track = list(wv.dancer_track) if wv is not None else []
+    # Viés vertical do rosto (sinal de ancoragem, ver `crop_for_kind`/Fase 6
+    # do plano) — None quando não há rosto detectado na track (YuNet ausente
+    # ou ninguém de frente pra câmera).
+    dj_face_bias = wv.dj_face_bias_y if wv is not None else None
+    dancer_face_bias = wv.dancer_face_bias_y if wv is not None else None
     if ai is not None:
         weak_track = (
             dj_box is not None
             and wv is not None
-            and wv.dj_track_ratio < AI_BOX_TAKEOVER_RATIO
+            and wv.dj_track_ratio < settings.dynamic_ai_box_takeover_ratio
         )
         if ai.dj_box is not None and (dj_box is None or weak_track):
             dj_box = ai.dj_box
@@ -459,24 +480,72 @@ def build_shot_plan(
         anchor_cx=anchor_box.cx if anchor_box is not None else None,
     )
 
+    # Continuidade de câmera: (cx, cy) de ONDE A CÂMERA PAROU no fim do último
+    # shot de cada kind (dj/dancer/crowd), pra puxar o enquadramento do
+    # próximo shot desse kind em vez de saltar reto pro alvo — ver
+    # :data:`settings.dynamic_camera_continuity`. "wide"/"center" ficam de
+    # fora de propósito (são o respiro/reset da narrativa).
+    prev_camera: dict[str, tuple[float, float]] = {}
+
+    def _apply_continuity(
+        kind: str,
+        crop: tuple[int, int, int, int],
+        path: list[tuple[float, int, int]] | None,
+    ) -> tuple[tuple[int, int, int, int], list[tuple[float, int, int]] | None]:
+        cw, ch, cx, cy = crop
+        blend = min(1.0, max(0.0, settings.dynamic_camera_continuity))
+        prev = prev_camera.get(kind)
+        if path is None and prev is not None and blend > 0:
+            # Shot estático: puxa o centro do crop uma fração em direção à
+            # posição final da câmera na última vez que este kind apareceu —
+            # sem isso, dois shots do mesmo protagonista longe um do outro na
+            # timeline enquadram de forma totalmente desconexa.
+            cur_cx, cur_cy = (cx + cw / 2) / src_w, (cy + ch / 2) / src_h
+            new_cx = cur_cx * (1 - blend) + prev[0] * blend
+            new_cy = cur_cy * (1 - blend) + prev[1] * blend
+            cx = _even_pos(new_cx * src_w - cw / 2, src_w - cw)
+            cy = _even_pos(new_cy * src_h - ch / 2, src_h - ch)
+            crop = (cw, ch, cx, cy)
+
+        # Guarda pra próxima vez: fim do path se houver pan, senão o próprio
+        # centro do crop estático (já com a continuidade aplicada acima).
+        if path:
+            _end_t, end_x, end_y = path[-1]
+            prev_camera[kind] = ((end_x + cw / 2) / src_w, (end_y + ch / 2) / src_h)
+        else:
+            prev_camera[kind] = ((cx + cw / 2) / src_w, (cy + ch / 2) / src_h)
+        return crop, path
+
     def crop_for_kind(
         kind: str, tight: bool, t0: float, t1: float
     ) -> tuple[tuple[int, int, int, int], list[tuple[float, int, int]] | None]:
         """Crop do shot + keyframes de pan (quando a track dá movimento)."""
         if kind == "crowd":
-            return crop_for_box(crowd_box, src_w, src_h, zoom=1.35), None
+            crop = crop_for_box(crowd_box, src_w, src_h, zoom=1.35)
+            return _apply_continuity(kind, crop, None)
         if kind in ("dj", "dancer"):
             # Enquadramento POR SHOT: mediana da track dentro do trecho —
             # segue a pessoa pela cena em vez de mirar a posição média dos 60s
             # — e pan dentro do shot para ela não sair do quadro no meio.
             track = dj_track if kind == "dj" else dancer_track
             base = dj_box if kind == "dj" else dancer_box
+            face_bias = dj_face_bias if kind == "dj" else dancer_face_bias
             box = _local_box(track, t0, t1) or base
             box = _inflate_for_span(box, track, t0, t1)
-            crop = crop_for_box(box, src_w, src_h, zoom=1.65 if tight else 1.45)
+            # Rosto: só um NUDGE vertical do crop (nunca w/h) — mantém a
+            # dança/controladora no quadro, só evita cortar a cabeça.
+            box = _face_anchor(box, face_bias)
+            zoom = 1.65 if tight else 1.45
+            # Bônus de zoom limitado: só em shots JÁ "tight" (punch-in no
+            # drop/auge) e com rosto detectado — nunca vira um close-up
+            # genérico fora desses momentos.
+            if tight and face_bias is not None and settings.face_enabled:
+                zoom += settings.face_zoom_bonus
+            crop = crop_for_box(box, src_w, src_h, zoom=zoom)
             path = _pan_path(track, t0, t1, crop[0], crop[1], src_w, src_h)
-            return crop, path
+            return _apply_continuity(kind, crop, path)
         # center: zoom puro no centro (box pontual), leve variação de intensidade.
+        # Fica de fora da continuidade (fallback sem sujeito real).
         center = Box(cx=0.5, cy=0.5, w=0.0, h=0.0, conf=1.0)
         crop = crop_for_box(
             center, src_w, src_h, zoom=CENTER_ZOOM + (0.15 if tight else 0.0)
@@ -512,10 +581,10 @@ def build_shot_plan(
         else:
             crop, path = crop_for_kind(kind, tight=is_punch, t0=t0, t1=t1)
             # Zoom SEMPRE aproxima — o zoom-out aleatório (sinal alternado
-            # cego) era o que deixava os zooms "sem objetivo".
+            # cego) era o que deixava os zooms "sem objetivo". Com ou sem
+            # pan: a câmera aproxima ENQUANTO acompanha a pessoa (Ken Burns),
+            # em vez de escolher entre panorâmica OU zoom por shot.
             drift = abs(settings.dynamic_drift)
-        if path is not None:
-            drift = 0.0  # pan e zoompan não compõem: o movimento vem do pan
 
         shots.append(
             Shot(t0=t0, t1=t1, kind=kind, crop=crop, drift=drift, path=path)

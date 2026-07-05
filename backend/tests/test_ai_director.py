@@ -254,3 +254,132 @@ def test_direct_returns_none_when_sampling_raises(monkeypatch):
 
     monkeypatch.setattr(ai_director.visual, "iter_frames", _boom)
     assert ai_director.direct("video.mp4", 0.0, 60.0) is None
+
+
+# ---- _parse_json_array ----
+
+def test_parse_json_array_plain():
+    assert ai_director._parse_json_array('[{"window": 0, "hype": 0.5}]') == [
+        {"window": 0, "hype": 0.5}
+    ]
+
+
+def test_parse_json_array_fenced():
+    text = '```json\n[{"window": 1, "hype": 0.2, "worthy": false}]\n```'
+    out = ai_director._parse_json_array(text)
+    assert out == [{"window": 1, "hype": 0.2, "worthy": False}]
+
+
+def test_parse_json_array_garbage_returns_none():
+    assert ai_director._parse_json_array("não sei") is None
+    assert ai_director._parse_json_array("") is None
+    # Um objeto (não array) também não conta.
+    assert ai_director._parse_json_array('{"window": 0}') is None
+
+
+# ---- triage_group(): triagem em lote (estágio 1) ----
+
+def test_triage_group_happy_path(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '[{"window": 10, "hype": 0.8, "worthy": true}, '
+        '{"window": 20, "hype": 0.1, "worthy": false}]'
+    ))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "Zm9v")]
+    )
+    out = ai_director.triage_group(
+        "video.mp4", [(10, 0.0, 60.0), (20, 60.0, 60.0)]
+    )
+    assert out[10].hype == pytest.approx(0.8) and out[10].worthy is True
+    assert out[20].hype == pytest.approx(0.1) and out[20].worthy is False
+
+
+def test_triage_group_no_windows_returns_empty(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("[]"))
+    assert ai_director.triage_group("video.mp4", []) == {}
+
+
+def test_triage_group_no_client_returns_empty(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: None)
+    assert ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+def test_triage_group_ignores_unknown_window_ids(monkeypatch):
+    # Resposta cita uma janela (99) que não estava no lote pedido — ignorada.
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '[{"window": 0, "hype": 0.5, "worthy": true}, '
+        '{"window": 99, "hype": 0.9, "worthy": true}]'
+    ))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "Zm9v")]
+    )
+    out = ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)])
+    assert list(out.keys()) == [0]
+
+
+def test_triage_group_all_sampling_fails_returns_empty(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("[]"))
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [])
+    assert ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+def test_triage_group_api_exception_returns_empty(monkeypatch):
+    def _boom(**kw):
+        raise RuntimeError("timeout")
+
+    client = types.SimpleNamespace(messages=types.SimpleNamespace(create=_boom))
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    assert ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+def test_triage_group_invalid_json_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        ai_director, "_get_client", lambda: _fake_client("não sei dizer")
+    )
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    assert ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+# ---- Acumulador de custo/uso ----
+
+# ---- _hint(): cita baixa luz explicitamente quando o wv está marcado ----
+
+def test_hint_mentions_low_light():
+    wv = types.SimpleNamespace(
+        detected=True, dj_box=Box(cx=0.5, cy=0.4, w=0.2, h=0.4, conf=0.9),
+        crowd_box=None, low_light=True,
+    )
+    hint = ai_director._hint(wv)
+    assert "baixa luz" in hint
+    assert "artista/DJ em destaque" in hint
+
+
+def test_hint_omits_low_light_when_false():
+    wv = types.SimpleNamespace(
+        detected=True, dj_box=None, crowd_box=None, low_light=False,
+    )
+    hint = ai_director._hint(wv)
+    assert "baixa luz" not in hint
+
+
+def test_usage_accumulates_and_resets():
+    ai_director.reset_usage()
+    assert ai_director.get_usage() == {"usd": 0.0, "calls": 0}
+
+    class _Usage:
+        input_tokens = 1000
+        output_tokens = 500
+
+    resp = types.SimpleNamespace(usage=_Usage())
+    ai_director._track_usage("claude-haiku-4-5", resp)
+    usage = ai_director.get_usage()
+    assert usage["calls"] == 1
+    assert usage["usd"] == pytest.approx((1000 * 1.0 + 500 * 5.0) / 1_000_000)
+
+    ai_director.reset_usage()
+    assert ai_director.get_usage() == {"usd": 0.0, "calls": 0}
