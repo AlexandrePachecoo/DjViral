@@ -150,6 +150,80 @@ def test_ai_crowd_box_enables_crowd_subject_without_yolo():
     assert first_zoom.kind == "crowd"
 
 
+def test_weak_yolo_track_defers_to_ai_box():
+    # Track do YOLO intermitente (flicker em cena escura): o box da IA assume
+    # o enquadramento mesmo com dj_box do YOLO presente.
+    wv = _wv()  # dj_box em cx=0.5
+    wv.dj_track_ratio = 0.1
+    ai = AIDirection(
+        hype_score=0.7,
+        subject="dj",
+        worthy=True,
+        dj_box=Box(cx=0.2, cy=0.4, w=0.2, h=0.45, conf=0.5),
+    )
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, ai=ai
+    )
+    _assert_invariants(shots)
+    dj_shot = next(s for s in shots if s.kind == "dj")
+    w, _h, x, _y = dj_shot.crop
+    assert x + w / 2 < SRC_W * 0.35  # centrado no box da IA (cx=0.2)
+
+
+def test_dj_shots_follow_track_per_shot():
+    # O DJ muda de lado no meio da janela: os shots de zoom da 1ª metade
+    # enquadram a esquerda e os da 2ª metade a direita (não a mediana global).
+    wv = _wv()
+    left = Box(cx=0.2, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    right = Box(cx=0.8, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    wv.dj_track = [(float(t), left if t < 30 else right) for t in range(0, 60, 2)]
+    shots = build_shot_plan(wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H)
+    _assert_invariants(shots)
+    early = [s for s in shots if s.kind == "dj" and s.t1 <= 30.0]
+    late = [s for s in shots if s.kind == "dj" and s.t0 >= 30.0]
+    assert early and late
+    for s in early:
+        w, _h, x, _y = s.crop
+        assert x + w / 2 < SRC_W * 0.45
+    for s in late:
+        w, _h, x, _y = s.crop
+        assert x + w / 2 > SRC_W * 0.55
+
+
+def test_wide_shot_anchored_on_subject():
+    # DJ no canto esquerdo do palco: o wide (crop 9:16 de altura cheia) é
+    # ancorado nele, não no centro do frame (que o deixaria fora do quadro).
+    wv = _wv()
+    wv.dj_box = Box(cx=0.2, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    shots = build_shot_plan(wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H)
+    wide = next(s for s in shots if s.kind == "wide")
+    w, _h, x, _y = wide.crop
+    assert x + w / 2 < SRC_W * 0.35
+
+
+def test_punch_in_always_zooms_in():
+    shots = build_shot_plan(
+        _wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    punch = next(s for s in shots if math.isclose(s.t0, 30.0, abs_tol=1e-6))
+    assert punch.kind == "dj"
+    assert punch.drift > 0  # aproxima no drop, nunca afasta
+
+
+def test_no_flash_shot_next_to_punch():
+    # Fronteira da grade colada a um punch-in é removida — nenhum shot fica
+    # mais curto que shot_min/2.
+    ai = AIDirection(
+        hype_score=0.8, subject="dj", moments=[20.0, 40.0], worthy=True
+    )
+    shots = build_shot_plan(
+        _wv(), beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, ai=ai,
+    )
+    _assert_invariants(shots)
+    assert min(s.t1 - s.t0 for s in shots) >= settings.dynamic_shot_min * 0.5 - 1e-6
+
+
 def test_respects_max_shots_with_many_moments():
     ai = AIDirection(
         hype_score=0.9,

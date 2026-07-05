@@ -80,6 +80,14 @@ class WindowVisual:
     presence_ratio: float = 0.0    # frames com pessoa / frames detectados
     crowd_score: float = 0.0       # 0-1 (nº de pessoas além do DJ, satura)
     dj_box: Box | None = None      # box mediano da track dominante
+    # Track do DJ no tempo: (t relativo à janela, box) de cada detecção da
+    # track dominante — permite enquadramento POR SHOT no corte dinâmico
+    # (o box mediano global erra quando o DJ circula pela cabine).
+    dj_track: list[tuple[float, Box]] = field(default_factory=list)
+    # Fração dos frames detectados em que a track do DJ aparece. Default 1.0
+    # ("forte"): só analyze_window rebaixa; track intermitente (< ~0.3) deixa
+    # o box da IA assumir o enquadramento no shot plan.
+    dj_track_ratio: float = 1.0
     crowd_box: Box | None = None   # box mediano do cluster de público
     visual_score: float = 0.0      # 0-1 combinado
     detected: bool = False         # True se o YOLO rodou em algum frame
@@ -256,15 +264,18 @@ def _median_box(boxes: list[Box]) -> Box:
     )
 
 
-def _pick_dj_track(detected_frames: list[list[Box]]) -> tuple[Box | None, list[list[Box]]]:
-    """Escolhe a track dominante (o DJ) e devolve ``(dj_box, resto_por_frame)``.
+def _pick_dj_track(
+    detected_frames: list[list[Box]],
+) -> tuple[Box | None, list[tuple[int, Box]], list[list[Box]]]:
+    """Escolhe a track dominante (o DJ): ``(dj_box, track, resto_por_frame)``.
 
     Associação gulosa por proximidade de centro entre frames detectados
     consecutivos. A track do DJ é a de maior soma de "peso de protagonista"
     (área × centralidade × confiança) vezes a persistência (fração dos frames
     em que aparece). O box devolvido é a MEDIANA da track — imune a flicker
-    de detecção. ``resto_por_frame`` são as demais pessoas de cada frame
-    (candidatas a público).
+    de detecção. ``track`` são os pares ``(índice do frame detectado, box)``
+    da própria track (para o enquadramento por shot); ``resto_por_frame`` são
+    as demais pessoas de cada frame (candidatas a público).
     """
     tracks: list[dict] = []  # {"boxes": [(frame_idx, Box)], "last": Box}
     for f_idx, persons in enumerate(detected_frames):
@@ -287,7 +298,7 @@ def _pick_dj_track(detected_frames: list[list[Box]]) -> tuple[Box | None, list[l
                 used.add(best)
 
     if not tracks:
-        return None, [[] for _ in detected_frames]
+        return None, [], [[] for _ in detected_frames]
 
     n_frames = max(1, len(detected_frames))
 
@@ -299,9 +310,10 @@ def _pick_dj_track(detected_frames: list[list[Box]]) -> tuple[Box | None, list[l
         return weight * (len(track["boxes"]) / n_frames)
 
     dj_track = max(tracks, key=protagonism)
-    dj_ids = {id(b) for _, b in dj_track["boxes"]}
+    pairs = dj_track["boxes"]
+    dj_ids = {id(b) for _, b in pairs}
     rest = [[b for b in persons if id(b) not in dj_ids] for persons in detected_frames]
-    return _median_box([b for _, b in dj_track["boxes"]]), rest
+    return _median_box([b for _, b in pairs]), pairs, rest
 
 
 def analyze_window(
@@ -351,13 +363,16 @@ def analyze_window(
     raw = 0.5 * float(motions.mean()) + 0.5 * float(np.percentile(motions, 90))
     wv.motion_score = float(np.clip(raw / MOTION_REF, 0.0, 1.0))
 
-    detected_frames = [s.persons for s in samples if s.persons is not None]
+    detected_samples = [s for s in samples if s.persons is not None]
+    detected_frames = [s.persons for s in detected_samples]
     wv.detected = len(detected_frames) > 0
     if wv.detected:
         with_person = sum(1 for p in detected_frames if p)
         wv.presence_ratio = with_person / len(detected_frames)
 
-        wv.dj_box, rest = _pick_dj_track(detected_frames)
+        wv.dj_box, dj_pairs, rest = _pick_dj_track(detected_frames)
+        wv.dj_track = [(detected_samples[i].t, box) for i, box in dj_pairs]
+        wv.dj_track_ratio = len(dj_pairs) / len(detected_frames)
 
         # Público: frames com 3+ pessoas além do DJ. O box do público é a
         # mediana do bounding box do cluster nesses frames.
