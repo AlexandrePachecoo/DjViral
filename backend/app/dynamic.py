@@ -121,7 +121,10 @@ def build_shot_plan(
     - ``ai`` (opcional, do :mod:`app.ai_director`) enviesa o enquadramento:
       ``ai.subject`` escolhe o protagonista (``crowd`` prioriza o público,
       ``dj`` o artista) e ``ai.moments`` adicionam fronteiras extras de punch-in
-      nos instantes de auge visual (não só no drop musical).
+      nos instantes de auge visual (não só no drop musical). ``ai.dj_box`` /
+      ``ai.crowd_box`` completam o enquadramento onde o YOLO não achou ninguém
+      (balada escura, laser): o box do YOLO, quando existe, sempre vence (é a
+      mediana de uma track inteira; o da IA é uma estimativa de cena).
     - Alterna wide ↔ zoom (protagonista), com um shot do secundário a cada
       :data:`CROWD_EVERY` zooms quando houver.
     - Fronteiras snapam ao beat mais próximo; sem beats, grade fixa.
@@ -198,8 +201,15 @@ def build_shot_plan(
     bounds.append(round(duration, 3))
 
     # ---- Enquadramentos ----
+    # YOLO primeiro (mediana de track, mais preciso); os boxes da IA só
+    # preenchem os buracos da detecção local (cena escura, laser, contraluz).
     dj_box = wv.dj_box if wv is not None else None
     crowd_box = wv.crowd_box if wv is not None else None
+    if ai is not None:
+        if dj_box is None:
+            dj_box = ai.dj_box
+        if crowd_box is None:
+            crowd_box = ai.crowd_box
     wide = crop_for_box(None, src_w, src_h)
 
     # Protagonista da janela, enviesado pela IA quando disponível.

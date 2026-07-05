@@ -96,8 +96,10 @@ YouTube quando necessário.
    TOP-K janelas por score local (teto `AI_DIRECTOR_MAX_CALLS` + budget de tempo
    próprio): amostra ~5 keyframes (reaproveita `visual.iter_frames`), encoda em
    JPEG e pergunta ao modelo a **vibe do público** (`hype`), o **protagonista**
-   (`subject`: dj/crowd/wide), os **momentos de auge** (`moments`) e se a cena é
-   digna de zoom (`worthy`). O hype entra no score final
+   (`subject`: dj/crowd/wide), os **momentos de auge** (`moments`), se a cena é
+   digna de zoom (`worthy`) e o **enquadramento** do DJ e do público
+   (`dj_box`/`crowd_box`, `[cx, cy, w, h]` em frações 0-1 do frame; saneados em
+   `_coerce_box`). O hype entra no score final
    (`(1-w_hype)*base + w_hype*hype`, `SCORE_HYPE_WEIGHT`) e a direção alimenta o
    corte dinâmico (ver passo 4). É a primeira dependência de API de IA do projeto;
    como o YOLO, **nunca derruba um job**: sem chave, sem o pacote `anthropic`,
@@ -111,13 +113,17 @@ YouTube quando necessário.
      de 3–8s (wide ↔ zoom no DJ ↔ zoom no público) com fronteiras alinhadas
      aos beats e punch-in no DJ exatamente no drop. Quando o diretor de IA
      rodou (passo 3b), o `subject` enviesa o protagonista (ex.: `crowd`
-     prioriza o público) e os `moments` viram fronteiras extras de punch-in nos
-     auges visuais (não só no drop musical). `clipper.cut_dynamic()`
+     prioriza o público), os `moments` viram fronteiras extras de punch-in nos
+     auges visuais (não só no drop musical) e os `dj_box`/`crowd_box` da IA
+     preenchem o enquadramento onde o YOLO não achou ninguém — balada escura/
+     laser deixa de cair no zoom central (o box do YOLO, quando existe, sempre
+     vence: mediana de track > estimativa de cena). `clipper.cut_dynamic()`
      renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
      shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
      alternância cortada no beat + drift suave opcional via `zoompan` com
      supersample 2× anti-jitter; áudio `-map 0:a` contínuo). Sem pessoa
-     detectada → zoom central. O render em si tem **3 níveis de fallback**
+     detectada (nem pelo YOLO, nem pela IA) → zoom central. O render em si
+     tem **3 níveis de fallback**
      (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
      plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
      leve em CPU/memória) → corte seco. `clipper._run_ffmpeg` roda todo
