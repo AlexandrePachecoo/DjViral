@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass
 
 from .config import settings
-from .visual import Box, WindowVisual
+from .visual import Box, WindowVisual, _median_box
 
 # Fronteira de shot "snapa" ao beat mais próximo dentro desta tolerância (s).
 BEAT_SNAP_TOLERANCE = 0.6
@@ -27,6 +27,16 @@ CENTER_ZOOM = 1.3
 DJ_BOX_MARGIN = 1.9
 # A cada quantos shots de zoom entra um shot de público (quando existe).
 CROWD_EVERY = 3
+# Track do YOLO presente em menos que esta fração dos frames detectados é
+# "fraca" (flicker em cena escura): o box da IA, quando existe, assume o
+# enquadramento no lugar da mediana de meia dúzia de detecções tremidas.
+AI_BOX_TAKEOVER_RATIO = 0.3
+# Folga (s) em volta do shot ao juntar as detecções da track para o
+# enquadramento por shot (pega detecções vizinhas quando o shot é curto).
+TRACK_LOCAL_PAD = 0.75
+# Mínimo de detecções da track dentro do shot para confiar no box local;
+# menos que isso, usa o box global da janela.
+TRACK_LOCAL_MIN = 2
 
 
 @dataclass
@@ -49,15 +59,24 @@ def _even(v: float) -> int:
     return max(2, int(round(v / 2)) * 2)
 
 
+def _even_pos(v: float, hi: float) -> int:
+    """Posição (x/y) de crop arredondada para par, clampada em [0, hi]."""
+    return max(0, min(int(round(v / 2)) * 2, int(hi)))
+
+
 def crop_for_box(
     box: Box | None,
     src_w: int,
     src_h: int,
     zoom: float = 1.5,
+    anchor_cx: float | None = None,
 ) -> tuple[int, int, int, int]:
     """Crop 9:16 (w, h, x, y) em px da fonte para enquadrar ``box``.
 
-    - ``box=None``: crop central wide (o mesmo enquadramento do corte seco).
+    - ``box=None``: crop wide de altura cheia. Por padrão central (o mesmo
+      enquadramento do corte seco); ``anchor_cx`` (fração 0-1) centra o wide
+      na AÇÃO — num 16:9 o crop 9:16 mostra só ~1/3 da largura, e um wide no
+      centro do frame perde o DJ que está no canto do palco.
     - Box de pessoa: enquadra a pessoa com margem (:data:`DJ_BOX_MARGIN`);
       ``zoom`` é o teto de aproximação quando a pessoa é pequena no frame.
     - Box "pontual" (``w=h=0``): zoom puro de ``zoom``× centrado em (cx, cy)
@@ -71,7 +90,9 @@ def crop_for_box(
     if box is None:
         h = _even(src_h)
         w = _even(min(src_w, src_h * out_ar))
-        return w, h, _even((src_w - w) / 2), 0
+        cx = 0.5 if anchor_cx is None else min(max(float(anchor_cx), 0.0), 1.0)
+        x = min(max(cx * src_w - w / 2, 0), src_w - w)
+        return w, h, _even_pos(x, src_w - w), 0
 
     zoom = min(max(zoom, 1.0), settings.dynamic_zoom_max)
     if box.w <= 0 or box.h <= 0:
@@ -90,9 +111,24 @@ def crop_for_box(
     x = min(max(x, 0), src_w - w)
     y = min(max(y, 0), src_h - h)
     w_i, h_i = _even(w), _even(h)
-    x_i = max(0, min(_even(x), src_w - w_i))
-    y_i = max(0, min(_even(y), src_h - h_i))
+    x_i = _even_pos(x, src_w - w_i)
+    y_i = _even_pos(y, src_h - h_i)
     return w_i, h_i, x_i, y_i
+
+
+def _local_box(track: list[tuple[float, Box]], t0: float, t1: float) -> Box | None:
+    """Box mediano da track DENTRO do shot (com folga :data:`TRACK_LOCAL_PAD`).
+
+    É o que centraliza a pessoa de verdade: o box global da janela é a mediana
+    de ~60s — se o DJ circula pela cabine, cada shot mira "onde ele esteve em
+    média", não onde ele está naquele trecho. ``None`` (track ausente ou com
+    menos de :data:`TRACK_LOCAL_MIN` detecções no trecho) → o chamador usa o
+    box global.
+    """
+    boxes = [b for t, b in track if t0 - TRACK_LOCAL_PAD <= t <= t1 + TRACK_LOCAL_PAD]
+    if len(boxes) < TRACK_LOCAL_MIN:
+        return None
+    return _median_box(boxes)
 
 
 def _snap_to_beat(t: float, beats: list[float]) -> float:
@@ -122,9 +158,13 @@ def build_shot_plan(
       ``ai.subject`` escolhe o protagonista (``crowd`` prioriza o público,
       ``dj`` o artista) e ``ai.moments`` adicionam fronteiras extras de punch-in
       nos instantes de auge visual (não só no drop musical). ``ai.dj_box`` /
-      ``ai.crowd_box`` completam o enquadramento onde o YOLO não achou ninguém
-      (balada escura, laser): o box do YOLO, quando existe, sempre vence (é a
-      mediana de uma track inteira; o da IA é uma estimativa de cena).
+      ``ai.crowd_box`` completam o enquadramento onde o YOLO falhou: nenhuma
+      pessoa achada OU track fraca/intermitente (presente em menos de
+      :data:`AI_BOX_TAKEOVER_RATIO` dos frames detectados — flicker de cena
+      escura); uma track sólida do YOLO sempre vence a estimativa da IA.
+    - Shots de DJ são enquadrados POR SHOT (mediana da track no trecho, via
+      :func:`_local_box`) — seguem o DJ pela cabine; o wide é ancorado no
+      protagonista. Punch-ins sempre aproximam (drift positivo).
     - Alterna wide ↔ zoom (protagonista), com um shot do secundário a cada
       :data:`CROWD_EVERY` zooms quando houver.
     - Fronteiras snapam ao beat mais próximo; sem beats, grade fixa.
@@ -183,9 +223,19 @@ def build_shot_plan(
     for b in sorted(set(grid[1:]) | punch_set):
         if b >= duration - shot_min * 0.6:
             continue
-        if b - bounds[-1] < shot_min * 0.5 and b not in punch_set:
-            continue  # muito colado e não é punch-in → descarta
-        bounds.append(b)
+        if b in punch_set:
+            # Punch-in vence: uma fronteira da grade colada logo antes dele
+            # criaria um shot-relâmpago (< shot_min/2) — sai a da grade.
+            while (
+                len(bounds) > 1
+                and b - bounds[-1] < shot_min * 0.5
+                and bounds[-1] not in punch_set
+            ):
+                bounds.pop()
+            bounds.append(b)
+        elif b - bounds[-1] >= shot_min * 0.5:
+            bounds.append(b)
+        # senão: muito colado e não é punch-in → descarta
     # Teto de shots (largura do split=N): remove as fronteiras não-punch mais
     # coladas até caber, preservando os punch-ins.
     while len(bounds) - 1 > max_shots and len(bounds) > 2:
@@ -201,16 +251,24 @@ def build_shot_plan(
     bounds.append(round(duration, 3))
 
     # ---- Enquadramentos ----
-    # YOLO primeiro (mediana de track, mais preciso); os boxes da IA só
-    # preenchem os buracos da detecção local (cena escura, laser, contraluz).
+    # YOLO primeiro (mediana de track, mais preciso); os boxes da IA entram
+    # onde a detecção local falhou (cena escura, laser, contraluz) — nenhum
+    # box, ou uma track fraca/intermitente (mediana de meia dúzia de detecções
+    # tremidas perde para a estimativa de cena da IA).
     dj_box = wv.dj_box if wv is not None else None
     crowd_box = wv.crowd_box if wv is not None else None
+    dj_track = list(wv.dj_track) if wv is not None else []
     if ai is not None:
-        if dj_box is None:
+        weak_track = (
+            dj_box is not None
+            and wv is not None
+            and wv.dj_track_ratio < AI_BOX_TAKEOVER_RATIO
+        )
+        if ai.dj_box is not None and (dj_box is None or weak_track):
             dj_box = ai.dj_box
+            dj_track = []  # box de cena única — sem enquadramento por shot
         if crowd_box is None:
             crowd_box = ai.crowd_box
-    wide = crop_for_box(None, src_w, src_h)
 
     # Protagonista da janela, enviesado pela IA quando disponível.
     subject = ai.subject if ai is not None else "wide"
@@ -226,11 +284,23 @@ def build_shot_plan(
         primary_kind = "dj" if have_dj else "center"
         secondary_kind = "crowd" if have_crowd else primary_kind
 
-    def crop_for_kind(kind: str, tight: bool) -> tuple[int, int, int, int]:
+    # Wide ancorado na ação: centrado no protagonista (o crop 9:16 de um 16:9
+    # mostra ~1/3 da largura; wide no centro do frame perde o DJ no canto e a
+    # alternância wide↔zoom fica sem nexo). Sem box → centro (original).
+    anchor_box = crowd_box if primary_kind == "crowd" else dj_box
+    wide = crop_for_box(
+        None, src_w, src_h,
+        anchor_cx=anchor_box.cx if anchor_box is not None else None,
+    )
+
+    def crop_for_kind(kind: str, tight: bool, t0: float, t1: float) -> tuple[int, int, int, int]:
         if kind == "crowd":
             return crop_for_box(crowd_box, src_w, src_h, zoom=1.35)
         if kind == "dj":
-            return crop_for_box(dj_box, src_w, src_h, zoom=1.65 if tight else 1.45)
+            # Enquadramento POR SHOT: mediana da track dentro do trecho —
+            # segue o DJ pela cabine em vez de mirar a posição média dos 60s.
+            box = _local_box(dj_track, t0, t1) or dj_box
+            return crop_for_box(box, src_w, src_h, zoom=1.65 if tight else 1.45)
         # center: zoom puro no centro (box pontual), leve variação de intensidade.
         center = Box(cx=0.5, cy=0.5, w=0.0, h=0.0, conf=1.0)
         return crop_for_box(center, src_w, src_h, zoom=CENTER_ZOOM + (0.15 if tight else 0.0))
@@ -258,8 +328,13 @@ def build_shot_plan(
         if kind == "wide":
             crop = wide
             drift = 0.0
+        elif is_punch:
+            crop = crop_for_kind(kind, tight=True, t0=t0, t1=t1)
+            # Punch-in no auge SEMPRE aproxima — zoom-out no drop (sinal
+            # alternado cego) era o que parecia aleatório.
+            drift = abs(settings.dynamic_drift)
         else:
-            crop = crop_for_kind(kind, tight=is_punch)
+            crop = crop_for_kind(kind, tight=False, t0=t0, t1=t1)
             drift = settings.dynamic_drift * drift_sign
             drift_sign = -drift_sign
 
