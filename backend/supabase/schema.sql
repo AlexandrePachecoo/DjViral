@@ -91,6 +91,9 @@ alter table projects add column if not exists max_cuts integer;
 -- ficam com as parcelas NULL.
 alter table cuts add column if not exists score_musical double precision;
 alter table cuts add column if not exists score_visual double precision;
+-- Parcela do "diretor de IA" (vibe/energia do público, 0-1). NULL quando a IA
+-- não rodou (plano free, sem chave, ou janela fora do teto de chamadas).
+alter table cuts add column if not exists score_hype double precision;
 
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)
