@@ -14,6 +14,9 @@ class ProcessRequest(BaseModel):
     # Estilo de corte escolhido na criação do projeto: 'basic' (corte seco,
     # crop central fixo) ou 'dynamic' (zooms no DJ/público no ritmo da batida).
     cut_style: str = "basic"
+    # Liga o diretor de IA de visão (avalia a vibe do público → re-rank dos
+    # cortes + zooms dirigidos). A Vercel só envia True para planos pagos.
+    ai_director: bool = False
 
 
 class ProjectCreated(BaseModel):

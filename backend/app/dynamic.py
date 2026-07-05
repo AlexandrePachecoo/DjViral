@@ -109,6 +109,7 @@ def build_shot_plan(
     src_w: int,
     src_h: int,
     peak_at: float | None = None,
+    ai: "AIDirection | None" = None,
 ) -> list[Shot]:
     """Monta a timeline de shots de um clipe de ``duration`` segundos.
 
@@ -116,55 +117,111 @@ def build_shot_plan(
     monotônicos, cobrindo exatamente ``[0, duration]``.
 
     - Abre em wide; ``peak_at`` (instante do drop, ~pre_roll) força uma
-      fronteira com punch-in no DJ exatamente no drop.
-    - Alterna wide ↔ zoom (DJ, ou centro sem detecção), com um shot de
-      público a cada :data:`CROWD_EVERY` zooms quando houver público.
+      fronteira com punch-in no protagonista exatamente no drop.
+    - ``ai`` (opcional, do :mod:`app.ai_director`) enviesa o enquadramento:
+      ``ai.subject`` escolhe o protagonista (``crowd`` prioriza o público,
+      ``dj`` o artista) e ``ai.moments`` adicionam fronteiras extras de punch-in
+      nos instantes de auge visual (não só no drop musical).
+    - Alterna wide ↔ zoom (protagonista), com um shot do secundário a cada
+      :data:`CROWD_EVERY` zooms quando houver.
     - Fronteiras snapam ao beat mais próximo; sem beats, grade fixa.
     - Trechos agitados (motion alto) recebem shots mais curtos.
-    - Nunca ultrapassa :data:`settings.dynamic_max_shots` (motion alto num
-      clipe de 60s poderia gerar ~20 shots com shot_min=3s — o teto limita a
+    - Nunca ultrapassa :data:`settings.dynamic_max_shots` (o teto limita a
       largura do `split=N` no filtergraph renderizado, e portanto a memória).
     """
     shot_min = settings.dynamic_shot_min
     shot_max = settings.dynamic_shot_max
     motion = wv.motion_score if wv is not None else 0.5
-    # Duração-alvo dos shots: cena parada → shots longos; agitada → curtos.
-    base_len = shot_max - (shot_max - shot_min) * min(1.0, motion)
-    # Teto de shots: se o base_len natural produziria mais shots que o
-    # permitido, alonga os shots até caber (perde um pouco de "urgência" na
-    # cena mais agitada, mas nunca estoura o teto). O -1 reserva espaço pra
-    # fronteira extra que `peak_at` pode inserir.
     max_shots = max(1, settings.dynamic_max_shots)
-    min_base_len = duration / max(1, max_shots - 1)
+
+    # ---- Instantes de punch-in: drop musical + momentos de auge visual da IA ----
+    punch_times: list[float] = []
+
+    def _add_punch(t: float | None) -> None:
+        if t is None:
+            return
+        if shot_min * 0.5 <= t <= duration - shot_min:
+            punch_times.append(round(float(t), 3))
+
+    _add_punch(peak_at)
+    if ai is not None:
+        for m in ai.moments:
+            _add_punch(m)
+    # Ordena e afasta punch-ins colados (< shot_min entre si), limitados ao teto.
+    punch_times.sort()
+    kept_punches: list[float] = []
+    for t in punch_times:
+        if not kept_punches or t - kept_punches[-1] >= shot_min:
+            kept_punches.append(t)
+    kept_punches = kept_punches[: max(0, max_shots - 1)]
+
+    # Duração-alvo dos shots: cena parada → shots longos; agitada → curtos. O
+    # teto reserva espaço para as fronteiras de punch-in já escolhidas.
+    base_len = shot_max - (shot_max - shot_min) * min(1.0, motion)
+    reserve = min(len(kept_punches), max_shots - 1)
+    min_base_len = duration / max(1, max_shots - reserve)
     base_len = max(base_len, min_base_len)
 
-    # ---- Fronteiras ----
-    bounds = [0.0]
-    if peak_at is not None and shot_min * 0.5 <= peak_at <= duration - shot_min:
-        bounds.append(round(peak_at, 3))
+    # ---- Fronteiras: grade regular fundida aos punch-ins ----
+    grid = [0.0]
     while True:
-        prev = bounds[-1]
+        prev = grid[-1]
         # Varia ±15% alternando para a timeline não ficar metronômica.
-        wobble = 1.15 if len(bounds) % 2 else 0.85
+        wobble = 1.15 if len(grid) % 2 else 0.85
         nxt = _snap_to_beat(prev + base_len * wobble, beats)
         if nxt <= prev + shot_min * 0.5:
             nxt = prev + base_len
         if nxt >= duration - shot_min * 0.6:
             break
-        bounds.append(round(nxt, 3))
+        grid.append(round(nxt, 3))
+
+    punch_set = set(kept_punches)
+    bounds = [0.0]
+    for b in sorted(set(grid[1:]) | punch_set):
+        if b >= duration - shot_min * 0.6:
+            continue
+        if b - bounds[-1] < shot_min * 0.5 and b not in punch_set:
+            continue  # muito colado e não é punch-in → descarta
+        bounds.append(b)
+    # Teto de shots (largura do split=N): remove as fronteiras não-punch mais
+    # coladas até caber, preservando os punch-ins.
+    while len(bounds) - 1 > max_shots and len(bounds) > 2:
+        gaps = [
+            (bounds[i] - bounds[i - 1], i)
+            for i in range(1, len(bounds))
+            if bounds[i] not in punch_set
+        ]
+        if not gaps:
+            break
+        _, idx = min(gaps)
+        bounds.pop(idx)
     bounds.append(round(duration, 3))
 
     # ---- Enquadramentos ----
     dj_box = wv.dj_box if wv is not None else None
     crowd_box = wv.crowd_box if wv is not None else None
     wide = crop_for_box(None, src_w, src_h)
-    zoom_kind = "dj" if dj_box is not None else "center"
 
-    def zoom_crop(tight: bool) -> tuple[int, int, int, int]:
-        if dj_box is not None:
+    # Protagonista da janela, enviesado pela IA quando disponível.
+    subject = ai.subject if ai is not None else "wide"
+    have_dj = dj_box is not None
+    have_crowd = crowd_box is not None
+    if subject == "crowd" and have_crowd:
+        primary_kind = "crowd"
+        secondary_kind = "dj" if have_dj else "crowd"
+    elif subject == "dj" and have_dj:
+        primary_kind = "dj"
+        secondary_kind = "crowd" if have_crowd else "dj"
+    else:  # wide, ou sem os boxes necessários → comportamento original
+        primary_kind = "dj" if have_dj else "center"
+        secondary_kind = "crowd" if have_crowd else primary_kind
+
+    def crop_for_kind(kind: str, tight: bool) -> tuple[int, int, int, int]:
+        if kind == "crowd":
+            return crop_for_box(crowd_box, src_w, src_h, zoom=1.35)
+        if kind == "dj":
             return crop_for_box(dj_box, src_w, src_h, zoom=1.65 if tight else 1.45)
-        # Sem pessoa detectada: zoom puro no centro (box pontual), com leve
-        # variação de intensidade para não ficar repetitivo.
+        # center: zoom puro no centro (box pontual), leve variação de intensidade.
         center = Box(cx=0.5, cy=0.5, w=0.0, h=0.0, conf=1.0)
         return crop_for_box(center, src_w, src_h, zoom=CENTER_ZOOM + (0.15 if tight else 0.0))
 
@@ -173,30 +230,26 @@ def build_shot_plan(
     drift_sign = 1.0
     for i in range(len(bounds) - 1):
         t0, t1 = bounds[i], bounds[i + 1]
-        is_peak_shot = peak_at is not None and math.isclose(t0, peak_at, abs_tol=1e-6)
+        is_punch = any(math.isclose(t0, p, abs_tol=1e-6) for p in kept_punches)
 
-        if i == 0 and not is_peak_shot:
+        if i == 0 and not is_punch:
             kind = "wide"
-        elif is_peak_shot:
-            kind = zoom_kind  # punch-in no drop
+        elif is_punch:
+            kind = primary_kind  # punch-in no protagonista
         elif shots and shots[-1].kind == "wide":
             zooms_done += 1
-            if crowd_box is not None and zooms_done % CROWD_EVERY == 0:
-                kind = "crowd"
+            if secondary_kind != primary_kind and zooms_done % CROWD_EVERY == 0:
+                kind = secondary_kind
             else:
-                kind = zoom_kind
+                kind = primary_kind
         else:
             kind = "wide"
 
         if kind == "wide":
             crop = wide
             drift = 0.0
-        elif kind == "crowd":
-            crop = crop_for_box(crowd_box, src_w, src_h, zoom=1.35)
-            drift = settings.dynamic_drift * drift_sign
-            drift_sign = -drift_sign
-        else:  # dj | center
-            crop = zoom_crop(tight=is_peak_shot)
+        else:
+            crop = crop_for_kind(kind, tight=is_punch)
             drift = settings.dynamic_drift * drift_sign
             drift_sign = -drift_sign
 

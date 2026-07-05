@@ -90,13 +90,29 @@ YouTube quando necessário.
    (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
    as janelas restantes ficam só com o score musical. As parcelas são
    persistidas em `cuts.score_musical` / `cuts.score_visual`.
+3b. `ai_director.py` — **diretor de IA (opcional, só planos pagos)**. Quando a
+   Vercel pede (`ai_director=true` no `/process`, enviado só para pro/premium/
+   admin) **e** há `ANTHROPIC_API_KEY`, uma camada de visão da Claude roda nas
+   TOP-K janelas por score local (teto `AI_DIRECTOR_MAX_CALLS` + budget de tempo
+   próprio): amostra ~5 keyframes (reaproveita `visual.iter_frames`), encoda em
+   JPEG e pergunta ao modelo a **vibe do público** (`hype`), o **protagonista**
+   (`subject`: dj/crowd/wide), os **momentos de auge** (`moments`) e se a cena é
+   digna de zoom (`worthy`). O hype entra no score final
+   (`(1-w_hype)*base + w_hype*hype`, `SCORE_HYPE_WEIGHT`) e a direção alimenta o
+   corte dinâmico (ver passo 4). É a primeira dependência de API de IA do projeto;
+   como o YOLO, **nunca derruba um job**: sem chave, sem o pacote `anthropic`,
+   timeout ou JSON inválido → cai na heurística local. A parcela vira
+   `cuts.score_hype`.
 4. `clipper.py` + `dynamic.py` — dois estilos de corte, escolhidos por
    projeto (`projects.cut_style`):
    - **`basic` (seco)** — `clipper.cut()`: crop central 9:16 fixo + re-encode
      (comportamento original).
    - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
      de 3–8s (wide ↔ zoom no DJ ↔ zoom no público) com fronteiras alinhadas
-     aos beats e punch-in no DJ exatamente no drop; `clipper.cut_dynamic()`
+     aos beats e punch-in no DJ exatamente no drop. Quando o diretor de IA
+     rodou (passo 3b), o `subject` enviesa o protagonista (ex.: `crowd`
+     prioriza o público) e os `moments` viram fronteiras extras de punch-in nos
+     auges visuais (não só no drop musical). `clipper.cut_dynamic()`
      renderiza tudo num único FFmpeg (`split` → `trim`+`crop` estático por
      shot → `concat`; o filtro `crop` não anima w/h, então o "zoom" é a
      alternância cortada no beat + drift suave opcional via `zoompan` com
@@ -177,7 +193,11 @@ ganchos detalhados em [`design.md`](design.md).
   dinâmico (opcionais): `VISUAL_ENABLED`, `YOLO_MODEL_PATH`, `VISUAL_FPS`,
   `VISUAL_DETECT_EVERY`, `VISUAL_CANDIDATES_FACTOR`, `VISUAL_CANDIDATES_CAP`,
   `VISUAL_BUDGET_SECONDS`, `SCORE_MUSIC_WEIGHT`, `DYNAMIC_SHOT_MIN/MAX`,
-  `DYNAMIC_ZOOM_MAX`, `DYNAMIC_DRIFT` (0 desliga o zoompan).
+  `DYNAMIC_ZOOM_MAX`, `DYNAMIC_DRIFT` (0 desliga o zoompan). Diretor de IA
+  (opcional, só planos pagos): `ANTHROPIC_API_KEY` (vazio = IA desligada),
+  `AI_DIRECTOR_ENABLED`, `AI_DIRECTOR_MODEL` (default `claude-haiku-4-5`),
+  `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`, `AI_DIRECTOR_BUDGET_SECONDS`,
+  `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`.
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
@@ -312,9 +332,12 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - inicio
 - fim
 - duracao
-- score (potencial viral) — combinado: `0.6*score_musical + 0.4*score_visual`
+- score (potencial viral) — combinado: `0.6*score_musical + 0.4*score_visual`,
+  ainda misturado com o hype da IA quando ela rodou (`SCORE_HYPE_WEIGHT`)
 - score_musical / score_visual — parcelas do score (NULL em cortes antigos ou
   quando a análise visual não rodou)
+- score_hype — parcela do diretor de IA (vibe do público, 0-1); NULL quando a IA
+  não rodou (plano free, sem chave, ou janela fora do teto de chamadas)
 - url
 - status (`ready | processing | error`) — `processing` enquanto o worker
   regenera o vídeo num re-corte (`POST /recut`)
