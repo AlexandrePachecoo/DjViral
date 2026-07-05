@@ -122,7 +122,10 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
   do usuário e usa `<video>` nos cards (Gerador e Cortes salvos).
 - ~~Skeletons enquanto carrega~~ — feito: `StudioStates.tsx` (`.dj-skeleton`) +
   empty state com CTA quando não há set processado.
-- Barra de progresso de upload (em vez de só texto de status).
+- ~~Barra de progresso de upload (em vez de só texto de status)~~ — feito: o
+  upload usa `XMLHttpRequest` (`upload.onprogress`) e o Gerador mostra barra
+  com porcentagem + ondas do equalizador (`.dj-eqbar`) durante o envio
+  (`GeneratorView.tsx`).
 - Tornar o menu do header um drawer no mobile (hoje as abas rolam).
 - ~~Edição real do corte~~ — feito (título + trim): a aba Edição renomeia e
   ajusta início/fim, e o worker regenera o vídeo (`POST /recut`). Legendas e

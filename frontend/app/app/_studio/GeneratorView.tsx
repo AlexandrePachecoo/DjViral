@@ -40,6 +40,40 @@ function readVideoDuration(file: File): Promise<number | null> {
   });
 }
 
+// Faz o PUT do vídeo na signed URL com progresso real. `fetch` não expõe
+// progresso de upload, então usamos XMLHttpRequest (`upload.onprogress`) para
+// alimentar a barra. Mantém a mesma URL e o mesmo header de hoje.
+function uploadWithProgress(
+  url: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("content-type", file.type || "video/mp4");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        const detail = xhr.responseText;
+        reject(
+          new Error(
+            `Falha no upload do vídeo (HTTP ${xhr.status})${detail ? `: ${detail}` : ""}`
+          )
+        );
+      }
+    };
+    xhr.onerror = () => reject(new Error("Falha no upload do vídeo (erro de rede)"));
+    xhr.send(file);
+  });
+}
+
 export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
@@ -50,6 +84,8 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [numCuts, setNumCuts] = useState(10);
   const [maxCuts, setMaxCuts] = useState(10);
   const [message, setMessage] = useState("");
+  // Progresso do upload (0-100), alimenta a barra durante a fase "uploading".
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [limitHit, setLimitHit] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cuts, setCuts] = useState<Cut[]>([]);
@@ -107,6 +143,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
     e.preventDefault();
     if (!name || !file) return;
     setLimitHit(false);
+    setUploadProgress(0);
     try {
       // 1. Cria projeto + signed upload URL. A duração (metadados do arquivo)
       // vai junto para o backend validar a cota de horas do plano.
@@ -133,19 +170,11 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
       const { project_id, signedUrl } = await createRes.json();
       setProjectId(project_id);
 
-      // 2. Upload direto pro Supabase Storage (não passa pela Vercel).
+      // 2. Upload direto pro Supabase Storage (não passa pela Vercel), com
+      // progresso real via XMLHttpRequest (alimenta a barra na UI).
       setMessage("Enviando vídeo...");
-      const upRes = await fetch(signedUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "video/mp4" },
-        body: file,
-      });
-      if (!upRes.ok) {
-        const detail = await upRes.text().catch(() => "");
-        throw new Error(
-          `Falha no upload do vídeo (HTTP ${upRes.status})${detail ? `: ${detail}` : ""}`
-        );
-      }
+      await uploadWithProgress(signedUrl, file, setUploadProgress);
+      setUploadProgress(100);
 
       // 3. Dispara o worker.
       setMessage("Analisando o áudio e gerando cortes...");
@@ -212,6 +241,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
           name={name}
           file={file}
           message={message}
+          uploadProgress={uploadProgress}
           limitHit={limitHit}
           cutStyle={cutStyle}
           numCuts={numCuts}
@@ -226,6 +256,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
             setPhase("form");
             setMessage("");
             setLimitHit(false);
+            setUploadProgress(0);
           }}
         />
       </div>
@@ -443,6 +474,7 @@ function UploadForm({
   name,
   file,
   message,
+  uploadProgress,
   limitHit,
   cutStyle,
   numCuts,
@@ -459,6 +491,7 @@ function UploadForm({
   name: string;
   file: File | null;
   message: string;
+  uploadProgress: number;
   limitHit: boolean;
   cutStyle: CutStyle;
   numCuts: number;
@@ -634,7 +667,53 @@ function UploadForm({
         </button>
       </form>
 
-      {message && (
+      {/* Indicador de carregamento (ondas do equalizador, iguais à logo) +
+          barra de progresso do upload. */}
+      {busy && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <EqWaves />
+            <span style={{ fontSize: 13, color: theme.accent }}>{message}</span>
+          </div>
+
+          {phase === "uploading" && (
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{
+                  height: 8,
+                  borderRadius: 20,
+                  background: theme.border,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${uploadProgress}%`,
+                    background: theme.accent,
+                    borderRadius: 20,
+                    transition: "width .2s ease",
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginTop: 7,
+                  fontSize: 12,
+                  color: theme.textMuted,
+                }}
+              >
+                <span>Isso pode demorar um pouco, dependendo do tamanho do vídeo e da sua conexão.</span>
+                <span style={{ color: theme.accent, fontWeight: 600 }}>{uploadProgress}%</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {message && !busy && (
         <p
           style={{
             marginTop: 16,
@@ -662,6 +741,24 @@ function UploadForm({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Ondas sonoras animadas (mesmo primitivo `.dj-eqbar`/`dj-eq` da logo) usadas
+// como indicador de carregamento — em vez de um spinner.
+function EqWaves() {
+  const bars = [0.5, 0.7, 1, 0.75, 0.55];
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 22 }}>
+      {bars.map((h, i) => (
+        <span
+          key={i}
+          className="dj-eqbar"
+          data-anim
+          style={{ height: `${h * 22}px`, animationDelay: `${i * 0.15}s` }}
+        />
+      ))}
     </div>
   );
 }
