@@ -23,7 +23,7 @@ export async function getPublicShare(token: string): Promise<PublicShare | null>
 
   const { data: cuts } = await supabaseAdmin
     .from("cuts")
-    .select("id, project_id, titulo, inicio, fim, duracao, score, url, status, saved")
+    .select("id, project_id, titulo, inicio, fim, duracao, score, url, status, saved, bpm")
     .eq("project_id", project.id)
     .eq("saved", true)
     .eq("status", "ready")

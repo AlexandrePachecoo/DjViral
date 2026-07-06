@@ -63,10 +63,14 @@ export async function POST(
   const planMax = planOf(user.plan).maxCutsPerSet;
   const maxCuts = Math.min(Math.max(1, project.max_cuts ?? planMax), planMax);
 
-  // Diretor de IA de visão (vibe do público → re-rank + zooms dirigidos): só
-  // para planos pagos (pro/premium/admin). No worker ainda depende da flag
-  // VISUAL/AI habilitada e da ANTHROPIC_API_KEY — sem chave, degrada sozinho.
-  const aiDirector = user.plan !== "free";
+  // Nível da camada de IA de visão, conforme o plano:
+  //   free → 'lite': triagem (re-rank de todos os candidatos) + títulos virais,
+  //          só o modelo barato (Haiku). Todo mundo vê cortes melhores.
+  //   pago → 'full': 'lite' + direção profunda (boxes/story/hype para os zooms
+  //          do corte dinâmico, Sonnet no top-K).
+  // No worker ainda depende da flag VISUAL/AI habilitada e da ANTHROPIC_API_KEY
+  // — sem chave, qualquer tier degrada sozinho para a heurística local.
+  const aiTier = user.plan === "free" ? "lite" : "full";
 
   const res = await fetch(`${workerUrl}/process`, {
     method: "POST",
@@ -79,7 +83,7 @@ export async function POST(
       limit_seconds: limitSeconds,
       max_cuts: maxCuts,
       cut_style: project.cut_style ?? "basic",
-      ai_director: aiDirector,
+      ai_tier: aiTier,
     }),
   });
 

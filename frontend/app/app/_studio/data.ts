@@ -23,6 +23,9 @@ export type Cut = {
   status?: CutStatus;
   // O usuário salvou este corte? Cortes não salvos somem no próximo reload.
   saved?: boolean;
+  // BPM do set no corte (coluna `bpm`, com fallback no título antigo). NULL
+  // quando não estimado.
+  bpm?: number | null;
   // Não vêm do banco: gênero e cor de thumb são do protótipo. Opcionais pra que
   // os cortes reais possam omiti-los (o gênero some, o thumb usa fallback).
   genre?: string;

@@ -94,6 +94,11 @@ alter table cuts add column if not exists score_visual double precision;
 -- Parcela do "diretor de IA" (vibe/energia do público, 0-1). NULL quando a IA
 -- não rodou (plano free, sem chave, ou janela fora do teto de chamadas).
 alter table cuts add column if not exists score_hype double precision;
+-- BPM estimado do set no momento do corte. Antes ficava embutido no título
+-- ("Drop N · 120 BPM"); com o título viral gerado por IA ele passa a ter
+-- coluna própria (a UI lê daqui, com fallback no regex do título p/ cortes
+-- antigos). NULL em cortes antigos ou quando o BPM não pôde ser estimado.
+alter table cuts add column if not exists bpm integer;
 
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)

@@ -15,6 +15,9 @@ export type ApiCut = {
   url: string | null;
   status: string | null;
   saved?: boolean | null;
+  // BPM do set no corte. Coluna nova; cortes antigos trazem NULL e o BPM é
+  // extraído do título ("Drop N · 120 BPM") por `parseBpm`.
+  bpm?: number | null;
 };
 
 // Segundos → "h:mm:ss" (sets longos) ou "m:ss".
@@ -36,8 +39,15 @@ export function toDisplayScore(score: number | null | undefined): number {
   return Math.min(100, Math.max(0, v));
 }
 
-// O título do corte vem como "Drop N · 120 BPM" (pipeline.py). Extrai o BPM pro
-// card do set, quando presente.
+// BPM de um corte para o card do set. Prefere a coluna `bpm` (cortes novos, cujo
+// título agora é um hook viral gerado por IA e não contém mais o BPM) e cai no
+// regex do título antigo ("Drop N · 120 BPM") para cortes anteriores.
+export function cutBpm(cut: Pick<ApiCut, "bpm" | "titulo">): number | null {
+  if (typeof cut.bpm === "number" && Number.isFinite(cut.bpm)) return cut.bpm;
+  return parseBpm(cut.titulo);
+}
+
+// Fallback legado: extrai o BPM embutido no título ("Drop N · 120 BPM").
 export function parseBpm(titulo: string | null | undefined): number | null {
   const match = (titulo ?? "").match(/(\d+)\s*BPM/i);
   return match ? Number(match[1]) : null;
@@ -72,5 +82,6 @@ export function toStudioCut(api: ApiCut): Cut {
       ? (api.status as CutStatus)
       : "ready",
     saved: api.saved ?? false,
+    bpm: cutBpm(api),
   };
 }
