@@ -26,7 +26,7 @@ export async function GET(
 
   const { data: cuts } = await supabaseAdmin
     .from("cuts")
-    .select("id, titulo, inicio, fim, duracao, score, url, status, saved")
+    .select("id, titulo, inicio, fim, duracao, score, url, status, saved, bpm")
     .eq("project_id", params.id)
     .order("score", { ascending: false });
 

@@ -51,7 +51,7 @@ export async function GET() {
 
   const { data: cuts, error: cutsErr } = await supabaseAdmin
     .from("cuts")
-    .select("id, project_id, titulo, inicio, fim, duracao, score, url, status, saved")
+    .select("id, project_id, titulo, inicio, fim, duracao, score, url, status, saved, bpm")
     .in("project_id", projectList.map((p) => p.id))
     .eq("saved", true)
     .order("score", { ascending: false });

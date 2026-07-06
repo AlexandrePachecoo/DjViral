@@ -227,11 +227,21 @@ def _dedup_peaks(peak_idx: np.ndarray, score: np.ndarray, frames_per_second: flo
     return np.array(kept)
 
 
-def _pick_peaks(score: np.ndarray, frames_per_second: float) -> np.ndarray:
+def _pick_peaks(
+    score: np.ndarray, frames_per_second: float, target: int | None = None
+) -> np.ndarray:
     """Índices de frame dos picos de ``score`` (baseline local + prominência + dedup).
 
     Separado de :func:`analyze` para ser testável com um ``score`` sintético,
     sem precisar decodificar áudio real.
+
+    ``target`` (opcional) é quantos candidatos o pipeline pretende usar. Se a
+    prominência default podar candidatos demais (set "liso", poucos drops
+    óbvios), a busca é refeita com prominência progressivamente menor até
+    juntar ~``target`` picos — assim a re-ranqueação visual/IA recebe uma lista
+    cheia em vez de o áudio já ter decidido tudo sozinho. A distância mínima
+    (``analyzer_min_gap_seconds``) continua valendo, então os candidatos extras
+    nunca se sobrepõem. ``None`` = comportamento antigo (só a prominência base).
     """
     # Baseline LOCAL (média móvel) em vez de um limiar global (mean*1.5, cego
     # a um set com trechos bem mais quietos/mais saturados que a média
@@ -245,14 +255,27 @@ def _pick_peaks(score: np.ndarray, frames_per_second: float) -> np.ndarray:
     # vez de ``height``) é relativo por natureza — não depende da média global.
     min_distance = max(1, int(settings.analyzer_min_gap_seconds * frames_per_second))
 
-    peak_idx, _ = find_peaks(
-        relative,
-        prominence=settings.analyzer_peak_prominence,
-        distance=min_distance,
-    )
-    if len(peak_idx) == 0:
-        return peak_idx
-    return _dedup_peaks(peak_idx, score, frames_per_second)
+    base_prominence = settings.analyzer_peak_prominence
+    peak_idx, _ = find_peaks(relative, prominence=base_prominence, distance=min_distance)
+    kept = _dedup_peaks(peak_idx, score, frames_per_second) if len(peak_idx) else peak_idx
+
+    # Funil mínimo: se a prominência base rendeu menos que o alvo, relaxa-a e
+    # fica com o conjunto mais cheio encontrado (find_peaks com prominência
+    # menor é um superconjunto — mais candidatos, ainda espaçados por min_gap).
+    if target is not None and len(kept) < target:
+        for factor in (0.5, 0.25, 0.1):
+            relaxed = base_prominence * factor
+            if relaxed <= 0 or relaxed >= base_prominence:
+                continue
+            more_idx, _ = find_peaks(relative, prominence=relaxed, distance=min_distance)
+            if len(more_idx) == 0:
+                continue
+            candidate = _dedup_peaks(more_idx, score, frames_per_second)
+            if len(candidate) > len(kept):
+                kept = candidate
+            if len(kept) >= target:
+                break
+    return kept
 
 
 def analyze(path: str, top_n: int = 30) -> tuple[list[Peak], int]:
@@ -288,7 +311,7 @@ def analyze(path: str, top_n: int = 30) -> tuple[list[Peak], int]:
         + settings.analyzer_weight_contrast * _normalize(contrast)
     )
 
-    peak_idx = _pick_peaks(score, frames_per_second)
+    peak_idx = _pick_peaks(score, frames_per_second, target=top_n)
     if len(peak_idx) == 0:
         return [], bpm
 

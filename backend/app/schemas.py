@@ -14,9 +14,14 @@ class ProcessRequest(BaseModel):
     # Estilo de corte escolhido na criação do projeto: 'basic' (corte seco,
     # crop central fixo) ou 'dynamic' (zooms no DJ/público no ritmo da batida).
     cut_style: str = "basic"
-    # Liga o diretor de IA de visão (avalia a vibe do público → re-rank dos
-    # cortes + zooms dirigidos). A Vercel só envia True para planos pagos.
-    ai_director: bool = False
+    # Nível da camada de IA de visão, enviado pela Vercel conforme o plano:
+    #   'off'  — sem IA (só heurística local áudio + YOLO).
+    #   'lite' — triagem (re-rank de TODOS os candidatos) + títulos virais;
+    #            só o modelo barato (Haiku). Plano free.
+    #   'full' — 'lite' + direção profunda (boxes/story/hype para os zooms do
+    #            corte dinâmico, modelo Sonnet no top-K). Planos pagos.
+    # Qualquer nível degrada para a heurística local sem ANTHROPIC_API_KEY.
+    ai_tier: str = "off"
 
 
 class ProjectCreated(BaseModel):

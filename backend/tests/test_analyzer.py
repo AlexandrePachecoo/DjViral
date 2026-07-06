@@ -78,3 +78,37 @@ def test_pick_peaks_respects_min_gap(monkeypatch):
     monkeypatch.setattr(settings, "analyzer_min_gap_seconds", 30)
     peak_idx = _pick_peaks(score, fps)
     assert len(peak_idx) == 1
+
+
+# ---- funil mínimo: relaxa a prominência para atingir o alvo de candidatos ----
+
+def test_pick_peaks_widens_funnel_to_reach_target(monkeypatch):
+    # Um pico forte e três fracos, bem espaçados. Com a prominência base só o
+    # forte passa; pedindo um alvo maior, a busca relaxa e resgata os fracos.
+    fps = 1.0
+    score = np.zeros(60)
+    score[5] = 1.0
+    for i in (15, 25, 35):
+        score[i] = 0.4
+    monkeypatch.setattr(settings, "analyzer_baseline_window_seconds", 10)
+    monkeypatch.setattr(settings, "analyzer_min_gap_seconds", 5)
+    monkeypatch.setattr(settings, "analyzer_peak_prominence", 0.5)
+
+    base = _pick_peaks(score, fps)  # sem alvo → comportamento antigo
+    assert list(base) == [5]
+
+    widened = _pick_peaks(score, fps, target=4)
+    assert {5, 15, 25, 35} <= set(int(i) for i in widened)
+
+
+def test_pick_peaks_target_met_does_not_relax(monkeypatch):
+    # Se a prominência base já atinge o alvo, não relaxa (não inventa picos).
+    fps = 1.0
+    score = np.zeros(60)
+    score[5] = 1.0
+    score[20] = 0.9
+    monkeypatch.setattr(settings, "analyzer_baseline_window_seconds", 10)
+    monkeypatch.setattr(settings, "analyzer_min_gap_seconds", 5)
+    monkeypatch.setattr(settings, "analyzer_peak_prominence", 0.3)
+    widened = _pick_peaks(score, fps, target=2)
+    assert set(int(i) for i in widened) == {5, 20}

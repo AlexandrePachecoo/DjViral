@@ -42,6 +42,9 @@ VALID_SUBJECTS = {"dj", "crowd", "wide"}
 STORY_SUBJECTS = VALID_SUBJECTS | {"dancer"}
 # Máximo de passos aproveitados da story.
 MAX_STORY_STEPS = 6
+# Comprimento máximo (chars) de um título/hook viral vindo do modelo; acima
+# disso truncamos (um hook de TikTok/Reels é curto por natureza).
+MAX_TITLE_LEN = 80
 # Lado mínimo (fração do frame) de um box de enquadramento vindo do modelo;
 # menor que isso é degenerado (ponto/linha) e não serve para enquadrar.
 MIN_BOX_SIDE = 0.02
@@ -157,16 +160,39 @@ _PROMPT = (
     "que mais renderia um zoom), ou null se ninguém se destacar.\n"
     '- "story": roteiro de câmera para o corte dinâmico — lista ordenada de '
     'até 6 passos {{"t": segundos, "subject": "dj"|"crowd"|"dancer"|"wide"}} '
-    "dizendo para onde a câmera olha a partir do instante t. Monte uma "
-    "narrativa com intenção: abrir a cena, focar o artista no auge, mostrar "
-    'quem está dançando, voltar ao DJ. Use "dancer" só se dancer_box existir; '
-    "lista vazia se preferir a alternância automática.\n"
+    "dizendo para onde a câmera olha a partir do instante t. Monte um ARCO "
+    "narrativo com intenção: (1) ABRIR num plano aberto/no protagonista, "
+    "(2) fechar no artista ou no dançarino EXATAMENTE nos instantes de "
+    '"moments" (o auge/drop), (3) mostrar a reação de quem está dançando ou '
+    "do público, (4) dar um respiro (wide) e voltar. Evite ficar preso num só "
+    'sujeito o clipe inteiro. Use "dancer" só se dancer_box existir; lista '
+    "vazia se preferir a alternância automática.\n"
     'Exemplo: {{"hype": 0.8, "subject": "crowd", "moments": [12.5], '
     '"worthy": true, "dj_box": [0.5, 0.35, 0.22, 0.4], "crowd_box": '
     '[0.5, 0.78, 0.85, 0.4], "dancer_box": [0.3, 0.7, 0.1, 0.25], '
     '"story": [{{"t": 0, "subject": "wide"}}, {{"t": 5, "subject": "dj"}}, '
     '{{"t": 14, "subject": "dancer"}}, {{"t": 22, "subject": "dj"}}]}}'
     "{hint}"
+)
+
+
+_TITLE_PROMPT = (
+    "Estas imagens são keyframes de {n} CORTES já selecionados de um SET DE DJ "
+    "(balada/festival), prontos para virar vídeos curtos de TikTok/Reels. Cada "
+    'frame vem rotulado "Corte {{id}}, t={{t}}s".\n\n'
+    "Para CADA corte, escreva um TÍTULO/LEGENDA em PORTUGUÊS-BR pensado para "
+    "PARAR o scroll e viralizar — um gancho curto e com energia, na vibe de "
+    "quem posta clipe de balada (ex.: \"quando o drop DESTRUIU a pista 🔥\", "
+    "\"ninguém esperava esse b2b\", \"esse momento deu arrepio\").\n"
+    "Regras do título: no máximo ~60 caracteres; 0 a 2 emojis; SEM hashtags; "
+    "SEM aspas ao redor; nada genérico como \"Drop 1\" ou só o BPM.\n\n"
+    "Responda APENAS com um ARRAY JSON (sem texto ao redor, sem markdown), um "
+    "objeto por corte, com exatamente estas chaves:\n"
+    '- "window": o id do corte (inteiro, o mesmo número do rótulo).\n'
+    '- "title": o título/legenda (string).\n'
+    "Responda para TODOS os cortes listados, uma entrada cada.\n"
+    'Exemplo: [{{"window": 0, "title": "quando o beat dropou 🔥"}}, '
+    '{{"window": 1, "title": "a pista inteira cantou junto"}}]'
 )
 
 
@@ -355,6 +381,24 @@ def _coerce_box(value) -> Box | None:
     if w < MIN_BOX_SIDE or h < MIN_BOX_SIDE:
         return None
     return Box(cx=cx, cy=cy, w=w, h=h, conf=AI_BOX_CONF)
+
+
+def _coerce_title(value) -> str:
+    """Sanea um título/hook vindo do modelo → string curta (ou ``""``).
+
+    Tira aspas de cercadura, colapsa espaços em branco e trunca em
+    :data:`MAX_TITLE_LEN`. Devolve ``""`` para qualquer coisa vazia ou
+    não-textual — o chamador cai no título heurístico ("Drop N · BPM").
+    """
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(value.split()).strip()
+    # Remove aspas/apóstrofos de cercadura que o modelo às vezes adiciona.
+    if len(title) >= 2 and title[0] in "\"'“”" and title[-1] in "\"'“”":
+        title = title[1:-1].strip()
+    if len(title) > MAX_TITLE_LEN:
+        title = title[:MAX_TITLE_LEN].rstrip()
+    return title
 
 
 def _coerce(out: dict, duration: float) -> AIDirection:
@@ -569,4 +613,84 @@ def triage_group(
             hype = 0.0
         hype = min(1.0, max(0.0, hype))
         out[key] = Triage(hype=hype, worthy=bool(item.get("worthy", True)))
+    return out
+
+
+def title_group(
+    video_path: str, cuts: list[tuple[int, float, float]]
+) -> dict[int, str]:
+    """Gera um título/hook viral para vários cortes numa única chamada barata.
+
+    ``cuts`` é ``[(chave, start_sec, duration), ...]`` — a chave é opaca (o
+    chamador usa o que quiser para casar o resultado, ex. ``id(peak)``). Roda
+    só sobre os cortes JÁ SELECIONADOS (não todos os candidatos), com poucos
+    keyframes pequenos por corte, no modelo de triagem (Haiku) — por isso é
+    barato e serve inclusive o plano free (tier "lite"). Cada corte vira um
+    ``title`` saneado (:func:`_coerce_title`).
+
+    Cortes sem título no dict de saída (falha de amostragem, resposta sem
+    aquele ``window`` id, título vazio) ficam de fora e o chamador usa o
+    título heurístico. Como o resto do módulo, nunca levanta exceção.
+    """
+    client = _get_client()
+    if client is None or not cuts:
+        return {}
+
+    content: list[dict] = []
+    valid_keys: set[int] = set()
+    for key, start_sec, duration in cuts:
+        frames = _sample_frames(
+            video_path,
+            start_sec,
+            duration,
+            settings.ai_triage_frames_per_window,
+            width=settings.ai_triage_frame_width,
+        )
+        if not frames:
+            continue
+        valid_keys.add(key)
+        for t, b64 in frames:
+            content.append({"type": "text", "text": f"Corte {key}, frame t={t:.1f}s:"})
+            content.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+                }
+            )
+    if not valid_keys:
+        return {}
+    content.append({"type": "text", "text": _TITLE_PROMPT.format(n=len(cuts))})
+
+    try:
+        resp = client.messages.create(
+            model=settings.ai_triage_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": content}],
+        )
+        _track_usage(settings.ai_triage_model, resp)
+        text = "".join(
+            block.text for block in resp.content if getattr(block, "type", None) == "text"
+        )
+    except Exception:  # noqa: BLE001 - os títulos nunca são fatais para o job
+        logger.exception("Geração de títulos de IA falhou (%d cortes)", len(cuts))
+        return {}
+
+    items = _parse_json_array(text)
+    if items is None:
+        logger.warning("Títulos de IA: resposta sem array JSON válido")
+        return {}
+
+    out: dict[int, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            key = int(item.get("window"))
+        except (TypeError, ValueError):
+            continue
+        if key not in valid_keys:
+            continue
+        title = _coerce_title(item.get("title"))
+        if title:
+            out[key] = title
     return out
