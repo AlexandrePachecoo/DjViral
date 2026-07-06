@@ -113,7 +113,7 @@ def process_project(
     limit_seconds: int | None = None,
     max_cuts: int | None = None,
     cut_style: str = "basic",
-    use_ai_director: bool = False,
+    ai_tier: str = "off",
 ) -> None:
     """Pipeline completo, rodado em background.
 
@@ -127,12 +127,14 @@ def process_project(
     processamento é abortado se estourar a cota; ``max_cuts`` reduz o número
     de clipes gerados (ex.: 10 no teste grátis). ``cut_style`` é a escolha do
     usuário na criação do projeto: 'basic' (corte seco) ou 'dynamic' (zooms no
-    DJ/público no ritmo da batida). ``use_ai_director`` liga a camada de IA de
-    visão (só planos pagos; pedido pela Vercel) — avalia a vibe do público para
-    re-ranquear os cortes e dirigir os zooms; degrada para a heurística local.
+    DJ/público no ritmo da batida). ``ai_tier`` liga a camada de IA de visão
+    (enviado pela Vercel conforme o plano): 'off' (sem IA), 'lite' (triagem que
+    re-ranqueia todos os candidatos + títulos virais, só Haiku — plano free) ou
+    'full' ('lite' + direção profunda que dirige os zooms, Sonnet no top-K —
+    planos pagos). Qualquer nível degrada para a heurística local sem chave.
     """
     with _job_slots:
-        _process_project(project_id, limit_seconds, max_cuts, cut_style, use_ai_director)
+        _process_project(project_id, limit_seconds, max_cuts, cut_style, ai_tier)
 
 
 def _process_project(
@@ -140,7 +142,7 @@ def _process_project(
     limit_seconds: int | None = None,
     max_cuts: int | None = None,
     cut_style: str = "basic",
-    use_ai_director: bool = False,
+    ai_tier: str = "off",
 ) -> None:
     client = get_client()
     video_path: str | None = None
@@ -182,8 +184,13 @@ def _process_project(
         )
 
         candidates = _score_candidates(
-            video_path, peaks, cut_style, use_ai_director
+            video_path, peaks, cut_style, ai_tier
         )[:n_final]
+
+        # Títulos/hooks virais (IA barata) para os cortes JÁ selecionados —
+        # roda em qualquer tier com IA ligada (inclusive 'lite'/free). Sem IA
+        # (ou falha), cada corte cai no título heurístico "Drop N · BPM".
+        titles = _generate_titles(video_path, candidates, ai_tier)
 
         src_dims = probe_video(video_path) if cut_style == "dynamic" else None
 
@@ -199,11 +206,12 @@ def _process_project(
                 url = upload_clip(clip_path, dest_name)
 
                 start = max(0.0, peak.start_sec - settings.pre_roll)
+                titulo = titles.get(id(peak)) or f"Drop {idx + 1} · {bpm} BPM"
                 _insert_cut(
                     client,
                     {
                         "project_id": project_id,
-                        "titulo": f"Drop {idx + 1} · {bpm} BPM",
+                        "titulo": titulo,
                         "inicio": start,
                         "fim": start + settings.clip_duration,
                         "duracao": settings.clip_duration,
@@ -211,6 +219,7 @@ def _process_project(
                         "score_musical": peak.score,
                         "score_visual": wv.visual_score if wv is not None else None,
                         "score_hype": ai.hype_score if ai is not None else None,
+                        "bpm": bpm,
                         "url": url,
                     },
                 )
@@ -233,31 +242,80 @@ def _process_project(
             os.remove(video_path)
 
 
-def _insert_cut(client, row: dict) -> None:
-    """Insere um ``cut``, tolerando bancos sem a coluna ``score_hype``.
+# Colunas de ``cuts`` adicionadas por migrações posteriores: se o banco ainda
+# não as aplicou, o PostgREST rejeita a coluna e reinserimos sem ela em vez de
+# perder o corte.
+_OPTIONAL_CUT_COLUMNS = ("score_hype", "bpm")
 
-    ``score_hype`` foi adicionada com o diretor de IA; se o banco ainda não
-    aplicou a migração, o PostgREST rejeita a coluna — nesse caso reinserimos
-    sem ela em vez de derrubar o job.
+
+def _insert_cut(client, row: dict) -> None:
+    """Insere um ``cut``, tolerando bancos sem as colunas opcionais recentes.
+
+    ``score_hype`` (diretor de IA) e ``bpm`` (título viral) foram adicionadas
+    depois; se o banco ainda não aplicou a migração, o PostgREST rejeita a
+    coluna — nesse caso reinserimos sem as opcionais em vez de derrubar o job.
     """
     try:
         client.table("cuts").insert(row).execute()
     except Exception:  # noqa: BLE001 - coluna ausente não deve perder o corte
-        if "score_hype" not in row:
+        optional = [c for c in _OPTIONAL_CUT_COLUMNS if c in row]
+        if not optional:
             raise
         logger.warning(
-            "Insert de cut falhou; tentando sem score_hype (coluna ausente?)"
+            "Insert de cut falhou; tentando sem colunas opcionais %s "
+            "(migração ausente?)",
+            optional,
         )
         client.table("cuts").insert(
-            {k: v for k, v in row.items() if k != "score_hype"}
+            {k: v for k, v in row.items() if k not in _OPTIONAL_CUT_COLUMNS}
         ).execute()
+
+
+def _ai_flags(ai_tier: str) -> tuple[bool, bool]:
+    """Traduz o ``ai_tier`` em ``(triagem ligada, direção profunda ligada)``.
+
+    Ambas exigem o diretor habilitado e uma ``ANTHROPIC_API_KEY``. 'lite' liga
+    só a triagem (barata: re-rank de todos os candidatos + títulos); 'full'
+    liga também a direção profunda (Sonnet no top-K). 'off' desliga tudo.
+    """
+    on = settings.ai_director_enabled and bool(settings.anthropic_api_key)
+    triage_on = on and ai_tier in ("lite", "full")
+    deep_on = on and ai_tier == "full"
+    return triage_on, deep_on
+
+
+def _generate_titles(
+    video_path: str,
+    candidates: list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]],
+    ai_tier: str,
+) -> dict[int, str]:
+    """Gera títulos/hooks virais (IA barata) para os cortes já selecionados.
+
+    Roda em qualquer tier com IA ligada (inclusive 'lite'/free), pois usa só o
+    modelo de triagem. Devolve ``{id(peak): título}``; cortes sem título ficam
+    de fora e o chamador usa o heurístico. Nunca derruba o job.
+    """
+    triage_on, _ = _ai_flags(ai_tier)
+    if not triage_on or not candidates:
+        return {}
+    windows = [
+        (
+            id(peak),
+            max(0.0, peak.start_sec - settings.pre_roll),
+            float(settings.clip_duration),
+        )
+        for peak, _wv, _ai, _score in candidates
+    ]
+    titles = ai_director.title_group(video_path, windows)
+    logger.info("Títulos de IA: %d/%d cortes com hook", len(titles), len(candidates))
+    return titles
 
 
 def _score_candidates(
     video_path: str,
     peaks: list[Peak],
     cut_style: str,
-    use_ai: bool = False,
+    ai_tier: str = "off",
 ) -> list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]]:
     """Roda a análise das janelas candidatas e re-ranqueia.
 
@@ -265,15 +323,16 @@ def _score_candidates(
     1. Score LOCAL por janela = ``score_music_weight * musical + (1 - peso) *
        visual`` (áudio + YOLO), como antes. Janela sem análise visual (visual
        desligado, budget estourado ou erro) fica só com o score musical.
-    2. Se ``use_ai``, a TRIAGEM da IA roda em lotes cobrindo TODOS os
-       candidatos (barata: poucos keyframes pequenos, várias janelas por
-       chamada) e ajusta o score: ``adjusted = (1-w1)*base + w1*hype_lite``.
-       Diferente da direção profunda, isto nunca corta candidatos por um
-       top-K — só reordena.
-    3. A DIREÇÃO PROFUNDA da IA roda nas TOP-K janelas pelo score AJUSTADO
-       (teto ``ai_director_max_calls`` + budget de tempo próprio); o hype
-       profundo refina o score final: ``final = (1-w2)*adjusted + w2*hype``.
-    4. Sem IA (ou sem chave), o score final é o local de sempre.
+    2. Se o tier liga a triagem ('lite'/'full'), a TRIAGEM da IA roda em lotes
+       cobrindo TODOS os candidatos (barata: poucos keyframes pequenos, várias
+       janelas por chamada) e ajusta o score: ``adjusted = (1-w1)*base +
+       w1*hype_lite``. Diferente da direção profunda, isto nunca corta
+       candidatos por um top-K — só reordena.
+    3. Só no tier 'full', a DIREÇÃO PROFUNDA da IA roda nas TOP-K janelas pelo
+       score AJUSTADO (teto ``ai_director_max_calls`` + budget de tempo
+       próprio); o hype profundo refina o score final: ``final = (1-w2)*
+       adjusted + w2*hype``.
+    4. Sem IA (tier 'off' ou sem chave), o score final é o local de sempre.
 
     Nenhuma das fases (visual, triagem, direção) derruba o job.
     """
@@ -321,13 +380,13 @@ def _score_candidates(
         )
         scored.append((peak, wv, base))
 
-    ai_on = use_ai and settings.ai_director_enabled and bool(settings.anthropic_api_key)
-    if ai_on:
+    triage_on, deep_on = _ai_flags(ai_tier)
+    if triage_on:
         ai_director.reset_usage()
 
     # ---- 2) triagem da IA em TODOS os candidatos (opcional, barata) ----
     adjusted_map: dict[int, float] = {id(peak): base for peak, _wv, base in scored}
-    if ai_on and settings.ai_triage_group_size > 0:
+    if triage_on and settings.ai_triage_group_size > 0:
         triage_deadline = time.monotonic() + settings.ai_triage_budget_seconds
         w1 = min(1.0, max(0.0, settings.score_hype_lite_weight))
         group_size = max(1, settings.ai_triage_group_size)
@@ -359,7 +418,7 @@ def _score_candidates(
 
     # ---- 3) direção profunda da IA nas top-K janelas pelo score ajustado ----
     ai_map: dict[int, "ai_director.AIDirection"] = {}
-    if ai_on:
+    if deep_on:
         ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
         calls = 0
         ordered = sorted(scored, key=lambda it: adjusted_map[id(it[0])], reverse=True)

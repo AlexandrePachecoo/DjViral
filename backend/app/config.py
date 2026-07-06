@@ -83,10 +83,12 @@ class Settings(BaseSettings):
     # esparsa (1 a cada ~8 s), só para o score.
     visual_detect_every: int = 2
     # O áudio gera `min(N * factor, cap)` janelas candidatas; a análise visual
-    # re-ranqueia e ficam as N pedidas. O cap segura o tempo de job em sets
-    # longos (45 janelas ≈ 10–25 min de análise visual).
-    visual_candidates_factor: int = 2
-    visual_candidates_cap: int = 45
+    # re-ranqueia e ficam as N pedidas. Um funil mais largo dá à IA (triagem +
+    # direção) mais chance de resgatar um momento que o áudio subestimou; o cap
+    # segura o tempo de job em sets longos (60 janelas ≈ 15–30 min de análise
+    # visual, ainda limitado pelo `visual_budget_seconds`).
+    visual_candidates_factor: int = 3
+    visual_candidates_cap: int = 60
     # Teto de tempo (s) da fase visual por job; estourou, as janelas restantes
     # ficam sem análise (score só musical) em vez de atrasar o set inteiro.
     visual_budget_seconds: int = 900
@@ -180,18 +182,21 @@ class Settings(BaseSettings):
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
     ai_director_max_calls: int = 20
-    # Quantos keyframes amostrar por janela para a direção profunda.
-    ai_director_frames: int = 5
+    # Quantos keyframes amostrar por janela para a direção profunda. Mais
+    # frames dão à IA melhor noção espacial (boxes) e temporal (story/moments),
+    # ao custo de mais tokens por chamada — mas só no top-K.
+    ai_director_frames: int = 7
     # Largura (px) dos frames enviados à direção profunda.
-    ai_director_frame_width: int = 640
+    ai_director_frame_width: int = 768
     # Teto de tempo (s) da direção profunda por job; estourou, as janelas
     # restantes ficam só com o score ajustado da triagem.
     ai_director_budget_seconds: int = 180
     # Timeout (s) de cada chamada individual à API.
     ai_director_timeout: float = 30.0
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
-    # + peso*hype. Janela sem direção profunda fica só no score ajustado.
-    score_hype_weight: float = 0.35
+    # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
+    # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
+    score_hype_weight: float = 0.40
 
     # Modelo da TRIAGEM (barata, cobre todos os candidatos) — fica em Haiku
     # mesmo com a direção profunda em Sonnet, pra o custo por janela ficar baixo.
@@ -210,8 +215,9 @@ class Settings(BaseSettings):
     # Peso do hype "lite" da triagem no score ajustado (usado ANTES do corte
     # do top-K da direção profunda): adjusted = (1-peso)*base + peso*hype_lite.
     # É o que deixa uma janela mal ranqueada localmente mas bem avaliada
-    # visualmente sobreviver ao corte do top-K.
-    score_hype_lite_weight: float = 0.20
+    # visualmente sobreviver ao corte do top-K — por isso pesa relativamente
+    # forte (a triagem é o único filtro de IA que vê TODOS os candidatos).
+    score_hype_lite_weight: float = 0.30
 
 
 settings = Settings()

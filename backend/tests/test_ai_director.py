@@ -9,7 +9,13 @@ import types
 import pytest
 
 from app import ai_director
-from app.ai_director import AIDirection, _coerce, _coerce_box, _parse_json
+from app.ai_director import (
+    AIDirection,
+    _coerce,
+    _coerce_box,
+    _coerce_title,
+    _parse_json,
+)
 from app.visual import Box
 
 
@@ -343,6 +349,97 @@ def test_triage_group_invalid_json_returns_empty(monkeypatch):
         ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
     )
     assert ai_director.triage_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+# ---- _coerce_title: saneamento do hook viral ----
+
+def test_coerce_title_plain():
+    assert _coerce_title("quando o beat dropou 🔥") == "quando o beat dropou 🔥"
+
+
+def test_coerce_title_strips_wrapping_quotes():
+    assert _coerce_title('"a pista inteira cantou"') == "a pista inteira cantou"
+    assert _coerce_title("“o drop que parou tudo”") == "o drop que parou tudo"
+
+
+def test_coerce_title_collapses_whitespace():
+    assert _coerce_title("  vem   o\n drop  ") == "vem o drop"
+
+
+def test_coerce_title_truncates_long():
+    long = "x" * 200
+    out = _coerce_title(long)
+    assert len(out) <= ai_director.MAX_TITLE_LEN
+
+
+def test_coerce_title_rejects_non_string_and_empty():
+    assert _coerce_title(None) == ""
+    assert _coerce_title(123) == ""
+    assert _coerce_title("   ") == ""
+
+
+# ---- title_group: hooks virais em lote (só cortes selecionados) ----
+
+def test_title_group_happy_path(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '[{"window": 10, "title": "quando o drop DESTRUIU 🔥"}, '
+        '{"window": 20, "title": "\\"esse b2b foi surreal\\""}]'
+    ))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "Zm9v")]
+    )
+    out = ai_director.title_group("video.mp4", [(10, 0.0, 60.0), (20, 60.0, 60.0)])
+    assert out[10] == "quando o drop DESTRUIU 🔥"
+    assert out[20] == "esse b2b foi surreal"  # aspas de cercadura removidas
+
+
+def test_title_group_no_client_returns_empty(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: None)
+    assert ai_director.title_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+def test_title_group_drops_empty_titles(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '[{"window": 0, "title": "  "}, {"window": 1, "title": "hook bom"}]'
+    ))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    out = ai_director.title_group("video.mp4", [(0, 0.0, 60.0), (1, 60.0, 60.0)])
+    assert out == {1: "hook bom"}  # título vazio fica de fora
+
+
+def test_title_group_ignores_unknown_window_ids(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '[{"window": 0, "title": "ok"}, {"window": 99, "title": "intruso"}]'
+    ))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    out = ai_director.title_group("video.mp4", [(0, 0.0, 60.0)])
+    assert list(out.keys()) == [0]
+
+
+def test_title_group_api_exception_returns_empty(monkeypatch):
+    def _boom(**kw):
+        raise RuntimeError("timeout")
+
+    client = types.SimpleNamespace(messages=types.SimpleNamespace(create=_boom))
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    assert ai_director.title_group("video.mp4", [(0, 0.0, 60.0)]) == {}
+
+
+def test_title_group_invalid_json_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        ai_director, "_get_client", lambda: _fake_client("não sei dizer")
+    )
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(0.0, "x")]
+    )
+    assert ai_director.title_group("video.mp4", [(0, 0.0, 60.0)]) == {}
 
 
 # ---- Acumulador de custo/uso ----

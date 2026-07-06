@@ -46,8 +46,9 @@ Navegador (Vercel UI)
                                         max_cuts: 1..30, clampado ao plano)
   2. PUT do vídeo DIRETO no Supabase Storage (signed URL) — não passa pela Vercel
   3. POST /api/projects/{id}/process → Vercel chama o worker Railway
-                                        POST /process {project_id, limit_seconds,
-                                        max_cuts, cut_style} (header X-Worker-Secret)
+                                        max_cuts, cut_style, ai_tier}
+                                        (header X-Worker-Secret; ai_tier:
+                                        'off'|'lite'|'full' conforme o plano)
   4. Worker (background): baixa o mp4 do Supabase → analyzer (áudio) → visual
                           (re-rank + alvos de zoom) → clipper (seco ou dinâmico)
                           → upload dos clipes → insere cuts → project.status=done
@@ -112,17 +113,27 @@ YouTube quando necessário.
    (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
    as janelas restantes ficam só com o score musical. As parcelas são
    persistidas em `cuts.score_musical` / `cuts.score_visual`.
-3b. `ai_director.py` — **diretor de IA (opcional, só planos pagos), em DOIS
-   ESTÁGIOS**. Quando a Vercel pede (`ai_director=true` no `/process`,
-   enviado só para pro/premium/admin) **e** há `ANTHROPIC_API_KEY`:
+3b. `ai_director.py` — **diretor de IA (opcional), em DOIS ESTÁGIOS + títulos**.
+   A Vercel envia um `ai_tier` no `/process` conforme o plano: `off` (sem IA),
+   `lite` (só a triagem barata + títulos virais, plano **free**) ou `full`
+   (triagem + direção profunda, planos **pagos**). Com `ai_tier != off` **e**
+   `ANTHROPIC_API_KEY` presente:
    - **Triagem** (`triage_group`, barata, modelo `AI_TRIAGE_MODEL` default
-     Haiku) roda em LOTES (`AI_TRIAGE_GROUP_SIZE` janelas por chamada, 1-2
-     keyframes pequenos cada) cobrindo **TODOS** os candidatos, não só um
-     top-K — devolve só `hype`/`worthy` por janela e ajusta o score
-     (`adjusted = (1-w)*base + w*hype_lite`, `SCORE_HYPE_LITE_WEIGHT`) ANTES
-     de qualquer corte por top-K, o que deixa um trecho mal ranqueado pela
-     heurística local mas bem avaliado visualmente sobreviver ao corte.
-   - **Direção profunda** (`direct`, modelo `AI_DIRECTOR_MODEL` default
+     Haiku; roda em `lite` e `full`) roda em LOTES (`AI_TRIAGE_GROUP_SIZE`
+     janelas por chamada, 1-2 keyframes pequenos cada) cobrindo **TODOS** os
+     candidatos, não só um top-K — devolve só `hype`/`worthy` por janela e
+     ajusta o score (`adjusted = (1-w)*base + w*hype_lite`,
+     `SCORE_HYPE_LITE_WEIGHT`) ANTES de qualquer corte por top-K, o que deixa
+     um trecho mal ranqueado pela heurística local mas bem avaliado
+     visualmente sobreviver ao corte.
+   - **Títulos virais** (`title_group`, barata, mesmo modelo da triagem; roda
+     em `lite` e `full`) — depois da seleção final, uma chamada em lote gera um
+     **gancho/legenda de TikTok/Reels por corte** a partir de poucos keyframes
+     pequenos dos cortes JÁ escolhidos; vira `cuts.titulo` (fallback heurístico
+     `Drop N · BPM` quando a IA não deu título; o BPM passa a viver em
+     `cuts.bpm`). Saneado em `_coerce_title`.
+   - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
+     `AI_DIRECTOR_MODEL` default
      **Sonnet**) roda só nas TOP-K janelas pelo score já AJUSTADO (teto
      `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio): amostra
      `AI_DIRECTOR_FRAMES` keyframes (`AI_DIRECTOR_FRAME_WIDTH`px, reaproveita
@@ -273,8 +284,10 @@ ganchos detalhados em [`design.md`](design.md).
   protagonista), `DYNAMIC_AI_BOX_TAKEOVER_RATIO`. Detecção de rosto (sinal de
   ancoragem, opcional): `FACE_ENABLED`, `FACE_MODEL_PATH`, `FACE_CONF`,
   `FACE_ANCHOR_WEIGHT`, `FACE_ZOOM_BONUS`, `FACE_MIN_SIZE_PX`. Diretor de IA
-  em dois estágios (opcional, só planos pagos): `ANTHROPIC_API_KEY` (vazio =
-  IA desligada), `AI_DIRECTOR_ENABLED`, `AI_TRIAGE_MODEL` (default
+  em dois estágios + títulos (opcional; nível escolhido pelo `ai_tier` do
+  `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
+  profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
+  `AI_TRIAGE_MODEL` (default
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
   `AI_TRIAGE_FRAME_WIDTH`, `AI_TRIAGE_BUDGET_SECONDS`, `SCORE_HYPE_LITE_WEIGHT`,
@@ -412,7 +425,10 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 ### Cuts / Clipe
 - id
 - projeto_id
-- titulo
+- titulo — gancho/legenda viral gerado pela IA (`ai_director.title_group`);
+  fallback heurístico `Drop N · BPM` quando a IA não rodou/não deu título
+- bpm — BPM estimado do set no corte (antes ficava embutido no título; NULL em
+  cortes antigos ou sem estimativa)
 - inicio
 - fim
 - duracao
@@ -420,8 +436,9 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   ainda misturado com o hype da IA quando ela rodou (`SCORE_HYPE_WEIGHT`)
 - score_musical / score_visual — parcelas do score (NULL em cortes antigos ou
   quando a análise visual não rodou)
-- score_hype — parcela do diretor de IA (vibe do público, 0-1); NULL quando a IA
-  não rodou (plano free, sem chave, ou janela fora do teto de chamadas)
+- score_hype — parcela do diretor de IA (vibe do público, 0-1); NULL quando a
+  direção profunda não rodou (tier != full, sem chave, ou janela fora do teto
+  de chamadas)
 - url
 - status (`ready | processing | error`) — `processing` enquanto o worker
   regenera o vídeo num re-corte (`POST /recut`)
