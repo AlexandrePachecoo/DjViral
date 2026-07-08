@@ -158,10 +158,20 @@ YouTube quando necessário.
    - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
      de 3–8s com um **arco narrativo**: abertura (wide/protagonista com
      push-in), punch-in apertado no protagonista exatamente no drop e, depois
-     dele, rotação intencional protagonista ↔ dançarino/público com wide de
-     respiro (zooms **sempre aproximam** — sem drift alternado cego;
-     fronteiras alinhadas aos beats; as coladas a um punch são removidas para
-     não gerar shot-relâmpago). O enquadramento do DJ/dançarino é **por
+     dele, rotação intencional protagonista ↔ dançarino/público com **wide de
+     respiro a cada troca** (a rotação intercala wide para não ficar tempo
+     demais colada nas pessoas; zooms **sempre aproximam** — sem drift
+     alternado cego; fronteiras alinhadas aos beats; as coladas a um punch são
+     removidas para não gerar shot-relâmpago). **Respiro reativo à ação:** cada
+     shot é medido pela atividade de imagem do trecho (média do frame-diff dos
+     `visual.samples`) contra a MEDIANA da janela — um shot de pessoa que não é
+     o punch-in do drop e cuja atividade cai abaixo de
+     `DYNAMIC_STILL_ACTIVITY_RATIO`× a mediana vira wide (não segura um zoom
+     parado em quem começou a dançar e parou); acima de
+     `DYNAMIC_TIGHT_ACTIVITY_RATIO`× a mediana o zoom base ganha
+     `DYNAMIC_ACTIVITY_ZOOM_BONUS` (take mais fechado quando a pessoa está
+     "on", clampado a `DYNAMIC_ZOOM_MAX`). Sem samples (visual off) os dois
+     efeitos ficam inertes. O enquadramento do DJ/dançarino é **por
      shot** (mediana da track dentro do trecho; o box global da janela é só o
      fallback), refinado pelo viés de rosto da Fase 6 (só o `y`, nunca o
      zoom — mostra dança/controladora) e a câmera **panoramiza E aproxima AO
@@ -281,7 +291,11 @@ ganchos detalhados em [`design.md`](design.md).
   zoompan), `DYNAMIC_PAN` (false desliga o pan que segue o DJ),
   `DYNAMIC_PAN_DEADBAND`, `DYNAMIC_PAN_MAX_SPEED`, `DYNAMIC_MAX_SHOTS`,
   `DYNAMIC_CAMERA_CONTINUITY` (0 desliga a continuidade entre shots do mesmo
-  protagonista), `DYNAMIC_AI_BOX_TAKEOVER_RATIO`. Detecção de rosto (sinal de
+  protagonista), `DYNAMIC_AI_BOX_TAKEOVER_RATIO`,
+  `DYNAMIC_STILL_ACTIVITY_RATIO` (0 desliga o respiro reativo que troca por
+  wide quem parou de dançar), `DYNAMIC_TIGHT_ACTIVITY_RATIO` +
+  `DYNAMIC_ACTIVITY_ZOOM_BONUS` (take mais fechado em trechos agitados; bônus
+  0 desliga). Detecção de rosto (sinal de
   ancoragem, opcional): `FACE_ENABLED`, `FACE_MODEL_PATH`, `FACE_CONF`,
   `FACE_ANCHOR_WEIGHT`, `FACE_ZOOM_BONUS`, `FACE_MIN_SIZE_PX`. Diretor de IA
   em dois estágios + títulos (opcional; nível escolhido pelo `ai_tier` do

@@ -164,6 +164,18 @@ class Settings(BaseSettings):
     # sujeito em vez de resetar o enquadramento a cada corte. 0 = desliga
     # (comportamento anterior, cada shot 100% independente).
     dynamic_camera_continuity: float = 0.35
+    # Respiro (wide) reativo à AÇÃO do trecho: um shot de pessoa (dj/dançarino/
+    # público) que NÃO é o punch-in do drop e cuja atividade de imagem no trecho
+    # (média do frame-diff dos samples) cai abaixo desta fração da atividade
+    # MEDIANA da janela vira um wide — evita segurar um zoom parado em quem
+    # começou a dançar e parou. 0 desliga (segura o zoom independente da ação).
+    dynamic_still_activity_ratio: float = 0.55
+    # Take mais FECHADO quando a pessoa está claramente "on": num shot de pessoa
+    # cuja atividade no trecho passa desta fração da mediana da janela, o zoom
+    # base ganha `dynamic_activity_zoom_bonus` (somado, sempre clampado a
+    # `dynamic_zoom_max`). 0 no bônus desliga o fechamento reativo.
+    dynamic_tight_activity_ratio: float = 1.4
+    dynamic_activity_zoom_bonus: float = 0.2
 
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem

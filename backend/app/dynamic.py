@@ -13,10 +13,11 @@ crops são calculados aqui, em pixels da fonte, já com dimensões pares e
 clampados aos limites do frame.
 """
 import math
+import statistics
 from dataclasses import dataclass
 
 from .config import settings
-from .visual import Box, WindowVisual, _median_box
+from .visual import Box, FrameSample, WindowVisual, _median_box
 
 # Fronteira de shot "snapa" ao beat mais próximo dentro desta tolerância (s).
 BEAT_SNAP_TOLERANCE = 0.6
@@ -257,6 +258,20 @@ def _snap_to_beat(t: float, beats: list[float]) -> float:
     return nearest if abs(nearest - t) <= BEAT_SNAP_TOLERANCE else t
 
 
+def _shot_activity(samples: list[FrameSample], t0: float, t1: float) -> float | None:
+    """Atividade de imagem MÉDIA do trecho ``[t0, t1]`` (frame-diff dos samples).
+
+    É o sinal barato de "está acontecendo alguma coisa AGORA?" — usado para
+    soltar um zoom parado em quem já parou de dançar (vira wide) e para fechar
+    mais quando a pessoa está claramente agitada. ``None`` quando nenhum sample
+    cai no trecho (janela sem análise de movimento).
+    """
+    vals = [s.motion for s in samples if t0 - 1e-6 <= s.t <= t1 + 1e-6]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
 def build_shot_plan(
     wv: WindowVisual | None,
     beats: list[float],
@@ -299,6 +314,17 @@ def build_shot_plan(
     shot_max = settings.dynamic_shot_max
     motion = wv.motion_score if wv is not None else 0.5
     max_shots = max(1, settings.dynamic_max_shots)
+
+    # Atividade de imagem por trecho (frame-diff dos samples): a MEDIANA da
+    # janela é a referência contra a qual cada shot é medido — um trecho bem
+    # abaixo dela está "parado" (respiro/wide), um bem acima está agitado
+    # (take mais fechado). Sem samples (visual off) fica 0 e os dois efeitos
+    # ficam inertes (as heurísticas de kind/zoom seguem como antes).
+    motion_samples = wv.samples if wv is not None else []
+    _activity_vals = [s.motion for s in motion_samples[1:]]  # samples[0].motion == 0
+    baseline_activity = (
+        statistics.median(_activity_vals) if len(_activity_vals) >= 3 else 0.0
+    )
 
     # ---- Instantes de punch-in: drop musical + momentos de auge visual da IA ----
     punch_times: list[float] = []
@@ -459,8 +485,10 @@ def build_shot_plan(
         return _resolve_kind(kind) if kind else None
 
     # Rotação pós-drop (sem story): o protagonista reestabelece e alterna com
-    # dançarino/público, com um wide de respiro por volta — a "celebração"
-    # com intenção (zoom em quem dança → volta ao DJ → respiro → DJ...).
+    # dançarino/público, com um wide de RESPIRO a cada troca — a "celebração"
+    # com intenção (zoom no protagonista → respiro → quem dança → volta ao
+    # protagonista → respiro → público...). O respiro frequente é de propósito:
+    # sem ele a timeline fica tempo demais colada nas pessoas.
     extras: list[str] = []
     if have_dancer and primary_kind != "dancer":
         extras.append("dancer")
@@ -468,8 +496,9 @@ def build_shot_plan(
         extras.append(secondary_kind)
     post_cycle: list[str] = [primary_kind]
     for extra in extras:
-        post_cycle += [extra, primary_kind]
-    post_cycle += ["wide"]
+        post_cycle += ["wide", extra, primary_kind]
+    if "wide" not in post_cycle:  # protagonista sozinho (sem dançarino/público)
+        post_cycle.append("wide")
 
     # Wide ancorado na ação: centrado no protagonista (o crop 9:16 de um 16:9
     # mostra ~1/3 da largura; wide no centro do frame perde o DJ no canto e a
@@ -541,6 +570,17 @@ def build_shot_plan(
             # genérico fora desses momentos.
             if tight and face_bias is not None and settings.face_enabled:
                 zoom += settings.face_zoom_bonus
+            # Take mais fechado quando a pessoa está claramente "on": trecho
+            # com atividade de imagem bem acima da mediana da janela ganha um
+            # aperto extra (clampado a `dynamic_zoom_max` em `crop_for_box`).
+            act = _shot_activity(motion_samples, t0, t1)
+            if (
+                settings.dynamic_activity_zoom_bonus > 0
+                and baseline_activity > 0
+                and act is not None
+                and act >= settings.dynamic_tight_activity_ratio * baseline_activity
+            ):
+                zoom += settings.dynamic_activity_zoom_bonus
             crop = crop_for_box(box, src_w, src_h, zoom=zoom)
             path = _pan_path(track, t0, t1, crop[0], crop[1], src_w, src_h)
             return _apply_continuity(kind, crop, path)
@@ -573,6 +613,22 @@ def build_shot_plan(
         else:
             kind = post_cycle[post_idx % len(post_cycle)]
             post_idx += 1
+
+        # Respiro reativo: se a imagem está PARADA neste trecho (ninguém
+        # dançando de fato), não segura um zoom estático numa pessoa — vira
+        # wide. O punch-in do drop é intencional e fica de fora.
+        if (
+            kind in ("dj", "dancer", "crowd")
+            and not is_punch
+            and settings.dynamic_still_activity_ratio > 0
+            and baseline_activity > 0
+        ):
+            act = _shot_activity(motion_samples, t0, t1)
+            if (
+                act is not None
+                and act < settings.dynamic_still_activity_ratio * baseline_activity
+            ):
+                kind = "wide"
 
         path = None
         if kind == "wide":
