@@ -585,6 +585,11 @@
   background: var(--lp-ink);
 }
 
+.previewImg {
+  object-fit: cover;
+  object-position: center 30%;
+}
+
 .previewOverlay {
   position: absolute;
   inset: 0;
@@ -658,6 +663,11 @@
   overflow: hidden;
   border: 1px solid var(--lp-border);
   background: var(--lp-ink);
+}
+
+.timelineImg {
+  object-fit: cover;
+  object-position: center 30%;
 }
 
 .timelineOverlay {
