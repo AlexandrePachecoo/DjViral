@@ -5,7 +5,7 @@ import pytest
 
 from app.ai_director import AIDirection
 from app.dynamic import _pan_path, build_shot_plan
-from app.visual import Box, WindowVisual
+from app.visual import Box, FrameSample, WindowVisual
 from app.config import settings
 
 
@@ -493,6 +493,91 @@ def test_no_face_zoom_bonus_without_face_bias():
     _w1, h1, _x1, _y1 = punch_no_face.crop
     _w2, h2, _x2, _y2 = punch_with_face.crop
     assert h2 < h1  # só o com rosto detectado ganha o bônus (crop menor = mais zoom)
+
+
+# ---- Respiro reativo à ação (imagem parada → wide) e take fechado ----
+
+def _samples(motion_fn, fps: float = 2.0) -> list[FrameSample]:
+    """Samples sintéticos ao longo de [0, DURATION] com motion dado por t."""
+    n = int(DURATION * fps)
+    return [FrameSample(t=i / fps, motion=motion_fn(i / fps), persons=None) for i in range(n)]
+
+
+def test_still_person_shot_becomes_wide():
+    # Set agitado com um trecho que "morre" no fim (dançou e parou): nenhum
+    # shot de pessoa deve segurar na região parada — vira wide de respiro.
+    wv = _wv()
+    wv.samples = _samples(lambda t: 0.05 if t < 40.0 else 0.001)
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=5.0
+    )
+    _assert_invariants(shots)
+    # Bem dentro da região morta (sem punch aqui) só cabe wide.
+    dead = [s for s in shots if s.t0 >= 45.0]
+    assert dead, "esperava shots na região morta"
+    assert all(s.kind == "wide" for s in dead)
+    # A região agitada ainda mostra o protagonista.
+    assert any(s.kind == "dj" for s in shots if s.t1 <= 40.0)
+
+
+def test_still_degradation_disabled_keeps_person(monkeypatch):
+    monkeypatch.setattr(settings, "dynamic_still_activity_ratio", 0.0)
+    wv = _wv()
+    wv.samples = _samples(lambda t: 0.05 if t < 40.0 else 0.001)
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=5.0
+    )
+    _assert_invariants(shots)
+    # Sem o respiro reativo, a região parada volta a segurar zoom em pessoa.
+    assert any(s.kind in ("dj", "crowd") for s in shots if s.t0 >= 45.0)
+
+
+def test_no_samples_leaves_kinds_untouched():
+    # Sem análise de movimento (visual off), nada de respiro reativo: a rotação
+    # segue igual à heurística pura.
+    wv = _wv()  # samples vazios
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=5.0
+    )
+    _assert_invariants(shots)
+    assert any(s.kind == "dj" for s in shots)
+
+
+def test_high_activity_gives_tighter_take():
+    # Punch-in num trecho MUITO agitado fecha mais que o mesmo punch num
+    # trecho calmo (crop menor = mais zoom). Pessoa pequena → o teto de zoom é
+    # o fator limitante, então o bônus fica visível no crop.
+    calm = _small_dj_wv()
+    calm.samples = _samples(lambda t: 0.03)
+    hot = _small_dj_wv()
+    hot.samples = _samples(lambda t: 0.12 if 28.0 <= t <= 40.0 else 0.03)
+
+    shots_calm = build_shot_plan(
+        calm, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    shots_hot = build_shot_plan(
+        hot, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    punch_calm = next(s for s in shots_calm if math.isclose(s.t0, 30.0, abs_tol=1e-6))
+    punch_hot = next(s for s in shots_hot if math.isclose(s.t0, 30.0, abs_tol=1e-6))
+    _wc, hc, _xc, _yc = punch_calm.crop
+    _wh, hh, _xh, _yh = punch_hot.crop
+    assert hh < hc  # trecho agitado fecha mais
+
+
+def test_solo_protagonist_still_gets_wide_breather():
+    # Só o DJ (sem público nem dançarino): a rotação ainda intercala um wide
+    # de respiro, em vez de ficar 100% colada nele.
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.4
+    wv.dj_box = Box(cx=0.5, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H
+    )
+    _assert_invariants(shots)
+    kinds = {s.kind for s in shots}
+    assert "dj" in kinds and "wide" in kinds
 
 
 def test_ai_dancer_box_fills_in_without_yolo_dancer():

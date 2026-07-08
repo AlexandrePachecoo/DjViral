@@ -86,6 +86,26 @@ export default function Studio() {
     setTab("gerador");
   }
 
+  async function handleDeleteCut(projectId: string, cutId: string) {
+    const res = await fetch(`/api/projects/${projectId}/cuts/${cutId}`, { method: "DELETE" });
+    if (!res.ok) return false;
+    setSavedFolders((prev) =>
+      prev
+        .map((f) =>
+          f.projectId === projectId ? { ...f, cuts: f.cuts.filter((c) => c.id !== cutId) } : f
+        )
+        .filter((f) => f.cuts.length > 0)
+    );
+    return true;
+  }
+
+  async function handleDeleteFolder(projectId: string) {
+    const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+    if (!res.ok) return false;
+    setSavedFolders((prev) => prev.filter((f) => f.projectId !== projectId));
+    return true;
+  }
+
   return (
     <div
       style={{
@@ -115,7 +135,14 @@ export default function Studio() {
             onUpgrade={() => setTab("plano")}
           />
         )}
-        {tab === "salvos" && <SavedView folders={savedFolders} showScore={showScore} />}
+        {tab === "salvos" && (
+          <SavedView
+            folders={savedFolders}
+            showScore={showScore}
+            onDeleteCut={handleDeleteCut}
+            onDeleteFolder={handleDeleteFolder}
+          />
+        )}
         {tab === "plano" && <PlanView />}
         {tab === "perfil" && (
           <ProfileView
