@@ -9,6 +9,8 @@ import type { SavedFolder } from "./types";
 type Props = {
   folders: SavedFolder[];
   showScore: boolean;
+  onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
+  onDeleteFolder: (projectId: string) => Promise<boolean>;
 };
 
 // Botão de download (âncora real; o `?download=` do Supabase força o attachment).
@@ -33,6 +35,88 @@ function DownloadLink({ cut }: { cut: Cut }) {
     >
       Baixar
     </a>
+  );
+}
+
+// Botão de apagar um corte, com confirmação em duas etapas (sem window.confirm).
+function CutDeleteButton({
+  projectId,
+  cutId,
+  onDeleteCut,
+}: {
+  projectId: string;
+  cutId: string;
+  onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (confirm) {
+    return (
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            const ok = await onDeleteCut(projectId, cutId);
+            if (!ok) {
+              setBusy(false);
+              setConfirm(false);
+            }
+          }}
+          style={{
+            padding: "9px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#fff",
+            background: "#dc2626",
+            border: "none",
+            cursor: busy ? "default" : "pointer",
+            opacity: busy ? 0.6 : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {busy ? "..." : "Confirmar"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setConfirm(false)}
+          style={{
+            padding: "9px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            color: theme.textSecondary,
+            background: theme.surface,
+            border: `1px solid ${theme.borderStrong}`,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Cancelar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setConfirm(true)}
+      title="Apagar corte"
+      style={{
+        padding: "9px 12px",
+        borderRadius: 8,
+        fontSize: 13,
+        color: "#dc2626",
+        background: theme.surface,
+        border: `1px solid ${theme.borderStrong}`,
+        cursor: "pointer",
+      }}
+    >
+      🗑
+    </button>
   );
 }
 
@@ -201,14 +285,53 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
   );
 }
 
-function FolderSection({ folder, showScore }: { folder: SavedFolder; showScore: boolean }) {
+function FolderSection({
+  folder,
+  showScore,
+  onDeleteCut,
+  onDeleteFolder,
+}: {
+  folder: SavedFolder;
+  showScore: boolean;
+  onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
+  onDeleteFolder: (projectId: string) => Promise<boolean>;
+}) {
   const [shareOpen, setShareOpen] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const shared = !!folder.shareToken;
 
   return (
     <section>
       {/* Cabeçalho da pasta */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Recolher pasta" : "Expandir pasta"}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 4,
+            color: theme.textMuted,
+            display: "flex",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              fontSize: 14,
+              transition: "transform .15s",
+              transform: expanded ? "rotate(90deg)" : "none",
+            }}
+          >
+            ▸
+          </span>
+        </button>
         <div
           style={{
             width: 38,
@@ -230,62 +353,115 @@ function FolderSection({ folder, showScore }: { folder: SavedFolder; showScore: 
             {folder.cuts.length} corte{folder.cuts.length > 1 ? "s" : ""} salvo{folder.cuts.length > 1 ? "s" : ""}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setShareOpen((v) => !v)}
-          style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
-        >
-          {shared ? "🔗 Compartilhado" : "🔗 Compartilhar"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={() => setShareOpen((v) => !v)}
+            style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
+          >
+            {shared ? "🔗 Compartilhado" : "🔗 Compartilhar"}
+          </button>
+          {!confirmDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              style={{ ...btnGhost, padding: "7px 13px", fontSize: 12, color: "#dc2626" }}
+            >
+              🗑 Apagar set
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleting(true);
+                  const ok = await onDeleteFolder(folder.projectId);
+                  if (!ok) {
+                    setDeleting(false);
+                    setConfirmDelete(false);
+                  }
+                }}
+                style={{
+                  padding: "7px 13px",
+                  borderRadius: 9,
+                  fontSize: 12,
+                  color: "#fff",
+                  background: "#dc2626",
+                  border: "none",
+                  cursor: deleting ? "default" : "pointer",
+                  opacity: deleting ? 0.6 : 1,
+                }}
+              >
+                {deleting ? "..." : "Confirmar"}
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(false)}
+                style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
+              >
+                Cancelar
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {shareOpen && <SharePanel folder={folder} />}
 
       {/* Cortes da pasta */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
-        {folder.cuts.map((cut) => (
-          <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
-            <div style={{ position: "relative", background: "#000" }}>
-              <video
-                src={cut.url}
-                controls
-                playsInline
-                preload="metadata"
-                style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
-              />
-              {showScore && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 13,
-                    right: 14,
-                    font: `600 15px ${font.display}`,
-                    color: scoreColor(cut.score),
-                    background: "rgba(255,255,255,.85)",
-                    padding: "2px 7px",
-                    borderRadius: 7,
-                    pointerEvents: "none",
-                  }}
-                >
-                  {cut.score}
-                </div>
-              )}
-            </div>
-            <div style={{ padding: 14 }}>
-              <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
-              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-                {cut.dur} · no set · {cut.moment}
+      {expanded && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+          {folder.cuts.map((cut) => (
+            <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
+              <div style={{ position: "relative", background: "#000" }}>
+                <video
+                  src={cut.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
+                />
+                {showScore && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 13,
+                      right: 14,
+                      font: `600 15px ${font.display}`,
+                      color: scoreColor(cut.score),
+                      background: "rgba(255,255,255,.85)",
+                      padding: "2px 7px",
+                      borderRadius: 7,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {cut.score}
+                  </div>
+                )}
               </div>
-              <DownloadLink cut={cut} />
+              <div style={{ padding: 14 }}>
+                <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
+                  {cut.dur} · no set · {cut.moment}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <DownloadLink cut={cut} />
+                  </div>
+                  <CutDeleteButton projectId={folder.projectId} cutId={cut.id} onDeleteCut={onDeleteCut} />
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
-export function SavedView({ folders, showScore }: Props) {
+export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder }: Props) {
   if (folders.length === 0) {
     return (
       <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
@@ -309,7 +485,13 @@ export function SavedView({ folders, showScore }: Props) {
   return (
     <div style={{ animation: "dj-fadeUp .4s ease", display: "flex", flexDirection: "column", gap: 34 }} data-anim>
       {folders.map((folder) => (
-        <FolderSection key={folder.projectId} folder={folder} showScore={showScore} />
+        <FolderSection
+          key={folder.projectId}
+          folder={folder}
+          showScore={showScore}
+          onDeleteCut={onDeleteCut}
+          onDeleteFolder={onDeleteFolder}
+        />
       ))}
     </div>
   );
