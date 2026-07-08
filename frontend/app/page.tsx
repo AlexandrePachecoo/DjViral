@@ -1,3 +1,4 @@
+import Image from "next/image";
 import styles from "./page.module.css";
 
 // Deterministic waveform bars (layered sines) so the timeline reads like a
@@ -129,6 +130,14 @@ export default function Landing() {
             <div className={styles.cutZone}>
               {/* preview */}
               <div className={styles.preview}>
+                <Image
+                  src="/images/dj-preview.webp"
+                  alt=""
+                  fill
+                  sizes="(max-width: 900px) 100vw, 848px"
+                  className={styles.previewImg}
+                  priority
+                />
                 <div className={styles.previewOverlay} />
                 <div className={styles.playBadge} data-anim>
                   <span className={styles.playGlyph}>▶</span>
@@ -143,6 +152,13 @@ export default function Landing() {
 
               {/* timeline */}
               <div className={styles.timeline}>
+                <Image
+                  src="/images/dj-preview.webp"
+                  alt=""
+                  fill
+                  sizes="(max-width: 900px) 100vw, 848px"
+                  className={styles.timelineImg}
+                />
                 <div className={styles.timelineOverlay} />
                 {SEGMENTS.map((s, i) => (
                   <div
