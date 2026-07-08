@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { generateShareToken } from "@/lib/share";
 
 // Compartilhamento público de um set. Só o dono do projeto gera/revoga o link e
 // define a mensagem exibida no topo da página pública (/s/<token>). A leitura
@@ -67,7 +67,7 @@ export async function POST(
 
   const { data: project } = await supabaseAdmin
     .from("projects")
-    .select("id, user_id, share_token")
+    .select("id, user_id, name, share_token")
     .eq("id", params.id)
     .single();
   if (!project || project.user_id !== user.id) {
@@ -79,8 +79,10 @@ export async function POST(
 
   if (typeof body.enabled === "boolean") {
     if (body.enabled) {
-      // Mantém o token existente (link estável) ou gera um novo ao ativar.
-      update.share_token = project.share_token ?? randomBytes(12).toString("base64url");
+      // Mantém o token existente (link estável) ou gera um novo a partir do
+      // nome da pasta ao ativar.
+      update.share_token =
+        project.share_token ?? (await generateShareToken(project.name));
     } else {
       update.share_token = null;
     }
