@@ -1,16 +1,21 @@
 "use client";
 
-// Editor visual de um corte: timeline sobre o SET ORIGINAL (o usuário pode
-// encurtar/estender o trecho além do que a IA escolheu), preview do vídeo no
-// tamanho original com a janela 9:16 (TikTok) sobreposta e arrastável, zoom
-// livre e keyframes de câmera (pan + zoom interpolados com easing — o mesmo
-// smoothstep que o worker usa no render, ver backend/app/clipper.py).
+// Editor visual de um corte, no estilo CapCut/edits: workspace ESCURO com o
+// preview 9:16 no centro (o canvas É o resultado final — o usuário arrasta o
+// PRÓPRIO VÍDEO dentro do quadro e controla o zoom com slider/scroll, como no
+// CapCut), minimap com o frame original no canto, painel de propriedades à
+// direita e uma timeline embaixo com régua de timecodes, filmstrip de
+// miniaturas do set, alças de trim e keyframes como losangos na trilha.
 //
-// Salvar dispara POST /recut com {inicio, fim, keyframes}; o worker regenera o
-// vídeo com a direção manual e persiste os keyframes em `cuts.crop_keyframes`.
+// O usuário pode encurtar/estender o trecho além do que a IA escolheu (o
+// trecho original fica marcado na régua). Keyframes de câmera ({t, cx, cy,
+// zoom}) interpolam com o MESMO smoothstep do worker (backend/app/clipper.py),
+// então o preview bate com o render. Salvar dispara POST /recut
+// {inicio, fim, keyframes}; o worker regenera o vídeo e persiste os keyframes
+// em `cuts.crop_keyframes`.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { theme, font, btnPrimary, btnGhost } from "./theme";
+import { theme, font } from "./theme";
 import { type Cut } from "./data";
 import {
   type ApiCut,
@@ -38,6 +43,23 @@ const MIN_DUR = 3; // duração mínima do corte (s)
 const MAX_DUR = 180; // duração máxima do corte (s)
 const ZOOM_MAX = 4;
 const KF_EPS = 0.2; // keyframe "no playhead" dentro desta tolerância (s)
+const THUMB_COUNT = 14; // miniaturas do filmstrip por janela visível
+
+// Paleta do workspace do editor (escuro, estilo CapCut) — o resto do estúdio
+// continua claro; só o editor vive neste contexto.
+const dk = {
+  bg: "#101013",
+  panel: "#18181c",
+  panel2: "#1f1f24",
+  border: "#2a2a30",
+  borderSoft: "#232329",
+  text: "#f4f4f5",
+  sub: "#9d9da6",
+  faint: "#6b6b74",
+  track: "#26262c",
+  accent: theme.accent,
+  accentSoft: "rgba(124,58,237,.18)",
+} as const;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
@@ -95,6 +117,13 @@ function sameKfs(a: CropKeyframe[], b: CropKeyframe[]): boolean {
   );
 }
 
+// Passo "redondo" da régua de timecodes para ~8 marcações na janela visível.
+function rulerStep(span: number): number {
+  const target = span / 8;
+  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  return steps.find((s) => s >= target) ?? 3600;
+}
+
 export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) {
   const [title, setTitle] = useState(cut.title);
   const [start, setStart] = useState(cut.startSec);
@@ -108,17 +137,26 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   const [curT, setCurT] = useState(cut.startSec);
   const [playing, setPlaying] = useState(false);
   const [view, setView] = useState<{ v0: number; v1: number } | null>(null);
+  const [thumbs, setThumbs] = useState<string[]>([]); // filmstrip da janela visível
+  const [thumbReady, setThumbReady] = useState(false); // vídeo gerador carregou
+  const [draggingCanvas, setDraggingCanvas] = useState(false);
+  const [canvasW, setCanvasW] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [msg, setMsg] = useState("");
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const pvRef = useRef<HTMLVideoElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // vídeo do canvas (com áudio)
+  const mapRef = useRef<HTMLVideoElement>(null); // minimap (frame original, mudo)
+  const thumbVidRef = useRef<HTMLVideoElement>(null); // gerador do filmstrip (oculto)
+  const canvasRef = useRef<HTMLDivElement>(null);
   const tlRef = useRef<HTMLDivElement>(null);
-  // Drag em andamento: offset do agarre da janela 9:16 (frações da fonte) ou
-  // o alvo do drag na timeline.
-  const boxDrag = useRef<{ dx: number; dy: number } | null>(null);
+  const canvasDrag = useRef<{
+    px: number;
+    py: number;
+    cx: number;
+    cy: number;
+  } | null>(null);
   const tlDrag = useRef<"start" | "end" | "scrub" | null>(null);
+  const thumbGen = useRef(0); // invalida gerações concorrentes do filmstrip
 
   const saving = saveState === "saving";
 
@@ -130,6 +168,8 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     setKfs([]);
     setInitialKfs([]);
     setView(null);
+    setThumbs([]);
+    setThumbReady(false);
     setTitle(cut.title);
     setStart(cut.startSec);
     setEnd(cut.endSec);
@@ -190,19 +230,29 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     return d > 0 ? d : Math.max(end + 300, cut.endSec + 300);
   }, [source, end, cut.endSec]);
 
-  // Janela visível inicial da timeline: o corte ± 1 min.
+  // Janela visível inicial da timeline: o corte ± 45 s.
   useEffect(() => {
     if (source && !view) {
       setView({
-        v0: Math.max(0, cut.startSec - 60),
-        v1: Math.min(maxT, cut.endSec + 60),
+        v0: Math.max(0, cut.startSec - 45),
+        v1: Math.min(maxT, cut.endSec + 45),
       });
     }
   }, [source, view, cut.startSec, cut.endSec, maxT]);
 
   const hasSource = !!source?.url;
 
-  // ===== Loop de sincronização (playhead + preview TikTok + loop do trecho) =====
+  // Largura real do canvas 9:16 (para converter arrasto em px da fonte).
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setCanvasW(el.clientWidth));
+    ro.observe(el);
+    setCanvasW(el.clientWidth);
+    return () => ro.disconnect();
+  }, [source]);
+
+  // ===== Loop de sincronização (playhead + minimap + loop do trecho) =====
   useEffect(() => {
     if (!hasSource) return;
     let raf = 0;
@@ -214,13 +264,13 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
         if (!v.paused && t >= end - 0.02) v.currentTime = start;
         setCurT(v.currentTime);
         setPlaying(!v.paused);
-        const pv = pvRef.current;
-        if (pv) {
-          if (Math.abs(pv.currentTime - v.currentTime) > 0.25) {
-            pv.currentTime = v.currentTime;
+        const m = mapRef.current;
+        if (m) {
+          if (Math.abs(m.currentTime - v.currentTime) > 0.3) {
+            m.currentTime = v.currentTime;
           }
-          if (v.paused && !pv.paused) pv.pause();
-          if (!v.paused && pv.paused) pv.play().catch(() => {});
+          if (v.paused && !m.paused) m.pause();
+          if (!v.paused && m.paused) m.play().catch(() => {});
         }
       }
       raf = requestAnimationFrame(tick);
@@ -284,72 +334,108 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     });
   }
 
-  function removeKf(idx: number) {
-    setKfs((prev) => prev.filter((_, i) => i !== idx));
+  // Botão ◆ estilo CapCut: adiciona keyframe no playhead, ou remove o que já
+  // está sob o playhead.
+  function toggleKfAtPlayhead() {
+    if (activeKf !== -1) setKfs((prev) => prev.filter((_, i) => i !== activeKf));
+    else updateKfAtPlayhead({});
   }
 
-  // ===== Drag da janela 9:16 sobre o vídeo original =====
-  function stageFrac(e: React.PointerEvent): { px: number; py: number } {
-    const rect = stageRef.current!.getBoundingClientRect();
-    return {
-      px: clamp((e.clientX - rect.left) / rect.width, 0, 1),
-      py: clamp((e.clientY - rect.top) / rect.height, 0, 1),
-    };
-  }
+  // ===== Canvas: arrastar o VÍDEO dentro do quadro 9:16 (estilo CapCut) =====
+  const rect = vidDims ? cropRect(crop, vidDims.w, vidDims.h) : null;
 
-  function onBoxDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (!vidDims || saving) return;
+  function onCanvasDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!vidDims || !rect || saving) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     videoRef.current?.pause();
-    const { px, py } = stageFrac(e);
-    const r = cropRect(crop, vidDims.w, vidDims.h);
-    boxDrag.current = {
-      dx: px - (r.x + r.w / 2) / vidDims.w,
-      dy: py - (r.y + r.h / 2) / vidDims.h,
-    };
+    canvasDrag.current = { px: e.clientX, py: e.clientY, cx: crop.cx, cy: crop.cy };
+    setDraggingCanvas(true);
   }
 
-  function onBoxMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!boxDrag.current || !vidDims) return;
-    const { px, py } = stageFrac(e);
-    updateKfAtPlayhead({
-      cx: clamp(px - boxDrag.current.dx, 0, 1),
-      cy: clamp(py - boxDrag.current.dy, 0, 1),
-    });
+  function onCanvasMove(e: React.PointerEvent<HTMLDivElement>) {
+    const d = canvasDrag.current;
+    if (!d || !vidDims || !rect || canvasW <= 0) return;
+    // px do canvas → px da fonte (a janela do crop preenche o canvas).
+    const f = rect.w / canvasW;
+    // Arrastar o vídeo para a direita move a janela para a ESQUERDA.
+    const ncx = d.cx - ((e.clientX - d.px) * f) / vidDims.w;
+    const ncy = d.cy - ((e.clientY - d.py) * f) / vidDims.h;
+    updateKfAtPlayhead({ cx: clamp(ncx, 0, 1), cy: clamp(ncy, 0, 1) });
   }
 
-  function onBoxUp(e: React.PointerEvent<HTMLDivElement>) {
-    boxDrag.current = null;
+  function onCanvasUp(e: React.PointerEvent<HTMLDivElement>) {
+    canvasDrag.current = null;
+    setDraggingCanvas(false);
     e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
+  // Scroll no canvas = zoom. Listener manual (React marca wheel como passive,
+  // e precisamos de preventDefault); o handler real vive num ref para o efeito
+  // não ser recriado a cada frame de playback.
+  const wheelRef = useRef<(dy: number) => void>(() => {});
+  wheelRef.current = (dy: number) => {
+    if (saving) return;
+    const z = clamp(cropAt(kfs, curT).zoom * (1 - dy * 0.0012), 1, ZOOM_MAX);
+    updateKfAtPlayhead({ zoom: z });
+  };
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || !hasSource) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      wheelRef.current(e.deltaY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [hasSource, source]);
+
+  // Minimap: clicar/arrastar reposiciona a janela direto no frame original.
+  function onMapPoint(e: React.PointerEvent<HTMLDivElement>) {
+    if (!vidDims || saving) return;
+    if (e.type === "pointerdown") {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      videoRef.current?.pause();
+    } else if (e.buttons === 0) {
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    updateKfAtPlayhead({
+      cx: clamp((e.clientX - r.left) / r.width, 0, 1),
+      cy: clamp((e.clientY - r.top) / r.height, 0, 1),
+    });
+  }
+
   // ===== Timeline =====
+  const v = view ?? { v0: Math.max(0, start - 45), v1: Math.min(maxT, end + 45) };
+  const span = Math.max(1e-6, v.v1 - v.v0);
+  const toPct = (t: number) => `${clamp(((t - v.v0) / span) * 100, 0, 100)}%`;
+
   function tlTime(e: React.PointerEvent): number {
-    const rect = tlRef.current!.getBoundingClientRect();
-    const f = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-    const v = view ?? { v0: 0, v1: maxT };
-    return v.v0 + f * (v.v1 - v.v0);
+    const r = tlRef.current!.getBoundingClientRect();
+    const f = clamp((e.clientX - r.left) / r.width, 0, 1);
+    return v.v0 + f * span;
   }
 
   function onTlDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (saving || !view) return;
+    if (saving) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     videoRef.current?.pause();
-    const t = tlTime(e);
-    // Perto de um handle (em px) pega o handle; senão faz scrub do playhead.
-    const rect = tlRef.current!.getBoundingClientRect();
-    const pxPerSec = rect.width / (view.v1 - view.v0);
-    const dStart = Math.abs(t - start) * pxPerSec;
-    const dEnd = Math.abs(t - end) * pxPerSec;
-    if (dStart < 12 && dStart <= dEnd) tlDrag.current = "start";
-    else if (dEnd < 12) tlDrag.current = "end";
-    else {
-      tlDrag.current = "scrub";
-      seek(t);
-    }
-    onTlMove(e);
+    tlDrag.current = "scrub";
+    seek(tlTime(e));
+  }
+
+  function onHandleDown(which: "start" | "end") {
+    return (e: React.PointerEvent<HTMLDivElement>) => {
+      if (saving) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Captura no CONTAINER da timeline (a alça se move sob o ponteiro).
+      tlRef.current?.setPointerCapture(e.pointerId);
+      videoRef.current?.pause();
+      tlDrag.current = which;
+    };
   }
 
   function onTlMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -374,12 +460,12 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   }
 
   function zoomView(factor: number) {
-    setView((v) => {
-      if (!v) return v;
+    setView((prev) => {
+      const cur = prev ?? v;
       const center = clamp(curT, start, end);
-      let span = clamp((v.v1 - v.v0) * factor, Math.max(20, end - start + 6), maxT);
-      let v0 = center - span / 2;
-      let v1 = center + span / 2;
+      let s = clamp((cur.v1 - cur.v0) * factor, Math.max(12, end - start + 4), maxT);
+      let v0 = center - s / 2;
+      let v1 = center + s / 2;
       if (v0 < 0) {
         v1 = Math.min(maxT, v1 - v0);
         v0 = 0;
@@ -399,6 +485,51 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
       setEnd((e) => clamp(e + delta, start + MIN_DUR, Math.min(maxT, start + MAX_DUR)));
     }
   }
+
+  // ===== Filmstrip: miniaturas do set na janela visível da timeline =====
+  useEffect(() => {
+    if (!hasSource || !thumbReady) return;
+    const gen = ++thumbGen.current;
+    const timer = setTimeout(async () => {
+      const vid = thumbVidRef.current;
+      if (!vid || vid.readyState === 0) return;
+      const vw = vid.videoWidth;
+      const vh = vid.videoHeight;
+      if (!vw || !vh) return;
+      const cv = document.createElement("canvas");
+      const th = 54;
+      const tw = Math.max(24, Math.round((th * vw) / vh));
+      cv.width = tw;
+      cv.height = th;
+      const ctx = cv.getContext("2d");
+      if (!ctx) return;
+      const list: string[] = [];
+      try {
+        for (let i = 0; i < THUMB_COUNT; i++) {
+          if (thumbGen.current !== gen) return; // janela mudou — aborta
+          const t = v.v0 + ((i + 0.5) / THUMB_COUNT) * span;
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              vid.removeEventListener("seeked", done);
+              resolve();
+            };
+            vid.addEventListener("seeked", done);
+            vid.currentTime = clamp(t, 0, Math.max(0, maxT - 0.1));
+            setTimeout(done, 1500); // não trava o strip se o seek engasgar
+          });
+          if (thumbGen.current !== gen) return;
+          ctx.drawImage(vid, 0, 0, tw, th);
+          list.push(cv.toDataURL("image/jpeg", 0.55));
+        }
+        if (thumbGen.current === gen) setThumbs(list);
+      } catch {
+        // canvas "tainted" (CORS) ou seek falhou → trilha lisa, sem thumbs.
+        if (thumbGen.current === gen) setThumbs([]);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSource, thumbReady, v.v0, v.v1, maxT]);
 
   // ===== Salvar =====
   const titleChanged = title.trim() !== cut.title && title.trim() !== "";
@@ -487,14 +618,12 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     }
   }
 
-  // ===== Geometrias derivadas para o render =====
-  const rect = vidDims ? cropRect(crop, vidDims.w, vidDims.h) : null;
-  const PW = 232; // largura do preview TikTok (px)
-  const PH = (PW * 16) / 9;
-  const pvStyle: React.CSSProperties | null =
-    vidDims && rect
+  // Transform do vídeo dentro do canvas 9:16 (a janela do crop preenche o
+  // canvas — arrastar o vídeo reposiciona a janela).
+  const videoStyle: React.CSSProperties | null =
+    vidDims && rect && canvasW > 0
       ? (() => {
-          const k = PW / rect.w;
+          const k = canvasW / rect.w;
           return {
             position: "absolute",
             width: vidDims.w * k,
@@ -507,73 +636,114 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
         })()
       : null;
 
-  const v = view ?? { v0: Math.max(0, start - 60), v1: Math.min(maxT, end + 60) };
-  const span = Math.max(1e-6, v.v1 - v.v0);
-  const toPct = (t: number) => `${clamp(((t - v.v0) / span) * 100, 0, 100)}%`;
+  const step = rulerStep(span);
+  const rulerMarks: number[] = [];
+  for (let t = Math.ceil(v.v0 / step) * step; t <= v.v1 + 1e-6; t += step) {
+    rulerMarks.push(t);
+  }
 
   return (
-    <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
+    <div
+      data-anim
+      style={{
+        animation: "dj-fadeUp .4s ease",
+        background: dk.bg,
+        border: `1px solid ${dk.border}`,
+        borderRadius: 18,
+        overflow: "hidden",
+        color: dk.text,
+      }}
+    >
       {/* ===== Topbar ===== */}
       <div
         className="dj-editor-topbar"
-        style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 16px",
+          borderBottom: `1px solid ${dk.borderSoft}`,
+          background: dk.panel,
+        }}
       >
-        <div
+        <button
+          type="button"
           onClick={saving ? undefined : onBack}
+          aria-label="Voltar"
           style={{
-            width: 40,
-            height: 40,
-            borderRadius: 10,
-            background: theme.surface,
-            border: `1px solid ${theme.borderStrong}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            width: 34,
+            height: 34,
+            borderRadius: 9,
+            background: dk.panel2,
+            border: `1px solid ${dk.border}`,
+            color: dk.sub,
             cursor: saving ? "default" : "pointer",
             opacity: saving ? 0.5 : 1,
-            color: theme.textSecondary,
             flexShrink: 0,
           }}
         >
           ←
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: theme.textMuted }}>
-            Editando corte{setName ? ` · ${setName}` : ""}
-          </div>
+        </button>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            disabled={saving}
+            maxLength={120}
+            placeholder="Nome do corte"
+            aria-label="Título do corte"
+            style={{
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              color: dk.text,
+              font: `500 16px ${font.display}`,
+              padding: 0,
+            }}
+          />
           <div
             style={{
-              font: `500 20px ${font.display}`,
+              fontSize: 11,
+              color: dk.faint,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
           >
-            {cut.title}
+            {setName || "Editor"} · {formatTimecode(start)} → {formatTimecode(end)} ·{" "}
+            {(end - start).toFixed(1)}s
           </div>
         </div>
-        <div
+        <button
+          type="button"
           onClick={handleSave}
           style={{
-            ...btnPrimary,
-            opacity: saving || !dirty ? 0.55 : 1,
+            padding: "9px 18px",
+            borderRadius: 9,
+            border: "none",
+            background: dk.accent,
+            color: "#fff",
+            font: `500 13px ${font.body}`,
             cursor: saving || !dirty ? "default" : "pointer",
+            opacity: saving || !dirty ? 0.5 : 1,
+            whiteSpace: "nowrap",
           }}
         >
-          {saving ? "Salvando..." : "Salvar corte"}
-        </div>
+          {saving ? "Exportando..." : "Salvar corte"}
+        </button>
       </div>
 
       {msg && (
         <div
           style={{
-            marginBottom: 16,
-            padding: "10px 14px",
-            borderRadius: 10,
+            margin: "12px 16px 0",
+            padding: "9px 13px",
+            borderRadius: 9,
             fontSize: 13,
-            background: saveState === "error" ? "#fef2f2" : theme.accentSoft,
-            color: saveState === "error" ? "#dc2626" : theme.accent,
-            border: `1px solid ${saveState === "error" ? "#fecaca" : theme.accentBorder}`,
+            background: saveState === "error" ? "rgba(220,38,38,.12)" : dk.accentSoft,
+            color: saveState === "error" ? "#f87171" : "#c4b5fd",
+            border: `1px solid ${saveState === "error" ? "rgba(220,38,38,.35)" : "rgba(124,58,237,.4)"}`,
           }}
         >
           {msg}
@@ -581,17 +751,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
       )}
 
       {source === null ? (
-        <div
-          style={{
-            padding: "60px 24px",
-            textAlign: "center",
-            borderRadius: 14,
-            background: theme.surface,
-            border: `1px solid ${theme.border}`,
-            color: theme.textMuted,
-            fontSize: 14,
-          }}
-        >
+        <div style={{ padding: "80px 24px", textAlign: "center", color: dk.sub, fontSize: 14 }}>
           Carregando o set original...
         </div>
       ) : (
@@ -599,13 +759,13 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
           {!hasSource && (
             <div
               style={{
-                marginBottom: 16,
-                padding: "10px 14px",
-                borderRadius: 10,
+                margin: "12px 16px 0",
+                padding: "9px 13px",
+                borderRadius: 9,
                 fontSize: 13,
-                background: "#fffbeb",
-                color: "#b45309",
-                border: "1px solid #fde68a",
+                background: "rgba(217,119,6,.12)",
+                color: "#fbbf24",
+                border: "1px solid rgba(217,119,6,.35)",
               }}
             >
               O vídeo original deste set não está disponível para pré-visualização
@@ -614,23 +774,46 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
             </div>
           )}
 
-          {/* ===== Grid: palco + painel lateral ===== */}
+          {/* ===== Workspace: canvas central + painel de propriedades ===== */}
           <div
             className="dj-editor-grid"
-            style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 264px", gap: 24 }}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) 252px",
+              gap: 0,
+              alignItems: "stretch",
+            }}
           >
-            {/* ---- Palco: vídeo original + janela 9:16 ---- */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+            {/* ---- Canvas 9:16 (o preview É o resultado) ---- */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                padding: "18px 16px",
+                minWidth: 0,
+              }}
+            >
               {hasSource ? (
                 <div
-                  ref={stageRef}
+                  ref={canvasRef}
+                  onPointerDown={onCanvasDown}
+                  onPointerMove={onCanvasMove}
+                  onPointerUp={onCanvasUp}
                   style={{
                     position: "relative",
-                    width: "100%",
-                    aspectRatio: vidDims ? `${vidDims.w} / ${vidDims.h}` : "16 / 9",
+                    height: "min(48vh, 520px)",
+                    aspectRatio: "9 / 16",
+                    maxWidth: "100%",
                     background: "#000",
-                    borderRadius: 14,
+                    borderRadius: 12,
                     overflow: "hidden",
+                    cursor: draggingCanvas ? "grabbing" : "grab",
+                    touchAction: "none",
+                    boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+                    border: `1px solid ${dk.border}`,
                   }}
                 >
                   <video
@@ -647,283 +830,95 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                         el.currentTime = cut.startSec;
                       }
                     }}
-                    onClick={togglePlay}
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      width: "100%",
-                      height: "100%",
-                      background: "#000",
-                    }}
+                    style={videoStyle ?? { width: "100%", height: "100%", objectFit: "cover" }}
                   />
-                  {/* Janela 9:16 arrastável; o resto do frame fica escurecido */}
+                  {/* Grade de terços enquanto arrasta (guia, estilo CapCut) */}
+                  {draggingCanvas && (
+                    <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                      {[1, 2].map((i) => (
+                        <div
+                          key={`v${i}`}
+                          style={{
+                            position: "absolute",
+                            left: `${(i * 100) / 3}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                            background: "rgba(255,255,255,.35)",
+                          }}
+                        />
+                      ))}
+                      {[1, 2].map((i) => (
+                        <div
+                          key={`h${i}`}
+                          style={{
+                            position: "absolute",
+                            top: `${(i * 100) / 3}%`,
+                            left: 0,
+                            right: 0,
+                            height: 1,
+                            background: "rgba(255,255,255,.35)",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Minimap: frame original com a janela atual (clique move) */}
                   {vidDims && rect && (
                     <div
-                      onPointerDown={onBoxDown}
-                      onPointerMove={onBoxMove}
-                      onPointerUp={onBoxUp}
+                      onPointerDown={onMapPoint}
+                      onPointerMove={onMapPoint}
                       style={{
                         position: "absolute",
-                        left: `${(rect.x / vidDims.w) * 100}%`,
-                        top: `${(rect.y / vidDims.h) * 100}%`,
-                        width: `${(rect.w / vidDims.w) * 100}%`,
-                        height: `${(rect.h / vidDims.h) * 100}%`,
-                        border: `2px solid ${theme.accentLight}`,
+                        right: 8,
+                        bottom: 8,
+                        width: 104,
+                        aspectRatio: `${vidDims.w} / ${vidDims.h}`,
                         borderRadius: 6,
-                        boxShadow: "0 0 0 9999px rgba(0,0,0,.45)",
-                        cursor: "move",
+                        overflow: "hidden",
+                        border: "1px solid rgba(255,255,255,.35)",
+                        background: "#000",
+                        cursor: "crosshair",
                         touchAction: "none",
+                        opacity: crop.zoom > 1.01 || draggingCanvas ? 1 : 0.45,
+                        transition: "opacity .2s",
                       }}
                     >
+                      <video
+                        ref={mapRef}
+                        src={source.url ?? undefined}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          pointerEvents: "none",
+                        }}
+                      />
                       <div
                         style={{
                           position: "absolute",
-                          left: "50%",
-                          bottom: 6,
-                          transform: "translateX(-50%)",
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          background: "rgba(0,0,0,.6)",
-                          color: "#fff",
-                          fontSize: 10,
-                          whiteSpace: "nowrap",
+                          left: `${(rect.x / vidDims.w) * 100}%`,
+                          top: `${(rect.y / vidDims.h) * 100}%`,
+                          width: `${(rect.w / vidDims.w) * 100}%`,
+                          height: `${(rect.h / vidDims.h) * 100}%`,
+                          border: `1.5px solid ${dk.accent}`,
+                          borderRadius: 2,
+                          boxShadow: "0 0 0 999px rgba(0,0,0,.5)",
                           pointerEvents: "none",
                         }}
-                      >
-                        ✥ arraste · {crop.zoom.toFixed(1)}×
-                      </div>
+                      />
                     </div>
-                  )}
-                </div>
-              ) : (
-                // Sem o original: mostra o corte atual só como referência.
-                <div
-                  style={{
-                    position: "relative",
-                    width: "100%",
-                    aspectRatio: "16 / 9",
-                    background: "#000",
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <video
-                    src={cut.url}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    style={{ height: "100%", background: "#000" }}
-                  />
-                </div>
-              )}
-
-              {/* ---- Transporte ---- */}
-              {hasSource && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={togglePlay}
-                    disabled={saving}
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: "50%",
-                      border: "none",
-                      background: theme.accent,
-                      color: "#fff",
-                      fontSize: 14,
-                      cursor: saving ? "default" : "pointer",
-                      flexShrink: 0,
-                    }}
-                    aria-label={playing ? "Pausar" : "Tocar"}
-                  >
-                    {playing ? "❚❚" : "▶"}
-                  </button>
-                  <span style={{ font: `500 14px ${font.display}`, color: theme.textPrimary }}>
-                    {formatTimecode(curT)}
-                  </span>
-                  <span style={{ fontSize: 12, color: theme.textMuted }}>
-                    trecho {formatTimecode(start)} → {formatTimecode(end)} ·{" "}
-                    {(end - start).toFixed(1)}s
-                  </span>
-                  <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <MiniBtn disabled={saving} onClick={() => nudge("start", curT - start)}>
-                      ⇤ Início aqui
-                    </MiniBtn>
-                    <MiniBtn disabled={saving} onClick={() => nudge("end", curT - end)}>
-                      Fim aqui ⇥
-                    </MiniBtn>
-                  </div>
-                </div>
-              )}
-
-              {/* ---- Timeline ---- */}
-              <div>
-                <div
-                  ref={tlRef}
-                  className="dj-tl"
-                  onPointerDown={onTlDown}
-                  onPointerMove={onTlMove}
-                  onPointerUp={onTlUp}
-                  style={{
-                    position: "relative",
-                    height: 72,
-                    borderRadius: 12,
-                    background: theme.surface,
-                    border: `1px solid ${theme.borderStrong}`,
-                    overflow: "hidden",
-                    cursor: "crosshair",
-                    touchAction: "none",
-                  }}
-                >
-                  {/* Trecho que a IA selecionou originalmente (referência) */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: toPct(cut.startSec),
-                      width: `calc(${toPct(cut.endSec)} - ${toPct(cut.startSec)})`,
-                      top: 0,
-                      bottom: 0,
-                      background: theme.surfaceMuted2,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  {/* Seleção atual */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: toPct(start),
-                      width: `calc(${toPct(end)} - ${toPct(start)})`,
-                      top: 0,
-                      bottom: 0,
-                      background: theme.accentSoft,
-                      borderLeft: `3px solid ${theme.accent}`,
-                      borderRight: `3px solid ${theme.accent}`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  {/* Keyframes */}
-                  {kfs.map((k, i) => (
-                    <div
-                      key={`${k.t}-${i}`}
-                      style={{
-                        position: "absolute",
-                        left: toPct(k.t),
-                        bottom: 6,
-                        width: 9,
-                        height: 9,
-                        transform: "translateX(-50%) rotate(45deg)",
-                        background: i === activeKf ? theme.accent : theme.accentLight,
-                        borderRadius: 2,
-                        pointerEvents: "none",
-                      }}
-                    />
-                  ))}
-                  {/* Playhead */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: toPct(curT),
-                      top: 0,
-                      bottom: 0,
-                      width: 2,
-                      background: theme.textPrimary,
-                      transform: "translateX(-50%)",
-                      pointerEvents: "none",
-                    }}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginTop: 8,
-                    fontSize: 11,
-                    color: theme.textMuted,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <span>{formatTimecode(v.v0)}</span>
-                  <div style={{ display: "flex", gap: 6, margin: "0 auto" }}>
-                    <MiniBtn disabled={saving} onClick={() => zoomView(0.55)}>
-                      🔍 +
-                    </MiniBtn>
-                    <MiniBtn disabled={saving} onClick={() => zoomView(1.8)}>
-                      🔍 −
-                    </MiniBtn>
-                    <MiniBtn
-                      disabled={saving}
-                      onClick={() => setView({ v0: 0, v1: maxT })}
-                    >
-                      Set inteiro
-                    </MiniBtn>
-                  </div>
-                  <span>{formatTimecode(v.v1)}</span>
-                </div>
-                <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 4 }}>
-                  arraste as bordas roxas para mudar início/fim (pode ir além do
-                  trecho que a IA escolheu) · clique na régua para navegar
-                </div>
-              </div>
-
-              {/* ---- Ajuste fino ---- */}
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                <FineRow label="Início" value={formatTimecode(start)} disabled={saving} onNudge={(d) => nudge("start", d)} />
-                <FineRow label="Fim" value={formatTimecode(end)} disabled={saving} onNudge={(d) => nudge("end", d)} />
-              </div>
-            </div>
-
-            {/* ---- Painel lateral: preview TikTok + câmera + título ---- */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 7 }}>
-                  Como vai ficar no TikTok
-                </div>
-                <div
-                  style={{
-                    position: "relative",
-                    width: PW,
-                    height: PH,
-                    borderRadius: 18,
-                    overflow: "hidden",
-                    background: "#000",
-                  }}
-                >
-                  {hasSource && pvStyle ? (
-                    <video
-                      ref={pvRef}
-                      src={source.url ?? undefined}
-                      muted
-                      playsInline
-                      preload="auto"
-                      style={pvStyle}
-                    />
-                  ) : (
-                    <video
-                      src={cut.url}
-                      controls={!hasSource}
-                      playsInline
-                      preload="metadata"
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        background: "#000",
-                      }}
-                    />
                   )}
                   {saving && (trimChanged || kfChanged) && (
                     <div
                       style={{
                         position: "absolute",
                         inset: 0,
-                        background: "rgba(0,0,0,.55)",
+                        background: "rgba(0,0,0,.6)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -937,192 +932,564 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     </div>
                   )}
                 </div>
-              </div>
-
-              {/* Câmera / zoom + keyframes */}
-              {hasSource && (
+              ) : (
                 <div
                   style={{
-                    borderRadius: 13,
-                    background: theme.surface,
-                    border: `1px solid ${theme.border}`,
+                    position: "relative",
+                    height: "min(48vh, 520px)",
+                    aspectRatio: "9 / 16",
+                    maxWidth: "100%",
+                    background: "#000",
+                    borderRadius: 12,
                     overflow: "hidden",
+                    border: `1px solid ${dk.border}`,
                   }}
                 >
-                  <div
+                  <video
+                    src={cut.url}
+                    controls
+                    playsInline
+                    preload="metadata"
                     style={{
-                      padding: "12px 14px",
-                      font: `500 14px ${font.display}`,
-                      borderBottom: `1px solid ${theme.borderHairline}`,
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
+                      position: "absolute",
+                      inset: 0,
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* ---- Transporte ---- */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={togglePlay}
+                  disabled={saving || !hasSource}
+                  aria-label={playing ? "Pausar" : "Tocar"}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: "50%",
+                    border: "none",
+                    background: dk.text,
+                    color: dk.bg,
+                    fontSize: 14,
+                    cursor: saving || !hasSource ? "default" : "pointer",
+                    opacity: saving || !hasSource ? 0.4 : 1,
+                  }}
+                >
+                  {playing ? "❚❚" : "▶"}
+                </button>
+                <span
+                  style={{
+                    font: `500 13px ${font.display}`,
+                    color: dk.text,
+                    minWidth: 110,
+                    textAlign: "center",
+                  }}
+                >
+                  {formatTimecode(curT)}{" "}
+                  <span style={{ color: dk.faint }}>/ {formatTimecode(maxT)}</span>
+                </span>
+                <DarkBtn disabled={saving} onClick={() => nudge("start", curT - start)}>
+                  ⇤ Início aqui
+                </DarkBtn>
+                <DarkBtn disabled={saving} onClick={() => nudge("end", curT - end)}>
+                  Fim aqui ⇥
+                </DarkBtn>
+                {hasSource && (
+                  <button
+                    type="button"
+                    onClick={toggleKfAtPlayhead}
+                    disabled={saving}
+                    title={activeKf !== -1 ? "Remover keyframe" : "Adicionar keyframe"}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 9,
+                      border: `1px solid ${activeKf !== -1 ? dk.accent : dk.border}`,
+                      background: activeKf !== -1 ? dk.accentSoft : dk.panel2,
+                      color: activeKf !== -1 ? "#c4b5fd" : dk.sub,
+                      fontSize: 13,
+                      cursor: saving ? "default" : "pointer",
                     }}
                   >
-                    <span>Câmera</span>
-                    <span style={{ fontSize: 11, color: theme.textMuted }}>
-                      {kfs.length} keyframe{kfs.length === 1 ? "" : "s"}
+                    ◆
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ---- Painel de propriedades ---- */}
+            <div
+              style={{
+                borderLeft: `1px solid ${dk.borderSoft}`,
+                background: dk.panel,
+                padding: 14,
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+                minWidth: 0,
+              }}
+            >
+              {hasSource && (
+                <div>
+                  <PanelLabel>Enquadramento</PanelLabel>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                      color: dk.sub,
+                      marginBottom: 5,
+                    }}
+                  >
+                    <span>Zoom</span>
+                    <span style={{ color: "#c4b5fd", fontWeight: 600 }}>
+                      {crop.zoom.toFixed(2)}×
                     </span>
                   </div>
-                  <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 12,
-                          color: theme.textTertiary,
-                          marginBottom: 5,
-                        }}
-                      >
-                        <span>Zoom</span>
-                        <span style={{ color: theme.accent, fontWeight: 600 }}>
-                          {crop.zoom.toFixed(2)}×
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={1}
-                        max={ZOOM_MAX}
-                        step={0.05}
-                        value={crop.zoom}
-                        disabled={saving}
-                        onChange={(e) => updateKfAtPlayhead({ zoom: Number(e.target.value) })}
-                        aria-label="Zoom da janela"
-                        style={{ width: "100%", accentColor: theme.accent }}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => updateKfAtPlayhead({})}
-                      style={{
-                        ...btnGhost,
-                        textAlign: "center",
-                        cursor: saving ? "default" : "pointer",
-                        opacity: saving ? 0.5 : 1,
-                      }}
-                    >
-                      ◆ Keyframe no playhead
-                    </button>
-
-                    {kfs.length > 0 && (
-                      <div
-                        className="dj-kf-list"
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                          maxHeight: 180,
-                          overflowY: "auto",
-                        }}
-                      >
-                        {kfs.map((k, i) => (
-                          <div
-                            key={`${k.t}-${i}`}
-                            onClick={() => !saving && seek(k.t)}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "6px 9px",
-                              borderRadius: 8,
-                              cursor: "pointer",
-                              fontSize: 12,
-                              background: i === activeKf ? theme.accentSoft : theme.surfaceInset,
-                              border: `1px solid ${
-                                i === activeKf ? theme.accentBorder : theme.borderHairline
-                              }`,
-                              color: theme.textSecondary,
-                            }}
-                          >
-                            <span style={{ color: theme.accent }}>◆</span>
-                            <span>{formatTimecode(k.t)}</span>
-                            <span style={{ color: theme.textMuted }}>
-                              {k.zoom.toFixed(1)}×
-                            </span>
-                            <span
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!saving) removeKf(i);
-                              }}
-                              aria-label="Remover keyframe"
-                              style={{
-                                marginLeft: "auto",
-                                color: theme.textMuted,
-                                padding: "0 4px",
-                              }}
-                            >
-                              ×
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {kfs.length > 0 && (
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => setKfs([])}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          fontSize: 12,
-                          color: "#dc2626",
-                          cursor: saving ? "default" : "pointer",
-                          padding: 0,
-                          textAlign: "left",
-                          fontFamily: font.body,
-                        }}
-                      >
-                        Limpar todos os keyframes
-                      </button>
-                    )}
-
-                    <div style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.5 }}>
-                      Arraste a janela sobre o vídeo (ou mexa no zoom) para criar um
-                      keyframe no ponto atual. Entre keyframes, a câmera se move
-                      suavemente de um enquadramento ao outro.
-                    </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={ZOOM_MAX}
+                    step={0.05}
+                    value={crop.zoom}
+                    disabled={saving}
+                    onChange={(e) => updateKfAtPlayhead({ zoom: Number(e.target.value) })}
+                    aria-label="Zoom da câmera"
+                    style={{ width: "100%", accentColor: dk.accent }}
+                  />
+                  <div style={{ fontSize: 11, color: dk.faint, marginTop: 6, lineHeight: 1.5 }}>
+                    Arraste o vídeo no preview (ou role o scroll) para enquadrar.
+                    Cada ajuste vira um keyframe ◆ no ponto atual.
                   </div>
                 </div>
               )}
 
-              {/* Título */}
-              <div>
-                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 7 }}>
-                  Título do corte
+              {hasSource && (
+                <div>
+                  <PanelLabel>
+                    Keyframes{" "}
+                    <span style={{ color: dk.faint, fontWeight: 400 }}>({kfs.length})</span>
+                  </PanelLabel>
+                  {kfs.length === 0 ? (
+                    <div style={{ fontSize: 12, color: dk.faint }}>
+                      Nenhum keyframe ainda — a câmera fica parada no centro.
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 5,
+                        maxHeight: 170,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {kfs.map((k, i) => (
+                        <div
+                          key={`${k.t}-${i}`}
+                          onClick={() => !saving && seek(k.t)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "6px 9px",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontSize: 12,
+                            background: i === activeKf ? dk.accentSoft : dk.panel2,
+                            border: `1px solid ${i === activeKf ? "rgba(124,58,237,.5)" : dk.borderSoft}`,
+                            color: dk.sub,
+                          }}
+                        >
+                          <span style={{ color: "#c4b5fd" }}>◆</span>
+                          <span style={{ color: dk.text }}>{formatTimecode(k.t)}</span>
+                          <span>{k.zoom.toFixed(1)}×</span>
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!saving) setKfs((prev) => prev.filter((_, j) => j !== i));
+                            }}
+                            aria-label="Remover keyframe"
+                            style={{ marginLeft: "auto", color: dk.faint, padding: "0 4px" }}
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {kfs.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setKfs([])}
+                      style={{
+                        marginTop: 8,
+                        background: "none",
+                        border: "none",
+                        fontSize: 12,
+                        color: "#f87171",
+                        cursor: saving ? "default" : "pointer",
+                        padding: 0,
+                        fontFamily: font.body,
+                      }}
+                    >
+                      Limpar todos os keyframes
+                    </button>
+                  )}
                 </div>
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  disabled={saving}
-                  maxLength={120}
-                  placeholder="Nome do corte"
+              )}
+
+              <div>
+                <PanelLabel>Trecho</PanelLabel>
+                <FineRow label="Início" value={formatTimecode(start)} disabled={saving} onNudge={(d) => nudge("start", d)} />
+                <div style={{ height: 8 }} />
+                <FineRow label="Fim" value={formatTimecode(end)} disabled={saving} onNudge={(d) => nudge("end", d)} />
+                <div style={{ fontSize: 11, color: dk.faint, marginTop: 8 }}>
+                  Duração: {(end - start).toFixed(1)}s (mín. {MIN_DUR}s · máx. {MAX_DUR}s)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ===== Timeline (dock inferior, estilo CapCut) ===== */}
+          <div
+            style={{
+              borderTop: `1px solid ${dk.borderSoft}`,
+              background: dk.panel,
+              padding: "10px 16px 14px",
+            }}
+          >
+            <div
+              ref={tlRef}
+              onPointerDown={onTlDown}
+              onPointerMove={onTlMove}
+              onPointerUp={onTlUp}
+              style={{
+                position: "relative",
+                userSelect: "none",
+                touchAction: "none",
+                cursor: "crosshair",
+              }}
+            >
+              {/* --- Régua de timecodes --- */}
+              <div
+                style={{
+                  position: "relative",
+                  height: 22,
+                  borderBottom: `1px solid ${dk.borderSoft}`,
+                  overflow: "hidden",
+                }}
+              >
+                {rulerMarks.map((t) => (
+                  <div
+                    key={t}
+                    style={{
+                      position: "absolute",
+                      left: toPct(t),
+                      top: 0,
+                      bottom: 0,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <div style={{ width: 1, height: 5, background: dk.faint }} />
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: dk.faint,
+                        transform: "translateX(3px)",
+                        whiteSpace: "nowrap",
+                        fontFamily: font.body,
+                      }}
+                    >
+                      {formatTimecode(t)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* --- Trilha com filmstrip --- */}
+              <div
+                style={{
+                  position: "relative",
+                  height: 58,
+                  marginTop: 8,
+                  borderRadius: 8,
+                  background: dk.track,
+                  overflow: "hidden",
+                }}
+              >
+                {/* Miniaturas do set (janela visível inteira) */}
+                {thumbs.length > 0 && (
+                  <div style={{ position: "absolute", inset: 0, display: "flex", pointerEvents: "none" }}>
+                    {thumbs.map((src, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={i}
+                        src={src}
+                        alt=""
+                        draggable={false}
+                        style={{ height: "100%", flex: 1, objectFit: "cover", minWidth: 0, opacity: 0.85 }}
+                      />
+                    ))}
+                  </div>
+                )}
+                {/* Escurece fora da seleção */}
+                <div
                   style={{
-                    width: "100%",
-                    padding: "12px 14px",
-                    borderRadius: 10,
-                    background: theme.surface,
-                    border: `1px solid ${theme.borderStrong}`,
-                    // 16px evita zoom no iOS ao focar.
-                    fontSize: 16,
-                    color: theme.textPrimary,
-                    fontFamily: font.body,
+                    position: "absolute",
+                    left: 0,
+                    width: toPct(start),
+                    top: 0,
+                    bottom: 0,
+                    background: "rgba(0,0,0,.62)",
+                    pointerEvents: "none",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    left: toPct(end),
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    background: "rgba(0,0,0,.62)",
+                    pointerEvents: "none",
+                  }}
+                />
+                {/* Trecho original da IA (referência sutil) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: toPct(cut.startSec),
+                    width: `calc(${toPct(cut.endSec)} - ${toPct(cut.startSec)})`,
+                    bottom: 0,
+                    height: 3,
+                    background: "rgba(255,255,255,.28)",
+                    pointerEvents: "none",
+                  }}
+                />
+                {/* Borda da seleção (clip ativo) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: toPct(start),
+                    width: `calc(${toPct(end)} - ${toPct(start)})`,
+                    top: 0,
+                    bottom: 0,
+                    border: `2px solid ${dk.accent}`,
+                    borderRadius: 8,
+                    pointerEvents: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+                {/* Alças de trim (estilo CapCut) */}
+                <div
+                  onPointerDown={onHandleDown("start")}
+                  style={{
+                    position: "absolute",
+                    left: toPct(start),
+                    top: 0,
+                    bottom: 0,
+                    width: 14,
+                    marginLeft: -7,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "ew-resize",
+                    zIndex: 2,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 12,
+                      height: 34,
+                      borderRadius: 6,
+                      background: dk.accent,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#fff",
+                      fontSize: 9,
+                    }}
+                  >
+                    ❮
+                  </div>
+                </div>
+                <div
+                  onPointerDown={onHandleDown("end")}
+                  style={{
+                    position: "absolute",
+                    left: toPct(end),
+                    top: 0,
+                    bottom: 0,
+                    width: 14,
+                    marginLeft: -7,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "ew-resize",
+                    zIndex: 2,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 12,
+                      height: 34,
+                      borderRadius: 6,
+                      background: dk.accent,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#fff",
+                      fontSize: 9,
+                    }}
+                  >
+                    ❯
+                  </div>
+                </div>
+                {/* Keyframes (losangos) */}
+                {kfs.map((k, i) => (
+                  <div
+                    key={`${k.t}-${i}`}
+                    style={{
+                      position: "absolute",
+                      left: toPct(k.t),
+                      top: 5,
+                      width: 8,
+                      height: 8,
+                      transform: "translateX(-50%) rotate(45deg)",
+                      background: i === activeKf ? "#fff" : "#c4b5fd",
+                      border: `1px solid ${dk.accent}`,
+                      borderRadius: 1.5,
+                      pointerEvents: "none",
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/* --- Playhead (atravessa régua + trilha) --- */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: toPct(curT),
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  background: "#fff",
+                  transform: "translateX(-50%)",
+                  pointerEvents: "none",
+                  zIndex: 3,
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    top: -1,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50% 50% 50% 0",
+                    background: "#fff",
+                    rotate: "-45deg",
                   }}
                 />
               </div>
             </div>
+
+            {/* --- Controles da timeline --- */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 10, color: dk.faint }}>{formatTimecode(v.v0)}</span>
+              <div style={{ display: "flex", gap: 6, margin: "0 auto" }}>
+                <DarkBtn disabled={saving} onClick={() => zoomView(0.55)}>
+                  ＋
+                </DarkBtn>
+                <DarkBtn disabled={saving} onClick={() => zoomView(1.8)}>
+                  −
+                </DarkBtn>
+                <DarkBtn
+                  disabled={saving}
+                  onClick={() =>
+                    setView({
+                      v0: Math.max(0, start - (end - start)),
+                      v1: Math.min(maxT, end + (end - start)),
+                    })
+                  }
+                >
+                  Ajustar ao corte
+                </DarkBtn>
+                <DarkBtn disabled={saving} onClick={() => setView({ v0: 0, v1: maxT })}>
+                  Set inteiro
+                </DarkBtn>
+              </div>
+              <span style={{ fontSize: 10, color: dk.faint }}>{formatTimecode(v.v1)}</span>
+            </div>
+            <div style={{ fontSize: 11, color: dk.faint, marginTop: 6 }}>
+              arraste as alças roxas para encurtar ou estender o corte — pode ir além
+              do trecho que a IA escolheu (a linha branca embaixo marca a escolha
+              original)
+            </div>
           </div>
+
+          {/* Vídeo oculto que gera as miniaturas do filmstrip (CORS p/ canvas) */}
+          {hasSource && (
+            <video
+              ref={thumbVidRef}
+              src={source.url ?? undefined}
+              muted
+              playsInline
+              preload="auto"
+              crossOrigin="anonymous"
+              style={{ display: "none" }}
+              onLoadedData={() => setThumbReady(true)}
+            />
+          )}
         </>
       )}
     </div>
   );
 }
 
-function MiniBtn({
+function PanelLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        letterSpacing: ".08em",
+        textTransform: "uppercase",
+        color: dk.sub,
+        marginBottom: 8,
+        fontFamily: font.display,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DarkBtn({
   children,
   disabled,
   onClick,
@@ -1137,12 +1504,12 @@ function MiniBtn({
       disabled={disabled}
       onClick={onClick}
       style={{
-        padding: "5px 10px",
+        padding: "6px 11px",
         borderRadius: 8,
-        background: theme.surface,
-        border: `1px solid ${theme.borderStrong}`,
+        background: dk.panel2,
+        border: `1px solid ${dk.border}`,
         fontSize: 12,
-        color: theme.textSecondary,
+        color: dk.sub,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         fontFamily: font.body,
@@ -1166,30 +1533,24 @@ function FineRow({
   onNudge: (delta: number) => void;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 13, color: theme.textTertiary, width: 44 }}>{label}</span>
-      <MiniBtn disabled={disabled} onClick={() => onNudge(-5)}>
-        −5s
-      </MiniBtn>
-      <MiniBtn disabled={disabled} onClick={() => onNudge(-0.5)}>
-        −0.5s
-      </MiniBtn>
+    <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12, color: dk.sub, width: 38 }}>{label}</span>
+      <DarkBtn disabled={disabled} onClick={() => onNudge(-0.5)}>
+        −0.5
+      </DarkBtn>
       <span
         style={{
-          minWidth: 58,
+          minWidth: 52,
           textAlign: "center",
-          font: `500 14px ${font.display}`,
-          color: theme.textPrimary,
+          font: `500 13px ${font.display}`,
+          color: dk.text,
         }}
       >
         {value}
       </span>
-      <MiniBtn disabled={disabled} onClick={() => onNudge(0.5)}>
-        +0.5s
-      </MiniBtn>
-      <MiniBtn disabled={disabled} onClick={() => onNudge(5)}>
-        +5s
-      </MiniBtn>
+      <DarkBtn disabled={disabled} onClick={() => onNudge(0.5)}>
+        +0.5
+      </DarkBtn>
     </div>
   );
 }
