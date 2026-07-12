@@ -18,6 +18,8 @@ type Props = {
   onSaved: () => void;
   // Abre a aba "Plano" quando o usuário estoura a cota e quer fazer upgrade.
   onUpgrade: () => void;
+  // Abre um corte na aba Edição (timeline + zoom manual).
+  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 };
 
 // Duração do vídeo (em segundos) lida dos metadados no navegador, para o
@@ -74,7 +76,7 @@ function uploadWithProgress(
   });
 }
 
-export function GeneratorView({ onSaved, onUpgrade }: Props) {
+export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -427,7 +429,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
                 <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
                   {c.dur} · no set · {c.moment}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
                   {c.saved ? (
                     <div style={{ ...ghostBtn, textAlign: "center", opacity: 0.6, cursor: "default" }}>Salvo ✓</div>
                   ) : (
@@ -445,6 +447,12 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
                       {isSelected ? "Selecionado" : "Selecionar"}
                     </div>
                   )}
+                  <div
+                    onClick={() => projectId && onEdit(projectId, name, c)}
+                    style={{ ...ghostBtn, textAlign: "center", cursor: "pointer" }}
+                  >
+                    ✎ Editar
+                  </div>
                   <a href={downloadUrl(c)} target="_blank" rel="noopener" style={{ ...ghostBtn, textAlign: "center", textDecoration: "none" }}>
                     Baixar
                   </a>

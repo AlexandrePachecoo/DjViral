@@ -16,6 +16,7 @@ type Props = {
 // (dropdown no avatar), não aqui.
 const TABS: { key: Tab; label: string }[] = [
   { key: "gerador", label: "Gerador" },
+  { key: "edicao", label: "Edição" },
   { key: "salvos", label: "Cortes salvos" },
 ];
 

@@ -1,4 +1,5 @@
 """Wrapper sobre o FFmpeg para cortar clipes de vídeo em torno de um pico."""
+import math
 import os
 import re
 import subprocess
@@ -141,28 +142,32 @@ def _smoothstep(frac_expr: str) -> str:
     return f"(({frac_expr})*({frac_expr})*(3-2*({frac_expr})))"
 
 
-def _pan_expr(points: list[tuple[float, int]]) -> str:
-    """Expressão FFmpeg piecewise, com easing, em ``t`` para os keyframes de pan.
+def _pan_expr(points: list[tuple[float, float]], var: str = "t") -> str:
+    """Expressão FFmpeg piecewise, com easing, em ``var`` para keyframes.
 
-    ``points`` são ``(t relativo ao shot, valor)`` crescentes em t. Dentro do
+    ``points`` são ``(t relativo ao trecho, valor)`` crescentes em t. Dentro do
     branch (pós ``setpts=PTS-STARTPTS``) o ``t`` do filtro ``crop`` é o tempo
     desde o início do shot; antes do primeiro keyframe segura o primeiro
     valor, depois do último segura o último (sem extrapolar). Cada segmento
     interpola com :func:`_smoothstep` em vez de linear — a câmera desacelera
     ao chegar em cada keyframe, em vez de andar em velocidade constante e
     freiar de repente.
+
+    ``var`` é a variável de tempo do filtro alvo: ``t`` no ``crop`` (segundos
+    do branch) ou algo como ``(on/30)`` no ``zoompan`` (que não expõe ``t``,
+    só o número do frame de saída ``on``).
     """
-    expr = str(points[-1][1])
+    expr = f"{points[-1][1]:g}"
     for i in range(len(points) - 1, 0, -1):
         ta, va = points[i - 1]
         tb, vb = points[i]
         if tb - ta <= 1e-6:
             continue
-        frac = f"(t-{ta:.3f})/{tb - ta:.3f}"
-        seg = f"({va}+{vb - va}*{_smoothstep(frac)})"
-        expr = f"if(lt(t,{tb:.3f}),{seg},{expr})"
+        frac = f"({var}-{ta:.3f})/{tb - ta:.3f}"
+        seg = f"({va:g}+{vb - va:g}*{_smoothstep(frac)})"
+        expr = f"if(lt({var},{tb:.3f}),{seg},{expr})"
     if points[0][0] > 0:
-        expr = f"if(lt(t,{points[0][0]:.3f}),{points[0][1]},{expr})"
+        expr = f"if(lt({var},{points[0][0]:.3f}),{points[0][1]:g},{expr})"
     return expr
 
 
@@ -288,5 +293,175 @@ def cut_dynamic(
         _run_ffmpeg(cmd, output_path, duration, "FFmpeg falhou no corte dinâmico")
     except RuntimeError as exc:
         raise RuntimeError(f"{exc}\nfiltergraph: {filter_complex}") from exc
+
+    return output_path
+
+
+def _even(value: float) -> int:
+    """Arredonda para baixo até um inteiro PAR ≥ 2 (exigência do crop/x264)."""
+    return max(2, int(value) - (int(value) % 2))
+
+
+def _normalize_keyframes(
+    keyframes: list[dict], duration: float
+) -> list[tuple[float, float, float, float]]:
+    """Sanitiza os keyframes do editor manual → ``(t, cx, cy, zoom)`` ordenados.
+
+    ``t`` em segundos relativos ao início do clipe (clampado a ``[0,
+    duration]``), ``cx``/``cy`` frações 0-1 do frame da FONTE (centro da
+    janela) e ``zoom`` ≥ 1 (1 = a maior janela 9:16 que cabe no frame).
+    Keyframes duplicados no mesmo ``t`` colapsam (vence o último).
+    """
+    cleaned: dict[float, tuple[float, float, float, float]] = {}
+    for kf in keyframes or []:
+        try:
+            t = float(kf["t"])
+            cx = float(kf["cx"])
+            cy = float(kf["cy"])
+            zoom = float(kf["zoom"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(map(math.isfinite, (t, cx, cy, zoom))):
+            continue
+        t = round(min(max(t, 0.0), duration), 3)
+        cleaned[t] = (
+            t,
+            min(max(cx, 0.0), 1.0),
+            min(max(cy, 0.0), 1.0),
+            min(max(zoom, 1.0), 8.0),
+        )
+    return [cleaned[t] for t in sorted(cleaned)]
+
+
+def cut_keyframed(
+    input_file: str,
+    start_sec: float,
+    output_path: str,
+    keyframes: list[dict],
+    src_w: int,
+    src_h: int,
+    duration: float,
+    fps: float = 30.0,
+    force_static: bool = False,
+) -> str:
+    """Corta um clipe 9:16 com a câmera dirigida À MÃO pelo usuário (editor).
+
+    ``keyframes`` (``{t, cx, cy, zoom}``, ver :func:`_normalize_keyframes`)
+    descrevem onde a janela 9:16 está em cada instante; entre keyframes a
+    câmera interpola com easing (:func:`_smoothstep`) — pan E zoom ao mesmo
+    tempo, segurando o primeiro/último valor fora do intervalo coberto.
+
+    Render em dois estágios (mesma técnica do corte dinâmico, já que o filtro
+    ``crop`` não anima w/h):
+
+    1. ``crop`` 9:16 na MAIOR janela pedida (menor zoom), com x/y animados por
+       expressão (:func:`_pan_expr`) seguindo o centro dos keyframes — o pan.
+    2. Se o zoom VARIA entre keyframes, um ``zoompan`` (sobre supersample 2×,
+       anti-jitter) por cima aplica o zoom RESIDUAL ``zoom(t)/zoom_min`` com
+       x/y compensando o clamp do estágio 1 nas bordas do frame — o resultado
+       enquadra exatamente a janela pedida sempre que ela cabe no frame.
+
+    ``force_static=True`` pula o zoompan (nível 2 do fallback do pipeline):
+    mantém o pan (barato, só expressões no ``crop``) e fixa a janela no menor
+    zoom — nunca corta fora nada que o usuário pediu para mostrar.
+    """
+    kfs = _normalize_keyframes(keyframes, duration)
+    if not kfs:
+        raise ValueError("cut_keyframed exige ao menos um keyframe válido")
+
+    ss = max(0.0, start_sec)
+    out_w, out_h = settings.output_width, settings.output_height
+
+    # Maior janela 9:16 que cabe na fonte (zoom = 1).
+    base_w = min(float(src_w), src_h * out_w / out_h)
+    base_h = base_w * out_h / out_w
+
+    # Janela de cada keyframe, com o centro clampado para caber no frame.
+    frames_kf: list[tuple[float, float, float, float, float]] = []  # t, cx, cy, w, h
+    for t, cx, cy, zoom in kfs:
+        win_w = base_w / zoom
+        win_h = base_h / zoom
+        cx_px = min(max(cx * src_w, win_w / 2), src_w - win_w / 2)
+        cy_px = min(max(cy * src_h, win_h / 2), src_h - win_h / 2)
+        frames_kf.append((t, cx_px, cy_px, win_w, win_h))
+
+    z_min = min(zoom for _t, _cx, _cy, zoom in kfs)
+    z_max = max(zoom for _t, _cx, _cy, zoom in kfs)
+    animate_zoom = z_max - z_min > 1e-3 and not force_static
+
+    # ---- estágio 1: crop 9:16 no MENOR zoom, com pan (x/y por frame) ----
+    w0 = _even(min(base_w / z_min, float(src_w)))
+    h0 = _even(min(base_h / z_min, float(src_h)))
+    stage1: list[tuple[float, float, float]] = []  # t, x, y do canto do crop
+    for t, cx_px, cy_px, _w, _h in frames_kf:
+        x0 = min(max(cx_px - w0 / 2, 0.0), src_w - w0)
+        y0 = min(max(cy_px - h0 / 2, 0.0), src_h - h0)
+        stage1.append((t, round(x0, 2), round(y0, 2)))
+
+    pan_moves = len(stage1) > 1 and (
+        max(x for _t, x, _y in stage1) - min(x for _t, x, _y in stage1) > 0.5
+        or max(y for _t, _x, y in stage1) - min(y for _t, _x, y in stage1) > 0.5
+    )
+    if pan_moves:
+        x_expr = _pan_expr([(t, x) for t, x, _y in stage1])
+        y_expr = _pan_expr([(t, y) for t, _x, y in stage1])
+        crop_f = f"crop={w0}:{h0}:x='{x_expr}':y='{y_expr}'"
+    else:
+        crop_f = f"crop={w0}:{h0}:{stage1[0][1]:g}:{stage1[0][2]:g}"
+
+    # ---- estágio 2: zoom residual via zoompan (se o zoom varia) ----
+    if animate_zoom:
+        ss_w, ss_h = out_w * 2, out_h * 2  # supersample anti-jitter
+        sx = ss_w / w0
+        sy = ss_h / h0
+        z_pts: list[tuple[float, float]] = []
+        x_pts: list[tuple[float, float]] = []
+        y_pts: list[tuple[float, float]] = []
+        for i, ((t, cx_px, cy_px, _w, _h), (_t, x0, y0)) in enumerate(
+            zip(frames_kf, stage1)
+        ):
+            z = max(1.0, kfs[i][3] / z_min)
+            zx = min(max((cx_px - x0) * sx - ss_w / (2 * z), 0.0), ss_w - ss_w / z)
+            zy = min(max((cy_px - y0) * sy - ss_h / (2 * z), 0.0), ss_h - ss_h / z)
+            z_pts.append((t, round(z, 4)))
+            x_pts.append((t, round(zx, 2)))
+            y_pts.append((t, round(zy, 2)))
+        # O zoompan não expõe ``t``, só o frame de saída ``on`` (d=1 → 1:1).
+        tvar = f"(on/{fps:.4f})"
+        vf = (
+            f"{crop_f},scale={ss_w}:{ss_h}"
+            f",zoompan=z='{_pan_expr(z_pts, tvar)}'"
+            f":x='{_pan_expr(x_pts, tvar)}'"
+            f":y='{_pan_expr(y_pts, tvar)}'"
+            f":d=1:s={out_w}x{out_h}:fps={fps:g}"
+            f",setsar=1"
+        )
+    else:
+        vf = f"{crop_f},scale={out_w}:{out_h},setsar=1"
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(ss),
+        "-i", input_file,
+        "-t", str(duration),
+        "-threads", str(settings.ffmpeg_threads),
+        # Mesmo racional do corte dinâmico: sem isso o lado do filtro abre uma
+        # thread por núcleo do host, e o zoompan supersampleado infla o pico
+        # de memória do container.
+        "-filter_threads", str(settings.dynamic_filter_threads),
+        "-filter_complex_threads", str(settings.dynamic_filter_threads),
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    try:
+        _run_ffmpeg(cmd, output_path, duration, "FFmpeg falhou no corte com keyframes")
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc}\nvf: {vf}") from exc
 
     return output_path

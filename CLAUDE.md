@@ -218,7 +218,15 @@ YouTube quando necessário.
    para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs
    pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1). O re-corte
    (`POST /recut`) respeita o `cut_style` do projeto: num projeto dinâmico,
-   re-roda a análise visual só na janela nova e regenera os zooms.
+   re-roda a análise visual só na janela nova e regenera os zooms. Quando o
+   `/recut` traz **`keyframes`** (direção manual do editor visual, ver "Editor
+   de cortes" abaixo), o render usa `clipper.cut_keyframed` no lugar do plano
+   automático: crop 9:16 com pan por expressão (x/y por frame no `crop`) na
+   janela do MENOR zoom + `zoompan` (supersample 2×) por cima com o zoom
+   residual interpolado com easing — pan e zoom do usuário ao mesmo tempo,
+   fallback em 2 níveis (sem zoompan → corte seco). Os keyframes são
+   persistidos em `cuts.crop_keyframes` (o editor reabre com eles; `[]` limpa
+   a direção manual).
 
 ### Frontend / UI (`frontend/app/`)
 
@@ -233,12 +241,42 @@ A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
   preços, CTA. Estilizada via CSS Modules.
 - `login/page.tsx` — login/cadastro (`/login`).
 - `app/` — área logada (`/app`), protegida por sessão:
-  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos).
+  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos). O Gerador
+    fica montado (só escondido) fora da aba, para trocar de aba não perder os
+    cortes recém-gerados nem o polling de um set em processamento.
   - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
   - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
 - `s/[token]/page.tsx` — **página pública** de um set compartilhado (`/s/<token>`),
   **fora** de `app/` (não herda o guard de sessão). Ver "Compartilhamento
   público" abaixo.
+
+### Editor de cortes (aba "Edição")
+
+Todo card de corte (Gerador e Cortes salvos) tem um botão **Editar** que abre
+o corte na aba "Edição" (`app/_studio/EditorView.tsx`); a aba sem corte aberto
+mostra um seletor dos cortes salvos (`EditPicker` em `app/page.tsx`).
+
+- **Timeline sobre o SET ORIGINAL** — o editor toca o vídeo original via
+  `GET /api/projects/{id}/source` (signed URL de 1h do bucket privado
+  `sources`; origem YouTube não tem arquivo → `url: null` e o editor degrada
+  para trim-only com aviso). As alças de início/fim podem ir **além** do
+  trecho que a IA escolheu (o trecho original fica marcado na régua); zoom da
+  régua (+ / − / set inteiro), scrub, loop do trecho, "início/fim aqui" no
+  playhead e ajuste fino de ±0.5s/±5s. Duração 3–180 s (rota valida ≤ 600 s).
+- **Janela TikTok arrastável + keyframes de câmera** — o vídeo aparece no
+  tamanho original com a janela 9:16 sobreposta (resto escurecido). Arrastar a
+  janela ou mexer no slider de zoom (1–4×) cria/edita um **keyframe** no
+  playhead (`{t, cx, cy, zoom}`); entre keyframes a câmera interpola com o
+  MESMO smoothstep do worker, e o painel lateral mostra o preview 9:16 "como
+  vai ficar no TikTok" (um segundo `<video>` mudo sincronizado por rAF, com
+  transform equivalente ao crop). Keyframes aparecem como losangos na régua e
+  numa lista com remover/limpar.
+- **Salvar** — título via `PATCH /api/projects/{id}/cuts/{cutId}`; trim e/ou
+  keyframes via `POST .../recut {inicio, fim, keyframes}` (keyframes com `t`
+  relativo ao início; o editor trabalha com `t` absoluto e converte). O worker
+  renderiza com `clipper.cut_keyframed` e grava `cuts.crop_keyframes`; o
+  editor reabre com os keyframes salvos via `GET .../cuts/{cutId}` (tolerante
+  a banco sem a migração, código 42703).
 
 ### Compartilhamento público de sets
 
@@ -456,3 +494,7 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - url
 - status (`ready | processing | error`) — `processing` enquanto o worker
   regenera o vídeo num re-corte (`POST /recut`)
+- crop_keyframes — direção manual de câmera do editor (JSON `[{t, cx, cy,
+  zoom}]`, `t` relativo ao início do corte, `cx`/`cy` frações 0-1 do frame da
+  fonte, `zoom` ≥ 1); NULL = sem direção manual (render automático), `[]` =
+  usuário limpou os keyframes

@@ -29,6 +29,21 @@ class ProjectCreated(BaseModel):
     status: str
 
 
+class CropKeyframe(BaseModel):
+    """Um keyframe da câmera manual do editor de cortes.
+
+    ``t`` em segundos RELATIVOS ao início do clipe; ``cx``/``cy`` são o centro
+    da janela 9:16 em frações 0-1 do frame da fonte; ``zoom`` ≥ 1 (1 = a maior
+    janela 9:16 que cabe no frame). Entre keyframes a câmera interpola com
+    easing (pan + zoom simultâneos).
+    """
+
+    t: float
+    cx: float
+    cy: float
+    zoom: float
+
+
 class RecutRequest(BaseModel):
     """Re-corta um clipe existente com novo início/fim (em segundos do set)."""
 
@@ -36,3 +51,7 @@ class RecutRequest(BaseModel):
     cut_id: str
     inicio: float
     fim: float
+    # Keyframes de enquadramento definidos à mão no editor. None = sem direção
+    # manual (comportamento antigo: dinâmico/seco conforme o estilo do
+    # projeto); lista vazia = usuário limpou os keyframes (corte seco central).
+    keyframes: list[CropKeyframe] | None = None

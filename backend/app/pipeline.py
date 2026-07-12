@@ -580,7 +580,13 @@ def _render_clip(
     )
 
 
-def recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
+def recut_cut(
+    project_id: str,
+    cut_id: str,
+    inicio: float,
+    fim: float,
+    keyframes: list[dict] | None = None,
+) -> None:
     """Re-corta um clipe existente com novo início/fim, regenerando o vídeo.
 
     Baixa o vídeo original do projeto, corta o novo trecho com FFmpeg, sobe um
@@ -589,12 +595,18 @@ def recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
     de falha, marca o corte como ``error``.
 
     O início aqui é absoluto (segundos no set), então usamos ``pre_roll=0`` — o
-    usuário já escolheu exatamente onde o corte começa. O estilo do projeto
-    (``projects.cut_style``) é respeitado: num projeto dinâmico o re-corte
-    re-roda a análise visual só na janela nova e regenera os zooms.
+    usuário já escolheu exatamente onde o corte começa.
+
+    ``keyframes`` (``{t, cx, cy, zoom}``, do editor visual) dirigem a câmera à
+    MÃO: quando presentes, o render usa ``clipper.cut_keyframed`` (pan+zoom do
+    usuário) em vez do plano automático. ``None`` mantém o comportamento
+    antigo — o estilo do projeto (``projects.cut_style``) é respeitado e num
+    projeto dinâmico o re-corte re-roda a análise visual só na janela nova e
+    regenera os zooms. Lista vazia = usuário limpou a direção manual (corte
+    seco central).
     """
     with _job_slots:
-        _recut_cut(project_id, cut_id, inicio, fim)
+        _recut_cut(project_id, cut_id, inicio, fim, keyframes)
 
 
 def _recut_style(client, project_id: str) -> str:
@@ -614,7 +626,13 @@ def _recut_style(client, project_id: str) -> str:
     return "basic"
 
 
-def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
+def _recut_cut(
+    project_id: str,
+    cut_id: str,
+    inicio: float,
+    fim: float,
+    keyframes: list[dict] | None = None,
+) -> None:
     client = get_client()
     video_path: str | None = None
     clip_path: str | None = None
@@ -627,7 +645,35 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
             clip_path = tmp.name
 
         rendered = False
-        if cut_style == "dynamic":
+        if keyframes:
+            # Direção manual do editor: pan+zoom do usuário, com fallback em
+            # 2 níveis (com zoom animado → só pan estático) antes do seco.
+            src_dims = probe_video(video_path)
+            if src_dims["width"] and src_dims["height"]:
+                for force_static in (False, True):
+                    try:
+                        clipper.cut_keyframed(
+                            video_path,
+                            inicio,
+                            clip_path,
+                            keyframes,
+                            src_dims["width"],
+                            src_dims["height"],
+                            float(duration),
+                            src_dims["fps"],
+                            force_static=force_static,
+                        )
+                        rendered = True
+                        break
+                    except Exception:  # noqa: BLE001 - tenta o nível mais leve
+                        logger.exception(
+                            "Recorte %s: render keyframed falhou (static=%s)",
+                            cut_id,
+                            force_static,
+                        )
+        elif cut_style == "dynamic" and keyframes is None:
+            # keyframes == [] (usuário limpou a direção manual) pula o plano
+            # automático e cai direto no corte seco central.
             shots = None
             src_dims = None
             try:
@@ -685,15 +731,31 @@ def _recut_cut(project_id: str, cut_id: str, inicio: float, fim: float) -> None:
         dest_name = f"{project_id}/recut_{cut_id}_{int(time.time())}.mp4"
         url = upload_clip(clip_path, dest_name)
 
-        client.table("cuts").update(
-            {
-                "inicio": inicio,
-                "fim": fim,
-                "duracao": duration,
-                "url": url,
-                "status": "ready",
-            }
-        ).eq("id", cut_id).execute()
+        row = {
+            "inicio": inicio,
+            "fim": fim,
+            "duracao": duration,
+            "url": url,
+            "status": "ready",
+        }
+        if keyframes is not None:
+            # Persiste a direção manual para o editor reabrir com os mesmos
+            # keyframes ([] limpa). Coluna de migração recente: se o banco
+            # ainda não a tem, o PostgREST rejeita — regravamos sem ela em vez
+            # de perder o re-corte.
+            row["crop_keyframes"] = keyframes
+        try:
+            client.table("cuts").update(row).eq("id", cut_id).execute()
+        except Exception:  # noqa: BLE001 - coluna ausente não perde o recorte
+            if "crop_keyframes" not in row:
+                raise
+            logger.warning(
+                "Update do recorte %s falhou; tentando sem crop_keyframes "
+                "(migração ausente?)",
+                cut_id,
+            )
+            row.pop("crop_keyframes")
+            client.table("cuts").update(row).eq("id", cut_id).execute()
         logger.info("Corte %s re-cortado (%.1f–%.1fs)", cut_id, inicio, fim)
 
     except Exception:  # noqa: BLE001 - queremos registrar qualquer falha
