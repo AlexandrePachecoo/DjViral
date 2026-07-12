@@ -41,6 +41,45 @@ export async function POST(
       { status: 400 }
     );
   }
+  if (fim - inicio > 600) {
+    return NextResponse.json(
+      { error: "o corte pode ter no máximo 10 minutos" },
+      { status: 400 }
+    );
+  }
+
+  // Keyframes de câmera do editor visual (opcionais): `{t, cx, cy, zoom}` com
+  // t relativo ao início do corte. Ausente = render automático de sempre;
+  // `[]` = usuário limpou a direção manual. Sanitizados aqui (o worker também
+  // valida) para nunca repassar lixo ao FFmpeg.
+  let keyframes: { t: number; cx: number; cy: number; zoom: number }[] | undefined;
+  if (body.keyframes !== undefined) {
+    if (!Array.isArray(body.keyframes) || body.keyframes.length > 30) {
+      return NextResponse.json(
+        { error: "keyframes inválidos (array de até 30 itens)" },
+        { status: 400 }
+      );
+    }
+    keyframes = [];
+    for (const kf of body.keyframes) {
+      const t = Number(kf?.t);
+      const cx = Number(kf?.cx);
+      const cy = Number(kf?.cy);
+      const zoom = Number(kf?.zoom);
+      if (![t, cx, cy, zoom].every(Number.isFinite)) {
+        return NextResponse.json(
+          { error: "keyframe inválido (t/cx/cy/zoom numéricos)" },
+          { status: 400 }
+        );
+      }
+      keyframes.push({
+        t: Math.min(Math.max(t, 0), fim - inicio),
+        cx: Math.min(Math.max(cx, 0), 1),
+        cy: Math.min(Math.max(cy, 0), 1),
+        zoom: Math.min(Math.max(zoom, 1), 4),
+      });
+    }
+  }
 
   const workerUrl = process.env.WORKER_URL;
   const secret = process.env.WORKER_SECRET;
@@ -66,6 +105,7 @@ export async function POST(
       cut_id: params.cutId,
       inicio,
       fim,
+      ...(keyframes !== undefined ? { keyframes } : {}),
     }),
   });
 

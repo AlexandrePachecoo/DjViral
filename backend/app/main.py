@@ -59,7 +59,12 @@ def recut(
     if not settings.worker_secret or x_worker_secret != settings.worker_secret:
         raise HTTPException(status_code=401, detail="Segredo inválido")
 
+    keyframes = (
+        [kf.model_dump() for kf in body.keyframes]
+        if body.keyframes is not None
+        else None
+    )
     background_tasks.add_task(
-        recut_cut, body.project_id, body.cut_id, body.inicio, body.fim
+        recut_cut, body.project_id, body.cut_id, body.inicio, body.fim, keyframes
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
