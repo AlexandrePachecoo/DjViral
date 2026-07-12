@@ -100,6 +100,14 @@ alter table cuts add column if not exists score_hype double precision;
 -- antigos). NULL em cortes antigos ou quando o BPM não pôde ser estimado.
 alter table cuts add column if not exists bpm integer;
 
+-- Migração: direção manual de câmera do editor de cortes. Array JSON de
+-- keyframes `{t, cx, cy, zoom}` (t em segundos relativos ao início do corte;
+-- cx/cy = centro da janela 9:16 em frações 0-1 do frame da fonte; zoom >= 1)
+-- definidos pelo usuário ao arrastar a janela TikTok no editor. NULL = sem
+-- direção manual (render automático); o worker regrava a cada re-corte que
+-- envia keyframes ([] = usuário limpou a direção manual).
+alter table cuts add column if not exists crop_keyframes jsonb;
+
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)
 -- ---------------------------------------------------------------------------

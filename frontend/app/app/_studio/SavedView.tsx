@@ -11,6 +11,8 @@ type Props = {
   showScore: boolean;
   onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
   onDeleteFolder: (projectId: string) => Promise<boolean>;
+  // Abre um corte na aba Edição (timeline + zoom manual).
+  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 };
 
 // Botão de download (âncora real; o `?download=` do Supabase força o attachment).
@@ -290,11 +292,13 @@ function FolderSection({
   showScore,
   onDeleteCut,
   onDeleteFolder,
+  onEdit,
 }: {
   folder: SavedFolder;
   showScore: boolean;
   onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
   onDeleteFolder: (projectId: string) => Promise<boolean>;
+  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   const [expanded, setExpanded] = useState(true);
@@ -447,6 +451,24 @@ function FolderSection({
                   {cut.dur} · no set · {cut.moment}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(folder.projectId, folder.setName, cut)}
+                    style={{
+                      flex: 1,
+                      padding: 9,
+                      borderRadius: 8,
+                      fontSize: 13,
+                      color: theme.textSecondary,
+                      background: theme.surface,
+                      border: `1px solid ${theme.borderStrong}`,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      fontFamily: font.body,
+                    }}
+                  >
+                    ✎ Editar
+                  </button>
                   <div style={{ flex: 1 }}>
                     <DownloadLink cut={cut} />
                   </div>
@@ -461,7 +483,7 @@ function FolderSection({
   );
 }
 
-export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder }: Props) {
+export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onEdit }: Props) {
   if (folders.length === 0) {
     return (
       <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
@@ -491,6 +513,7 @@ export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder }: P
           showScore={showScore}
           onDeleteCut={onDeleteCut}
           onDeleteFolder={onDeleteFolder}
+          onEdit={onEdit}
         />
       ))}
     </div>

@@ -1,6 +1,6 @@
 import type { Cut } from "./data";
 
-export type Tab = "gerador" | "salvos" | "plano" | "perfil";
+export type Tab = "gerador" | "edicao" | "salvos" | "plano" | "perfil";
 export type GeradorView = "grade" | "lista";
 export type SalvosView = "galeria" | "tabela";
 

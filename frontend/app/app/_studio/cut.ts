@@ -20,6 +20,12 @@ export type ApiCut = {
   bpm?: number | null;
 };
 
+// Keyframe da câmera manual do editor: `t` em segundos (relativo ao início do
+// corte quando persistido em `cuts.crop_keyframes`; o editor trabalha com t
+// absoluto no set e converte ao salvar), `cx`/`cy` = centro da janela 9:16 em
+// frações 0-1 do frame da FONTE, `zoom` >= 1 (1 = maior janela que cabe).
+export type CropKeyframe = { t: number; cx: number; cy: number; zoom: number };
+
 // Segundos → "h:mm:ss" (sets longos) ou "m:ss".
 export function formatTimecode(totalSeconds: number): string {
   const s = Math.max(0, Math.round(totalSeconds));
