@@ -254,23 +254,31 @@ A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
 
 Todo card de corte (Gerador e Cortes salvos) tem um botão **Editar** que abre
 o corte na aba "Edição" (`app/_studio/EditorView.tsx`); a aba sem corte aberto
-mostra um seletor dos cortes salvos (`EditPicker` em `app/page.tsx`).
+mostra um seletor dos cortes salvos (`EditPicker` em `app/page.tsx`). O editor
+é um workspace **escuro estilo CapCut** (paleta própria `dk` no componente —
+o resto do estúdio continua claro).
 
-- **Timeline sobre o SET ORIGINAL** — o editor toca o vídeo original via
+- **Canvas 9:16 central = o resultado final** (modelo CapCut): o usuário
+  arrasta o PRÓPRIO VÍDEO dentro do quadro para reposicionar e dá zoom
+  (slider 1–4× ou scroll no canvas), com grade de terços durante o arrasto e
+  um **minimap** no canto (frame original + retângulo da janela; clicar/
+  arrastar nele move a câmera direto). O editor toca o set original via
   `GET /api/projects/{id}/source` (signed URL de 1h do bucket privado
   `sources`; origem YouTube não tem arquivo → `url: null` e o editor degrada
-  para trim-only com aviso). As alças de início/fim podem ir **além** do
-  trecho que a IA escolheu (o trecho original fica marcado na régua); zoom da
-  régua (+ / − / set inteiro), scrub, loop do trecho, "início/fim aqui" no
-  playhead e ajuste fino de ±0.5s/±5s. Duração 3–180 s (rota valida ≤ 600 s).
-- **Janela TikTok arrastável + keyframes de câmera** — o vídeo aparece no
-  tamanho original com a janela 9:16 sobreposta (resto escurecido). Arrastar a
-  janela ou mexer no slider de zoom (1–4×) cria/edita um **keyframe** no
-  playhead (`{t, cx, cy, zoom}`); entre keyframes a câmera interpola com o
-  MESMO smoothstep do worker, e o painel lateral mostra o preview 9:16 "como
-  vai ficar no TikTok" (um segundo `<video>` mudo sincronizado por rAF, com
-  transform equivalente ao crop). Keyframes aparecem como losangos na régua e
-  numa lista com remover/limpar.
+  para trim-only com aviso).
+- **Timeline dock inferior** — régua de timecodes (passos "redondos"
+  calculados da janela visível), **filmstrip de miniaturas** do set (geradas
+  no cliente: um `<video>` oculto com `crossOrigin` + canvas → dataURLs; se o
+  CORS/seek falhar a trilha fica lisa), trecho selecionado com **alças de
+  trim** roxas (pode ir **além** do que a IA escolheu; a escolha original
+  fica marcada na trilha), scrub, loop do trecho, "início/fim aqui", zoom da
+  régua (+/−/ajustar/set inteiro) e ajuste fino ±0.5s. Duração 3–180 s (rota
+  valida ≤ 600 s).
+- **Keyframes de câmera** — todo ajuste de enquadramento cria/edita um
+  keyframe `{t, cx, cy, zoom}` no playhead (botão ◆ adiciona/remove, estilo
+  CapCut); entre keyframes a câmera interpola com o MESMO smoothstep do
+  worker (o preview bate com o render). Keyframes aparecem como losangos na
+  trilha e numa lista no painel de propriedades (remover/limpar).
 - **Salvar** — título via `PATCH /api/projects/{id}/cuts/{cutId}`; trim e/ou
   keyframes via `POST .../recut {inicio, fim, keyframes}` (keyframes com `t`
   relativo ao início; o editor trabalha com `t` absoluto e converte). O worker
