@@ -271,7 +271,14 @@ o resto do estúdio continua claro).
   a janela acompanha — e os três `<video>` usam `preload="metadata"` + media
   fragment `#t=<início do corte>` na URL, então o browser buferiza direto no
   trecho do corte via range requests (o vídeo oculto do filmstrip usava
-  `preload="auto"`, que baixava o set INTEIRO em background).
+  `preload="auto"`, que baixava o set INTEIRO em background). O canvas mostra
+  "Carregando o vídeo do set..." até o primeiro frame decodar e, se o
+  `<video>` do original falhar (`onError` — ex.: codec que o browser não
+  decodifica, como HEVC/MOV de iPhone ou MKV; o upload aceita `video/*` e o
+  editor toca o arquivo CRU, só os cortes são re-encodados em H.264), o aviso
+  explica o motivo (com o código do `MediaError`) e o editor degrada para o
+  MESMO modo trim-only do YouTube, com o player do corte já gerado no lugar
+  do canvas — antes ficava um quadro preto sem explicação.
 - **Timeline dock inferior** — régua de timecodes (passos "redondos"
   calculados da janela visível), **filmstrip de miniaturas** do set (geradas
   no cliente: um `<video>` oculto com `crossOrigin` + canvas → dataURLs; se o
