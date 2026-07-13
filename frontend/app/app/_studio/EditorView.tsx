@@ -134,6 +134,11 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   const [kfs, setKfs] = useState<CropKeyframe[]>([]);
   const [initialKfs, setInitialKfs] = useState<CropKeyframe[]>([]);
   const [source, setSource] = useState<SourceInfo | null>(null); // null = carregando
+  // O <video> do set falhou (codec não suportado, rede...): motivo p/ a UI.
+  // O editor degrada para trim-only com o player do CORTE gerado (sempre
+  // H.264) — antes ficava só um quadro preto sem explicação.
+  const [srcFailed, setSrcFailed] = useState<string | null>(null);
+  const [vidReady, setVidReady] = useState(false); // primeiro frame decodado
   const [vidDims, setVidDims] = useState<{ w: number; h: number } | null>(null);
   const [curT, setCurT] = useState(cut.startSec);
   const [playing, setPlaying] = useState(false);
@@ -165,6 +170,8 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   useEffect(() => {
     let cancelled = false;
     setSource(null);
+    setSrcFailed(null);
+    setVidReady(false);
     setVidDims(null);
     setKfs([]);
     setInitialKfs([]);
@@ -261,6 +268,21 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   }, [source, view, cut.startSec, cut.endSec, maxT]);
 
   const hasSource = !!source?.url;
+  // O preview com zoom/keyframes precisa do vídeo original tocando no browser.
+  const canPreview = hasSource && srcFailed === null;
+
+  // Erro do <video> do set → motivo legível + degrada para trim-only.
+  function onSourceError(e: React.SyntheticEvent<HTMLVideoElement>) {
+    const err = e.currentTarget.error;
+    const code = err?.code ?? 0;
+    const why =
+      code === 3 || code === 4
+        ? "o navegador não consegue reproduzir o formato/codec do arquivo original (ex.: HEVC/MOV de iPhone ou MKV)"
+        : code === 2
+          ? "falha de rede ao baixar o vídeo original do armazenamento"
+          : "o vídeo original não pôde ser carregado";
+    setSrcFailed(`${why} [código ${code}${err?.message ? `: ${err.message}` : ""}]`);
+  }
 
   // Largura real do canvas 9:16 (para converter arrasto em px da fonte).
   useEffect(() => {
@@ -274,7 +296,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
 
   // ===== Loop de sincronização (playhead + minimap + loop do trecho) =====
   useEffect(() => {
-    if (!hasSource) return;
+    if (!canPreview) return;
     let raf = 0;
     const tick = () => {
       const v = videoRef.current;
@@ -297,7 +319,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [hasSource, start, end]);
+  }, [canPreview, start, end]);
 
   function seek(t: number) {
     const v = videoRef.current;
@@ -401,14 +423,14 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   };
   useEffect(() => {
     const el = canvasRef.current;
-    if (!el || !hasSource) return;
+    if (!el || !canPreview) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       wheelRef.current(e.deltaY);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [hasSource, source]);
+  }, [canPreview, source]);
 
   // Minimap: clicar/arrastar reposiciona a janela direto no frame original.
   function onMapPoint(e: React.PointerEvent<HTMLDivElement>) {
@@ -512,7 +534,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
 
   // ===== Filmstrip: miniaturas do set na janela visível da timeline =====
   useEffect(() => {
-    if (!hasSource || !thumbReady) return;
+    if (!canPreview || !thumbReady) return;
     const gen = ++thumbGen.current;
     const timer = setTimeout(async () => {
       const vid = thumbVidRef.current;
@@ -553,7 +575,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSource, thumbReady, v.v0, v.v1, maxT]);
+  }, [canPreview, thumbReady, v.v0, v.v1, maxT]);
 
   // ===== Salvar =====
   const titleChanged = title.trim() !== cut.title && title.trim() !== "";
@@ -780,7 +802,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
         </div>
       ) : (
         <>
-          {!hasSource && (
+          {!canPreview && (
             <div
               style={{
                 margin: "12px 16px 0",
@@ -792,9 +814,13 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 border: "1px solid rgba(217,119,6,.35)",
               }}
             >
-              O vídeo original deste set não está disponível para pré-visualização
-              (set do YouTube ou arquivo removido). Dá para ajustar o início/fim na
-              timeline — o zoom manual precisa do vídeo original.
+              {srcFailed
+                ? `Não deu para tocar o vídeo original deste set: ${srcFailed}. ` +
+                  "O preview abaixo mostra o corte já gerado; dá para ajustar o " +
+                  "início/fim e o título — o zoom manual precisa do vídeo original."
+                : "O vídeo original deste set não está disponível para pré-visualização " +
+                  "(set do YouTube ou arquivo removido). Dá para ajustar o início/fim na " +
+                  "timeline — o zoom manual precisa do vídeo original."}
             </div>
           )}
 
@@ -820,7 +846,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 minWidth: 0,
               }}
             >
-              {hasSource ? (
+              {canPreview ? (
                 <div
                   ref={canvasRef}
                   onPointerDown={onCanvasDown}
@@ -845,6 +871,9 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     src={videoSrc}
                     playsInline
                     preload="metadata"
+                    onError={onSourceError}
+                    onLoadedData={() => setVidReady(true)}
+                    onCanPlay={() => setVidReady(true)}
                     onLoadedMetadata={(e) => {
                       const el = e.currentTarget;
                       if (el.videoWidth && el.videoHeight) {
@@ -856,6 +885,26 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     }}
                     style={videoStyle ?? { width: "100%", height: "100%", objectFit: "cover" }}
                   />
+                  {/* Estado de carregamento (antes ficava só um quadro preto) */}
+                  {!vidReady && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: dk.sub,
+                        fontSize: 13,
+                        textAlign: "center",
+                        padding: 16,
+                        background: "rgba(0,0,0,.45)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      Carregando o vídeo do set...
+                    </div>
+                  )}
                   {/* Grade de terços enquanto arrasta (guia, estilo CapCut) */}
                   {draggingCanvas && (
                     <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -998,7 +1047,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 <button
                   type="button"
                   onClick={togglePlay}
-                  disabled={saving || !hasSource}
+                  disabled={saving || !canPreview}
                   aria-label={playing ? "Pausar" : "Tocar"}
                   style={{
                     width: 42,
@@ -1008,8 +1057,8 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     background: dk.text,
                     color: dk.bg,
                     fontSize: 14,
-                    cursor: saving || !hasSource ? "default" : "pointer",
-                    opacity: saving || !hasSource ? 0.4 : 1,
+                    cursor: saving || !canPreview ? "default" : "pointer",
+                    opacity: saving || !canPreview ? 0.4 : 1,
                   }}
                 >
                   {playing ? "❚❚" : "▶"}
@@ -1031,7 +1080,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 <DarkBtn disabled={saving} onClick={() => nudge("end", curT - end)}>
                   Fim aqui ⇥
                 </DarkBtn>
-                {hasSource && (
+                {canPreview && (
                   <button
                     type="button"
                     onClick={toggleKfAtPlayhead}
@@ -1066,7 +1115,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 minWidth: 0,
               }}
             >
-              {hasSource && (
+              {canPreview && (
                 <div>
                   <PanelLabel>Enquadramento</PanelLabel>
                   <div
@@ -1101,7 +1150,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 </div>
               )}
 
-              {hasSource && (
+              {canPreview && (
                 <div>
                   <PanelLabel>
                     Keyframes{" "}
@@ -1481,7 +1530,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
           {/* Vídeo oculto que gera as miniaturas do filmstrip (CORS p/ canvas).
               preload="metadata": só o índice do arquivo — os frames chegam por
               range request a cada seek (preload="auto" baixava o set INTEIRO). */}
-          {hasSource && (
+          {canPreview && (
             <video
               ref={thumbVidRef}
               src={videoSrc}
