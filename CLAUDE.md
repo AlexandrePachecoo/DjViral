@@ -265,14 +265,20 @@ o resto do estúdio continua claro).
   arrastar nele move a câmera direto). O editor toca o set original via
   `GET /api/projects/{id}/source` (signed URL de 1h do bucket privado
   `sources`; origem YouTube não tem arquivo → `url: null` e o editor degrada
-  para trim-only com aviso).
+  para trim-only com aviso). **O editor NÃO carrega o set inteiro:** trabalha
+  numa **janela de ±60 s** em volta do corte (`WINDOW_PAD`) — timeline, zoom
+  da régua e filmstrip ficam confinados a ela e, se o usuário estender o trim,
+  a janela acompanha — e os três `<video>` usam `preload="metadata"` + media
+  fragment `#t=<início do corte>` na URL, então o browser buferiza direto no
+  trecho do corte via range requests (o vídeo oculto do filmstrip usava
+  `preload="auto"`, que baixava o set INTEIRO em background).
 - **Timeline dock inferior** — régua de timecodes (passos "redondos"
   calculados da janela visível), **filmstrip de miniaturas** do set (geradas
   no cliente: um `<video>` oculto com `crossOrigin` + canvas → dataURLs; se o
   CORS/seek falhar a trilha fica lisa), trecho selecionado com **alças de
   trim** roxas (pode ir **além** do que a IA escolheu; a escolha original
   fica marcada na trilha), scrub, loop do trecho, "início/fim aqui", zoom da
-  régua (+/−/ajustar/set inteiro) e ajuste fino ±0.5s. Duração 3–180 s (rota
+  régua (+/−/ajustar/janela toda) e ajuste fino ±0.5s. Duração 3–180 s (rota
   valida ≤ 600 s).
 - **Keyframes de câmera** — todo ajuste de enquadramento cria/edita um
   keyframe `{t, cx, cy, zoom}` no playhead (botão ◆ adiciona/remove, estilo

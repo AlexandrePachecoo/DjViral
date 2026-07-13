@@ -41,6 +41,7 @@ type SourceInfo = {
 
 const MIN_DUR = 3; // duração mínima do corte (s)
 const MAX_DUR = 180; // duração máxima do corte (s)
+const WINDOW_PAD = 60; // folga carregada antes/depois do corte (s)
 const ZOOM_MAX = 4;
 const KF_EPS = 0.2; // keyframe "no playhead" dentro desta tolerância (s)
 const THUMB_COUNT = 14; // miniaturas do filmstrip por janela visível
@@ -230,6 +231,25 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     return d > 0 ? d : Math.max(end + 300, cut.endSec + 300);
   }, [source, end, cut.endSec]);
 
+  // Janela de trabalho: o corte ± WINDOW_PAD. Timeline, zoom da régua e
+  // filmstrip ficam confinados a ela para o editor nunca percorrer/buferizar o
+  // set inteiro (um set de 3h são GBs). Se o usuário estender o trim, a janela
+  // acompanha — dá para alcançar qualquer ponto, só que 1 min por vez.
+  const winLo = Math.max(0, Math.min(start, cut.startSec) - WINDOW_PAD);
+  const winHi = Math.min(maxT, Math.max(end, cut.endSec) + WINDOW_PAD);
+
+  // Media fragment (#t=) na signed URL: o browser abre o vídeo já buferizando
+  // no início do corte (via range requests) em vez de baixar desde o segundo 0.
+  // Derivado só do corte (não do trim) para não recarregar o <video> a cada
+  // arrasto de alça.
+  const videoSrc = useMemo(
+    () =>
+      source?.url
+        ? `${source.url}#t=${Math.max(0, cut.startSec).toFixed(2)}`
+        : undefined,
+    [source, cut.startSec]
+  );
+
   // Janela visível inicial da timeline: o corte ± 45 s.
   useEffect(() => {
     if (source && !view) {
@@ -281,7 +301,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
 
   function seek(t: number) {
     const v = videoRef.current;
-    const nt = clamp(t, 0, Math.max(0, maxT - 0.05));
+    const nt = clamp(t, winLo, Math.max(winLo, winHi - 0.05));
     if (v) v.currentTime = nt;
     setCurT(nt);
   }
@@ -407,7 +427,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
   }
 
   // ===== Timeline =====
-  const v = view ?? { v0: Math.max(0, start - 45), v1: Math.min(maxT, end + 45) };
+  const v = view ?? { v0: Math.max(winLo, start - 45), v1: Math.min(winHi, end + 45) };
   const span = Math.max(1e-6, v.v1 - v.v0);
   const toPct = (t: number) => `${clamp(((t - v.v0) / span) * 100, 0, 100)}%`;
 
@@ -463,16 +483,20 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     setView((prev) => {
       const cur = prev ?? v;
       const center = clamp(curT, start, end);
-      let s = clamp((cur.v1 - cur.v0) * factor, Math.max(12, end - start + 4), maxT);
+      let s = clamp(
+        (cur.v1 - cur.v0) * factor,
+        Math.max(12, end - start + 4),
+        winHi - winLo
+      );
       let v0 = center - s / 2;
       let v1 = center + s / 2;
-      if (v0 < 0) {
-        v1 = Math.min(maxT, v1 - v0);
-        v0 = 0;
+      if (v0 < winLo) {
+        v1 = Math.min(winHi, v1 + (winLo - v0));
+        v0 = winLo;
       }
-      if (v1 > maxT) {
-        v0 = Math.max(0, v0 - (v1 - maxT));
-        v1 = maxT;
+      if (v1 > winHi) {
+        v0 = Math.max(winLo, v0 - (v1 - winHi));
+        v1 = winHi;
       }
       return { v0, v1 };
     });
@@ -514,7 +538,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
               resolve();
             };
             vid.addEventListener("seeked", done);
-            vid.currentTime = clamp(t, 0, Math.max(0, maxT - 0.1));
+            vid.currentTime = clamp(t, winLo, Math.max(winLo, winHi - 0.1));
             setTimeout(done, 1500); // não trava o strip se o seek engasgar
           });
           if (thumbGen.current !== gen) return;
@@ -818,7 +842,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                 >
                   <video
                     ref={videoRef}
-                    src={source.url ?? undefined}
+                    src={videoSrc}
                     playsInline
                     preload="metadata"
                     onLoadedMetadata={(e) => {
@@ -886,7 +910,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     >
                       <video
                         ref={mapRef}
-                        src={source.url ?? undefined}
+                        src={videoSrc}
                         muted
                         playsInline
                         preload="metadata"
@@ -1433,15 +1457,15 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                   disabled={saving}
                   onClick={() =>
                     setView({
-                      v0: Math.max(0, start - (end - start)),
-                      v1: Math.min(maxT, end + (end - start)),
+                      v0: Math.max(winLo, start - (end - start)),
+                      v1: Math.min(winHi, end + (end - start)),
                     })
                   }
                 >
                   Ajustar ao corte
                 </DarkBtn>
-                <DarkBtn disabled={saving} onClick={() => setView({ v0: 0, v1: maxT })}>
-                  Set inteiro
+                <DarkBtn disabled={saving} onClick={() => setView({ v0: winLo, v1: winHi })}>
+                  Janela toda
                 </DarkBtn>
               </div>
               <span style={{ fontSize: 10, color: dk.faint }}>{formatTimecode(v.v1)}</span>
@@ -1449,21 +1473,24 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
             <div style={{ fontSize: 11, color: dk.faint, marginTop: 6 }}>
               arraste as alças roxas para encurtar ou estender o corte — pode ir além
               do trecho que a IA escolheu (a linha branca embaixo marca a escolha
-              original)
+              original). Para o editor ficar leve, a timeline carrega ~1 min antes e
+              depois do corte; ao estender o corte, a janela acompanha.
             </div>
           </div>
 
-          {/* Vídeo oculto que gera as miniaturas do filmstrip (CORS p/ canvas) */}
+          {/* Vídeo oculto que gera as miniaturas do filmstrip (CORS p/ canvas).
+              preload="metadata": só o índice do arquivo — os frames chegam por
+              range request a cada seek (preload="auto" baixava o set INTEIRO). */}
           {hasSource && (
             <video
               ref={thumbVidRef}
-              src={source.url ?? undefined}
+              src={videoSrc}
               muted
               playsInline
-              preload="auto"
+              preload="metadata"
               crossOrigin="anonymous"
               style={{ display: "none" }}
-              onLoadedData={() => setThumbReady(true)}
+              onLoadedMetadata={() => setThumbReady(true)}
             />
           )}
         </>
