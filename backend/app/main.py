@@ -40,6 +40,7 @@ def process(
         body.max_cuts,
         body.cut_style,
         body.ai_tier,
+        body.cut_intensity,
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
 

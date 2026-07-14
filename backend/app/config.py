@@ -176,6 +176,39 @@ class Settings(BaseSettings):
     # `dynamic_zoom_max`). 0 no bônus desliga o fechamento reativo.
     dynamic_tight_activity_ratio: float = 1.4
     dynamic_activity_zoom_bonus: float = 0.2
+    # ---- Guarda per-shot contra foco em cena vazia/parada ----
+    # Um shot de pessoa (dj/dançarino) só mantém o enquadramento apertado se a
+    # track TIVER sustentação NAQUELE trecho: cobertura temporal mínima (fração
+    # do shot com detecção "recente", sem buraco longo — pega "a pessoa saiu de
+    # quadro no meio do shot") e confiança mediana mínima das detecções. Abaixo
+    # disso o kind degrada em cascata (dj→center, dancer→crowd→dj→center) ANTES
+    # da guarda de atividade — evita segurar zoom num box onde já não há ninguém.
+    dynamic_min_shot_coverage: float = 0.4
+    dynamic_min_shot_conf: float = 0.35
+    # Piso ABSOLUTO de atividade de imagem (frame-diff): abaixo dele o shot de
+    # pessoa vira wide mesmo que o ratio relativo (dynamic_still_activity_ratio)
+    # não dispare — resolve a janela inteira de baixa energia, onde a mediana
+    # local também é baixa e a comparação relativa deixaria um trecho morto
+    # passar. 0 desliga o piso (só o ratio relativo atua).
+    dynamic_still_activity_floor: float = 0.02
+    # Janela (s) do baseline LOCAL de atividade: a guarda de "respiro reativo"
+    # compara o shot contra a mediana de atividade dos vizinhos (±esta janela)
+    # em vez da mediana da janela inteira de ~60s — assim uma queda de ação no
+    # MEIO de um clipe geralmente agitado ainda é detectada. Fallback para o
+    # baseline global quando há poucos samples locais.
+    dynamic_local_baseline_window: float = 15.0
+
+    # ---- Zoom de antecipação de batida (build lento + punch na batida) ----
+    # Dentro de um shot de zoom, em vez de uma rampa uniforme, a câmera se
+    # aproxima DEVAGAR entre as batidas e dá um "punch" rápido logo antes de
+    # cada beat. `anticip_frac` é a fração do intervalo entre beats reservada à
+    # fase lenta; `anticip_zoom_frac` é quanto do ganho de zoom já aconteceu ao
+    # fim dessa fase lenta (o resto vem no punch curto). A assimetria tempo/zoom
+    # é o que dá a sensação "lento-depois-rápido". Ligado só nos níveis
+    # médio/intenso (ver DYNAMIC_INTENSITY_PRESETS); em subtle fica desligado.
+    beat_punch_enabled: bool = True
+    beat_punch_anticip_frac: float = 0.7
+    beat_punch_anticip_zoom_frac: float = 0.3
 
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
@@ -233,3 +266,48 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# Presets dos 3 níveis de intensidade do corte dinâmico (escolhidos pelo usuário
+# no formulário; ver `projects.cut_intensity`). Cada preset é um `update` aplicado
+# via `settings.model_copy(update=...)` em `dynamic.build_shot_plan` — NUNCA muta o
+# singleton `settings` (seria condição de corrida entre jobs concorrentes). As
+# chaves precisam ser campos reais de `Settings`.
+#
+# - `subtle`: poucas trocas de shot (shots longos), zooms contidos, mais
+#   continuidade de câmera (menos "pulo"), thresholds tolerantes e sem beat-punch.
+# - `medium`: exatamente os defaults atuais (preset vazio → sem override, zero
+#   regressão para quem já usa dynamic hoje).
+# - `intense`: shots curtos, zoom/drift/bônus altos, menos continuidade (mais
+#   corte), thresholds sensíveis e beat-punch mais abrupto.
+DYNAMIC_INTENSITY_PRESETS: dict[str, dict[str, float | int | bool]] = {
+    "subtle": {
+        "dynamic_shot_min": 4.5,
+        "dynamic_shot_max": 10.0,
+        "dynamic_zoom_max": 1.5,
+        "dynamic_drift": 0.03,
+        "dynamic_camera_continuity": 0.55,
+        "dynamic_still_activity_ratio": 0.70,
+        "dynamic_tight_activity_ratio": 1.7,
+        "dynamic_activity_zoom_bonus": 0.10,
+        "dynamic_max_shots": 6,
+        "dynamic_pan_max_speed": 0.07,
+        "beat_punch_enabled": False,
+    },
+    "medium": {},
+    "intense": {
+        "dynamic_shot_min": 2.2,
+        "dynamic_shot_max": 5.5,
+        "dynamic_zoom_max": 2.0,
+        "dynamic_drift": 0.10,
+        "dynamic_camera_continuity": 0.15,
+        "dynamic_still_activity_ratio": 0.40,
+        "dynamic_tight_activity_ratio": 1.15,
+        "dynamic_activity_zoom_bonus": 0.30,
+        "dynamic_max_shots": 14,
+        "dynamic_pan_max_speed": 0.14,
+        "beat_punch_enabled": True,
+        "beat_punch_anticip_frac": 0.55,
+        "beat_punch_anticip_zoom_frac": 0.15,
+    },
+}

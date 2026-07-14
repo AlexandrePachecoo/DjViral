@@ -86,6 +86,12 @@ create index if not exists idx_cuts_project on cuts (project_id);
 alter table projects add column if not exists cut_style text not null default 'basic';
 alter table projects add column if not exists max_cuts integer;
 
+-- Migração: nível de intensidade do corte dinâmico — 'subtle' (poucas trocas,
+-- zooms contidos) | 'medium' (padrão) | 'intense' (bastante troca dj/público,
+-- zooms fortes na batida). Só relevante quando cut_style='dynamic'. Projetos
+-- antigos herdam 'medium' (= comportamento atual).
+alter table projects add column if not exists cut_intensity text not null default 'medium';
+
 -- Migração: decomposição do score do corte. `score` passa a ser o combinado
 -- (musical + visual); as parcelas ficam disponíveis para a UI. Cortes antigos
 -- ficam com as parcelas NULL.

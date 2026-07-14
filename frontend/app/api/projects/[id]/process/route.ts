@@ -17,7 +17,7 @@ export async function POST(
   // Só o dono do projeto pode dispará-lo.
   const { data: project } = await supabaseAdmin
     .from("projects")
-    .select("id, user_id, cut_style, max_cuts")
+    .select("id, user_id, cut_style, cut_intensity, max_cuts")
     .eq("id", params.id)
     .single();
   if (!project || project.user_id !== user.id) {
@@ -83,6 +83,7 @@ export async function POST(
       limit_seconds: limitSeconds,
       max_cuts: maxCuts,
       cut_style: project.cut_style ?? "basic",
+      cut_intensity: project.cut_intensity ?? "medium",
       ai_tier: aiTier,
     }),
   });

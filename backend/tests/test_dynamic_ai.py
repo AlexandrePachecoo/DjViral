@@ -521,7 +521,12 @@ def test_still_person_shot_becomes_wide():
 
 
 def test_still_degradation_disabled_keeps_person(monkeypatch):
+    # O respiro reativo tem DUAS guardas independentes: o ratio relativo (vs. a
+    # atividade dos vizinhos) e o piso absoluto (trecho essencialmente
+    # congelado). Desligar as duas segura o zoom em pessoa mesmo num trecho
+    # parado.
     monkeypatch.setattr(settings, "dynamic_still_activity_ratio", 0.0)
+    monkeypatch.setattr(settings, "dynamic_still_activity_floor", 0.0)
     wv = _wv()
     wv.samples = _samples(lambda t: 0.05 if t < 40.0 else 0.001)
     shots = build_shot_plan(
@@ -597,3 +602,148 @@ def test_ai_dancer_box_fills_in_without_yolo_dancer():
     assert hit.kind == "dancer"
     w, _h, x, _y = hit.crop
     assert x + w / 2 > SRC_W * 0.6  # enquadra o box da IA à direita
+
+
+# ---- Guarda de PRESENÇA per-shot (track fraca/intermitente → troca sujeito) ----
+
+def test_weak_dj_track_in_shot_degrades_subject():
+    # dj_box existe (globalmente) mas a track só tem detecções na 1ª metade da
+    # janela; na 2ª metade (buraco longo) o DJ "sumiu" — os shots de lá não
+    # devem segurar zoom no DJ. Há crowd_box, então degrada para crowd/wide,
+    # nunca dj.
+    wv = _wv()
+    left = Box(cx=0.5, cy=0.4, w=0.12, h=0.35, conf=0.9)
+    wv.dj_track = [(float(t), left) for t in range(0, 28, 2)]  # só até ~28s
+    shots = build_shot_plan(wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H)
+    _assert_invariants(shots)
+    late_dj = [s for s in shots if s.kind == "dj" and s.t0 >= 40.0]
+    assert not late_dj, "DJ não deve ser enquadrado onde a track tem buraco longo"
+
+
+def test_low_confidence_track_degrades_subject(monkeypatch):
+    # Track presente o tempo todo mas com confiança baixa (detecções ruins de
+    # cena escura): abaixo do mínimo, o kind de pessoa degrada.
+    monkeypatch.setattr(settings, "dynamic_min_shot_conf", 0.5)
+    wv = WindowVisual()
+    wv.detected = True
+    wv.motion_score = 0.5
+    wv.dj_box = Box(cx=0.5, cy=0.4, w=0.12, h=0.35, conf=0.2)
+    faint = Box(cx=0.5, cy=0.4, w=0.12, h=0.35, conf=0.2)  # < 0.5
+    wv.dj_track = [(float(t), faint) for t in range(0, 60, 1)]
+    shots = build_shot_plan(wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H)
+    _assert_invariants(shots)
+    # Sem crowd/dancer, dj degrada para center — nenhum shot "dj".
+    assert not any(s.kind == "dj" for s in shots)
+
+
+def test_ai_scene_box_skips_presence_guard():
+    # Box de cena única da IA (sem track por frame): a guarda de presença é
+    # pulada (não há o que medir) e o DJ continua enquadrado.
+    ai = AIDirection(
+        hype_score=0.8, subject="dj", worthy=True,
+        dj_box=Box(cx=0.3, cy=0.4, w=0.12, h=0.35, conf=0.5),
+    )
+    wv = WindowVisual()  # sem dj_box/track do YOLO
+    wv.detected = True
+    wv.motion_score = 0.5
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, ai=ai,
+    )
+    _assert_invariants(shots)
+    assert any(s.kind == "dj" for s in shots)
+
+
+def test_absolute_floor_forces_wide_in_uniformly_dead_window():
+    # Janela inteira de baixa energia: o baseline relativo também é baixo, então
+    # só o PISO absoluto pega o trecho congelado no fim (motion ~0).
+    wv = _wv()
+    wv.samples = _samples(lambda t: 0.03 if t < 40.0 else 0.0005)
+    shots = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=5.0
+    )
+    _assert_invariants(shots)
+    dead = [s for s in shots if s.t0 >= 45.0]
+    assert dead and all(s.kind == "wide" for s in dead)
+
+
+# ---- Níveis de intensidade (cut_intensity) ----
+
+def _assert_contiguous(shots):
+    assert shots and shots[0].t0 == 0.0
+    assert math.isclose(shots[-1].t1, DURATION, abs_tol=1e-6)
+    for a, b in zip(shots, shots[1:]):
+        assert math.isclose(a.t1, b.t0, abs_tol=1e-6)
+
+
+def test_intensity_intense_cuts_more_than_subtle():
+    wv = _wv()
+    subtle = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="subtle",
+    )
+    intense = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="intense",
+    )
+    # Cada nível respeita SEU teto de shots (subtle=6, intense=14) — não o
+    # default global; por isso a contiguidade é checada à parte.
+    _assert_contiguous(subtle)
+    _assert_contiguous(intense)
+    assert len(subtle) <= 6
+    assert len(intense) <= 14
+    assert len(intense) > len(subtle)
+
+
+def test_intensity_medium_matches_default():
+    wv = _wv()
+    default = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H, peak_at=30.0
+    )
+    medium = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="medium",
+    )
+    assert [(s.t0, s.t1, s.kind) for s in default] == [
+        (s.t0, s.t1, s.kind) for s in medium
+    ]
+
+
+def test_unknown_intensity_falls_back_to_default():
+    wv = _wv()
+    unknown = build_shot_plan(
+        wv, beats=[], duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="bogus",
+    )
+    _assert_invariants(unknown)
+
+
+# ---- Zoom de antecipação de batida (zoom_keys) ----
+
+def test_beat_punch_populates_zoom_keys_on_beat_shots():
+    wv = _wv()
+    beats = [float(b) for b in range(0, 60)]  # 1 beat/s → beats em todo shot
+    shots = build_shot_plan(
+        wv, beats=beats, duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="intense",
+    )
+    zoom_shots = [s for s in shots if s.drift and s.kind != "wide"]
+    assert zoom_shots
+    assert any(s.zoom_keys for s in zoom_shots)
+    for s in zoom_shots:
+        if s.zoom_keys:
+            ts = [t for t, _z in s.zoom_keys]
+            zs = [z for _t, z in s.zoom_keys]
+            assert ts == sorted(ts)               # crescentes em t
+            assert zs[0] == 1.0                    # começa sem zoom
+            assert max(zs) <= 1.0 + abs(s.drift) + 1e-6  # teto = 1+drift
+
+
+def test_beat_punch_disabled_in_subtle():
+    wv = _wv()
+    beats = [float(b) for b in range(0, 60)]
+    shots = build_shot_plan(
+        wv, beats=beats, duration=DURATION, src_w=SRC_W, src_h=SRC_H,
+        peak_at=30.0, intensity="subtle",
+    )
+    assert all(s.zoom_keys is None for s in shots)

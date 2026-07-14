@@ -40,13 +40,14 @@ efêmero, sem FFmpeg nativo, sem worker de longa duração).
 
 ```
 Navegador (Vercel UI)
-  1. POST /api/projects {name, cut_style?, max_cuts?}
+  1. POST /api/projects {name, cut_style?, cut_intensity?, max_cuts?}
                                      → cria project + source, gera signed upload URL
                                        (cut_style: 'basic' seco | 'dynamic' com zooms;
-                                        max_cuts: 1..30, clampado ao plano)
+                                        cut_intensity: 'subtle'|'medium'|'intense'
+                                        p/ o dinâmico; max_cuts: 1..30, clampado ao plano)
   2. PUT do vídeo DIRETO no Supabase Storage (signed URL) — não passa pela Vercel
   3. POST /api/projects/{id}/process → Vercel chama o worker Railway
-                                        max_cuts, cut_style, ai_tier}
+                                        max_cuts, cut_style, cut_intensity, ai_tier}
                                         (header X-Worker-Secret; ai_tier:
                                         'off'|'lite'|'full' conforme o plano)
   4. Worker (background): baixa o mp4 do Supabase → analyzer (áudio) → visual
@@ -162,12 +163,26 @@ YouTube quando necessário.
      respiro a cada troca** (a rotação intercala wide para não ficar tempo
      demais colada nas pessoas; zooms **sempre aproximam** — sem drift
      alternado cego; fronteiras alinhadas aos beats; as coladas a um punch são
-     removidas para não gerar shot-relâmpago). **Respiro reativo à ação:** cada
-     shot é medido pela atividade de imagem do trecho (média do frame-diff dos
-     `visual.samples`) contra a MEDIANA da janela — um shot de pessoa que não é
-     o punch-in do drop e cuja atividade cai abaixo de
-     `DYNAMIC_STILL_ACTIVITY_RATIO`× a mediana vira wide (não segura um zoom
-     parado em quem começou a dançar e parou); acima de
+     removidas para não gerar shot-relâmpago). **Três níveis de intensidade**
+     (`projects.cut_intensity`: `subtle`/`medium`/`intense`) são presets que
+     sobrescrevem os knobs `DYNAMIC_*`/`BEAT_PUNCH_*` por projeto
+     (`config.DYNAMIC_INTENSITY_PRESETS` via `settings.model_copy`, sem mutar o
+     singleton — `build_shot_plan(intensity=...)` resolve um `cfg` isolado);
+     `medium` = os defaults atuais (zero regressão). **Guarda de presença
+     per-shot:** antes de segurar um zoom no dj/dançarino, o shot valida que a
+     track TEM sustentação naquele trecho (nº de detecções, cobertura temporal
+     `DYNAMIC_MIN_SHOT_COVERAGE` sem buraco longo, confiança
+     `DYNAMIC_MIN_SHOT_CONF`) — track fraca/intermitente degrada o SUJEITO em
+     cascata (dj→dançarino/público→center) em vez de enquadrar um box vazio
+     (box de cena única da IA, sem track, pula a guarda). **Respiro reativo à
+     ação:** cada shot é medido pela atividade de imagem do trecho (média do
+     frame-diff dos `visual.samples`) contra a mediana LOCAL dos vizinhos
+     (`DYNAMIC_LOCAL_BASELINE_WINDOW`, pega uma queda de ação no meio de um
+     clipe agitado) — um shot de pessoa que não é o punch-in do drop e cuja
+     atividade cai abaixo de `DYNAMIC_STILL_ACTIVITY_RATIO`× essa mediana, OU
+     abaixo do piso absoluto `DYNAMIC_STILL_ACTIVITY_FLOOR` (janela inteira
+     congelada), vira wide (não segura um zoom parado em quem começou a dançar
+     e parou); acima de
      `DYNAMIC_TIGHT_ACTIVITY_RATIO`× a mediana o zoom base ganha
      `DYNAMIC_ACTIVITY_ZOOM_BONUS` (take mais fechado quando a pessoa está
      "on", clampado a `DYNAMIC_ZOOM_MAX`). Sem samples (visual off) os dois
@@ -204,7 +219,15 @@ YouTube quando necessário.
      anti-jitter, aplicado EM CIMA do crop já panorâmico quando o shot tem
      pan — mas avalia **x/y por frame**: shots com pan usam expressões
      piecewise com easing (`_smoothstep`) em `t` para seguir a pessoa; áudio
-     `-map 0:a` contínuo). Sem pessoa detectada (nem pelo YOLO, nem pela IA)
+     `-map 0:a` contínuo). **Zoom de antecipação de batida** (níveis
+     `medium`/`intense`, `BEAT_PUNCH_ENABLED`): quando o shot tem batida dentro
+     dele, `dynamic._beat_zoom_keys` gera keyframes `(t, z)` de zoom
+     "lento-depois-punch" (aproxima devagar entre beats — `BEAT_PUNCH_ANTICIP_FRAC`
+     do tempo cobre só `BEAT_PUNCH_ANTICIP_ZOOM_FRAC` do ganho — e dá o crop
+     forte logo antes de cada beat), persistidos em `Shot.zoom_keys` e
+     renderizados como a expressão `z` do `zoompan` via o mesmo `_pan_expr` do
+     pan; sem batida no trecho (ou nível `subtle`) cai na rampa de `drift`
+     uniforme de sempre. Sem pessoa detectada (nem pelo YOLO, nem pela IA)
      → zoom central. O render em si tem **3 níveis de fallback**
      (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
      plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
@@ -351,10 +374,21 @@ ganchos detalhados em [`design.md`](design.md).
   `DYNAMIC_PAN_DEADBAND`, `DYNAMIC_PAN_MAX_SPEED`, `DYNAMIC_MAX_SHOTS`,
   `DYNAMIC_CAMERA_CONTINUITY` (0 desliga a continuidade entre shots do mesmo
   protagonista), `DYNAMIC_AI_BOX_TAKEOVER_RATIO`,
-  `DYNAMIC_STILL_ACTIVITY_RATIO` (0 desliga o respiro reativo que troca por
-  wide quem parou de dançar), `DYNAMIC_TIGHT_ACTIVITY_RATIO` +
+  `DYNAMIC_STILL_ACTIVITY_RATIO` (0 desliga o respiro reativo relativo que troca
+  por wide quem parou de dançar; compara contra o baseline LOCAL de
+  `DYNAMIC_LOCAL_BASELINE_WINDOW` s em vez da janela inteira),
+  `DYNAMIC_STILL_ACTIVITY_FLOOR` (piso absoluto — trecho congelado vira wide
+  mesmo com baseline local baixo; 0 desliga), `DYNAMIC_MIN_SHOT_COVERAGE` +
+  `DYNAMIC_MIN_SHOT_CONF` (guarda de PRESENÇA per-shot: track fraca/intermitente
+  no trecho degrada o sujeito dj/dançarino em vez de segurar zoom em box vazio),
+  `DYNAMIC_TIGHT_ACTIVITY_RATIO` +
   `DYNAMIC_ACTIVITY_ZOOM_BONUS` (take mais fechado em trechos agitados; bônus
-  0 desliga). Detecção de rosto (sinal de
+  0 desliga), `BEAT_PUNCH_ENABLED` + `BEAT_PUNCH_ANTICIP_FRAC` +
+  `BEAT_PUNCH_ANTICIP_ZOOM_FRAC` (zoom de antecipação: aproxima devagar entre
+  batidas e dá o punch no beat). Os três níveis de `cut_intensity`
+  (`subtle`/`medium`/`intense`) são presets que sobrescrevem esses `DYNAMIC_*`/
+  `BEAT_PUNCH_*` por projeto (`config.DYNAMIC_INTENSITY_PRESETS`, aplicados via
+  `settings.model_copy` sem mutar o singleton). Detecção de rosto (sinal de
   ancoragem, opcional): `FACE_ENABLED`, `FACE_MODEL_PATH`, `FACE_CONF`,
   `FACE_ANCHOR_WEIGHT`, `FACE_ZOOM_BONUS`, `FACE_MIN_SIZE_PX`. Diretor de IA
   em dois estágios + títulos (opcional; nível escolhido pelo `ai_tier` do
@@ -475,6 +509,9 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - share_token — token do link público (`/s/<token>`); NULL = não compartilhado
 - share_message — mensagem do dono exibida no topo da página pública (opcional)
 - cut_style (`basic | dynamic`) — estilo de corte escolhido na criação
+- cut_intensity (`subtle | medium | intense`) — intensidade do corte dinâmico
+  (nº de trocas de shot, força dos zooms, beat-punch); só relevante no
+  `dynamic`. Projetos antigos herdam `medium` (= comportamento anterior)
 - max_cuts — quantidade de cortes pedida (NULL = máximo do plano)
 - date_create
 

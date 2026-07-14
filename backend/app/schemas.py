@@ -14,6 +14,10 @@ class ProcessRequest(BaseModel):
     # Estilo de corte escolhido na criação do projeto: 'basic' (corte seco,
     # crop central fixo) ou 'dynamic' (zooms no DJ/público no ritmo da batida).
     cut_style: str = "basic"
+    # Nível de intensidade do corte dinâmico: 'subtle' (poucas trocas, zooms
+    # contidos), 'medium' (padrão) ou 'intense' (bastante troca dj/público,
+    # zooms fortes na batida). Ignorado quando cut_style='basic'.
+    cut_intensity: str = "medium"
     # Nível da camada de IA de visão, enviado pela Vercel conforme o plano:
     #   'off'  — sem IA (só heurística local áudio + YOLO).
     #   'lite' — triagem (re-rank de TODOS os candidatos) + títulos virais;

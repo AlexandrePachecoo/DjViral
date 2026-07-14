@@ -114,6 +114,7 @@ def process_project(
     max_cuts: int | None = None,
     cut_style: str = "basic",
     ai_tier: str = "off",
+    cut_intensity: str = "medium",
 ) -> None:
     """Pipeline completo, rodado em background.
 
@@ -132,9 +133,14 @@ def process_project(
     re-ranqueia todos os candidatos + títulos virais, só Haiku — plano free) ou
     'full' ('lite' + direção profunda que dirige os zooms, Sonnet no top-K —
     planos pagos). Qualquer nível degrada para a heurística local sem chave.
+    ``cut_intensity`` ('subtle'|'medium'|'intense') controla a agressividade do
+    corte dinâmico (nº de trocas, força dos zooms, beat-punch); só relevante
+    quando ``cut_style='dynamic'``.
     """
     with _job_slots:
-        _process_project(project_id, limit_seconds, max_cuts, cut_style, ai_tier)
+        _process_project(
+            project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity
+        )
 
 
 def _process_project(
@@ -143,6 +149,7 @@ def _process_project(
     max_cuts: int | None = None,
     cut_style: str = "basic",
     ai_tier: str = "off",
+    cut_intensity: str = "medium",
 ) -> None:
     client = get_client()
     video_path: str | None = None
@@ -199,7 +206,8 @@ def _process_project(
                 clip_path = tmp.name
             try:
                 _render_clip(
-                    video_path, peak, wv, cut_style, clip_path, src_dims, bpm, ai
+                    video_path, peak, wv, cut_style, clip_path, src_dims, bpm,
+                    ai, cut_intensity,
                 )
 
                 dest_name = f"{project_id}/clipe_{idx + 1}_{int(peak.start_sec)}s.mp4"
@@ -517,6 +525,7 @@ def _render_clip(
     src_dims: dict | None,
     bpm: int,
     ai: "ai_director.AIDirection | None" = None,
+    cut_intensity: str = "medium",
 ) -> None:
     """Renderiza um clipe no estilo pedido, com fallback para o corte seco.
 
@@ -554,6 +563,7 @@ def _render_clip(
                     src_dims["height"],
                     peak_at=peak.start_sec - start,
                     ai=ai,
+                    intensity=cut_intensity,
                 )
             except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
@@ -626,6 +636,25 @@ def _recut_style(client, project_id: str) -> str:
     return "basic"
 
 
+def _recut_intensity(client, project_id: str) -> str:
+    """Nível de intensidade do projeto ('medium' se a coluna faltar/estiver vazia)."""
+    try:
+        proj = (
+            client.table("projects")
+            .select("cut_intensity")
+            .eq("id", project_id)
+            .limit(1)
+            .execute()
+        )
+        if proj.data:
+            level = proj.data[0].get("cut_intensity")
+            if level in ("subtle", "medium", "intense"):
+                return level
+    except Exception:  # noqa: BLE001 - sem coluna → medium (defaults atuais)
+        logger.exception("Falha ao ler cut_intensity do projeto %s", project_id)
+    return "medium"
+
+
 def _recut_cut(
     project_id: str,
     cut_id: str,
@@ -639,6 +668,7 @@ def _recut_cut(
     duration = max(1, round(fim - inicio))
     try:
         cut_style = _recut_style(client, project_id)
+        cut_intensity = _recut_intensity(client, project_id)
         video_path = _fetch_source(client, project_id)
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -700,6 +730,7 @@ def _recut_cut(
                         src_dims["width"],
                         src_dims["height"],
                         peak_at=None,
+                        intensity=cut_intensity,
                     )
             except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
