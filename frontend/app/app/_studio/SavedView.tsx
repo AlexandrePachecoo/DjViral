@@ -301,13 +301,20 @@ function FolderSection({
   onEdit: (projectId: string, setName: string, cut: Cut) => void;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const shared = !!folder.shareToken;
 
   return (
-    <section>
+    <section
+      style={{
+        border: `1px solid ${theme.border}`,
+        borderRadius: 16,
+        background: theme.surface,
+        padding: 18,
+      }}
+    >
       {/* Cabeçalho da pasta */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <button
@@ -505,7 +512,16 @@ export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onE
   }
 
   return (
-    <div style={{ animation: "dj-fadeUp .4s ease", display: "flex", flexDirection: "column", gap: 34 }} data-anim>
+    <div
+      style={{
+        animation: "dj-fadeUp .4s ease",
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))",
+        gap: 20,
+        alignItems: "start",
+      }}
+      data-anim
+    >
       {folders.map((folder) => (
         <FolderSection
           key={folder.projectId}
