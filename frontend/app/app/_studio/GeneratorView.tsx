@@ -13,6 +13,11 @@ type Phase = "form" | "uploading" | "processing" | "done" | "error";
 // 'dynamic' = zooms no DJ/público cortados no ritmo da batida.
 type CutStyle = "basic" | "dynamic";
 
+// Intensidade do corte dinâmico: 'subtle' = poucas trocas de shot e zooms
+// contidos; 'medium' = equilíbrio (padrão); 'intense' = muita troca dj/público
+// e zooms fortes na batida. Só usada quando o estilo é 'dynamic'.
+type CutIntensity = "subtle" | "medium" | "intense";
+
 type Props = {
   // Recarrega a aba "Cortes salvos" depois que o usuário salva cortes.
   onSaved: () => void;
@@ -81,6 +86,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [cutStyle, setCutStyle] = useState<CutStyle>("basic");
+  const [cutIntensity, setCutIntensity] = useState<CutIntensity>("medium");
   // Quantidade de cortes desejada e o teto do plano (free=10, pagos=30).
   // Começa em 10 (teto do free) e sobe quando o /api/billing responder.
   const [numCuts, setNumCuts] = useState(10);
@@ -161,6 +167,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
           duration_seconds: duration,
           size_bytes: file.size,
           cut_style: cutStyle,
+          cut_intensity: cutIntensity,
           max_cuts: numCuts,
         }),
       });
@@ -246,11 +253,13 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
           uploadProgress={uploadProgress}
           limitHit={limitHit}
           cutStyle={cutStyle}
+          cutIntensity={cutIntensity}
           numCuts={numCuts}
           maxCuts={maxCuts}
           onName={setName}
           onFile={setFile}
           onCutStyle={setCutStyle}
+          onCutIntensity={setCutIntensity}
           onNumCuts={setNumCuts}
           onSubmit={handleSubmit}
           onUpgrade={onUpgrade}
@@ -485,11 +494,13 @@ function UploadForm({
   uploadProgress,
   limitHit,
   cutStyle,
+  cutIntensity,
   numCuts,
   maxCuts,
   onName,
   onFile,
   onCutStyle,
+  onCutIntensity,
   onNumCuts,
   onSubmit,
   onUpgrade,
@@ -502,11 +513,13 @@ function UploadForm({
   uploadProgress: number;
   limitHit: boolean;
   cutStyle: CutStyle;
+  cutIntensity: CutIntensity;
   numCuts: number;
   maxCuts: number;
   onName: (v: string) => void;
   onFile: (f: File | null) => void;
   onCutStyle: (s: CutStyle) => void;
+  onCutIntensity: (s: CutIntensity) => void;
   onNumCuts: (n: number) => void;
   onSubmit: (e: React.FormEvent) => void;
   onUpgrade: () => void;
@@ -525,6 +538,12 @@ function UploadForm({
       title: "Corte dinâmico",
       desc: "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais.",
     },
+  ];
+
+  const intensityOptions: { id: CutIntensity; title: string; desc: string }[] = [
+    { id: "subtle", title: "Sutil", desc: "Poucas trocas de shot, zooms discretos." },
+    { id: "medium", title: "Médio", desc: "Equilíbrio entre ritmo e naturalidade." },
+    { id: "intense", title: "Intenso", desc: "Muita troca dj/público, zooms fortes na batida." },
   ];
 
   return (
@@ -629,6 +648,60 @@ function UploadForm({
             })}
           </div>
         </div>
+
+        {/* Intensidade do corte dinâmico (só quando o estilo é dinâmico) */}
+        {cutStyle === "dynamic" && (
+          <div>
+            <div style={fieldLabel}>Intensidade</div>
+            <div
+              className="dj-style-grid"
+              role="radiogroup"
+              aria-label="Intensidade do corte dinâmico"
+              style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}
+            >
+              {intensityOptions.map((opt) => {
+                const active = cutIntensity === opt.id;
+                return (
+                  <div
+                    key={opt.id}
+                    role="radio"
+                    aria-checked={active}
+                    tabIndex={busy ? -1 : 0}
+                    onClick={() => !busy && onCutIntensity(opt.id)}
+                    onKeyDown={(e) => {
+                      if (!busy && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault();
+                        onCutIntensity(opt.id);
+                      }
+                    }}
+                    style={{
+                      padding: "12px 13px",
+                      borderRadius: 10,
+                      cursor: busy ? "default" : "pointer",
+                      opacity: busy ? 0.6 : 1,
+                      background: active ? theme.accentSoft : theme.surface,
+                      border: `1px solid ${active ? theme.accentBorder : theme.borderStrong}`,
+                      boxShadow: active ? `0 0 0 1px ${theme.accentBorder}` : "none",
+                    }}
+                  >
+                    <div
+                      style={{
+                        font: `500 14px ${font.display}`,
+                        color: active ? theme.accent : theme.textPrimary,
+                        marginBottom: 3,
+                      }}
+                    >
+                      {opt.title}
+                    </div>
+                    <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.4 }}>
+                      {opt.desc}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Quantidade de cortes */}
         <div>

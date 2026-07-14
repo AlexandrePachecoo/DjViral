@@ -240,13 +240,21 @@ def cut_dynamic(
             # resolução final treme; em 2x o erro cai para meio pixel. Quando
             # o shot também tem ``path`` (pan), este zoompan roda EM CIMA do
             # crop já panorâmico (centrado): pan e zoom acontecem juntos.
-            frames = max(1, round((shot.t1 - shot.t0) * fps))
             drift = abs(shot.drift)
-            smooth = _smoothstep(f"on/{frames}")
-            if shot.drift > 0:  # aproxima
-                z_expr = f"min({1 + drift:.4f},1+{drift:.4f}*{smooth})"
-            else:  # afasta
-                z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*{smooth})"
+            if shot.zoom_keys and len(shot.zoom_keys) >= 2:
+                # Zoom de antecipação de batida: keyframes (t, z) "lento-depois-
+                # punch" já calculados em `dynamic._beat_zoom_keys`. O zoompan
+                # não expõe ``t``, só o frame de saída ``on`` (d=1 → 1:1) — o
+                # mesmo padrão do corte com keyframes manuais.
+                z_expr = _pan_expr(shot.zoom_keys, f"(on/{fps:g})")
+            else:
+                # Rampa uniforme (sem batida no trecho / beat-punch desligado).
+                frames = max(1, round((shot.t1 - shot.t0) * fps))
+                smooth = _smoothstep(f"on/{frames}")
+                if shot.drift > 0:  # aproxima
+                    z_expr = f"min({1 + drift:.4f},1+{drift:.4f}*{smooth})"
+                else:  # afasta
+                    z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*{smooth})"
             chain += (
                 f",scale={w * 2}:{h * 2}"
                 f",zoompan=z='{z_expr}'"
