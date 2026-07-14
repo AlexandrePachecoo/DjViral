@@ -35,8 +35,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "não autenticado" }, { status: 401 });
   }
 
-  const { name, filename, youtube_url, duration_seconds, size_bytes, cut_style, max_cuts } =
-    await req.json();
+  const {
+    name,
+    filename,
+    youtube_url,
+    duration_seconds,
+    size_bytes,
+    cut_style,
+    cut_intensity,
+    max_cuts,
+  } = await req.json();
   if (!name || (!filename && !youtube_url)) {
     return NextResponse.json(
       { error: "name e (filename ou youtube_url) são obrigatórios" },
@@ -51,6 +59,15 @@ export async function POST(req: NextRequest) {
   if (cutStyle !== "basic" && cutStyle !== "dynamic") {
     return NextResponse.json(
       { error: "cut_style deve ser 'basic' ou 'dynamic'" },
+      { status: 400 }
+    );
+  }
+  // Intensidade do corte dinâmico (ignorada no 'basic'). Validada estrito; a UI
+  // só a mostra quando o estilo é dinâmico, mas o clamp cobre chamadas diretas.
+  const cutIntensity = cut_intensity ?? "medium";
+  if (!["subtle", "medium", "intense"].includes(cutIntensity)) {
+    return NextResponse.json(
+      { error: "cut_intensity deve ser 'subtle', 'medium' ou 'intense'" },
       { status: 400 }
     );
   }
@@ -108,6 +125,7 @@ export async function POST(req: NextRequest) {
       status: "processing",
       user_id: user.id,
       cut_style: cutStyle,
+      cut_intensity: cutIntensity,
       max_cuts: maxCuts,
     })
     .select("id")

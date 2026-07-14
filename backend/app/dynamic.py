@@ -16,7 +16,7 @@ import math
 import statistics
 from dataclasses import dataclass
 
-from .config import settings
+from .config import DYNAMIC_INTENSITY_PRESETS, settings
 from .visual import Box, FrameSample, WindowVisual, _median_box
 
 # Fronteira de shot "snapa" ao beat mais próximo dentro desta tolerância (s).
@@ -34,6 +34,30 @@ TRACK_LOCAL_PAD = 0.75
 TRACK_LOCAL_MIN = 2
 # Janela (nº de detecções) da média móvel que suaviza a track antes do pan.
 PAN_SMOOTH = 3
+# Gap máximo (s) entre detecções consecutivas para a track contar como
+# "presente" naquele trecho do shot (acima disso é um buraco — pessoa saiu de
+# quadro / detecção falhou). Folgado o bastante para não confundir a CADÊNCIA
+# normal de amostragem (~1 det/s em produção; até 2s) com ausência: só um
+# buraco de vários segundos sem detecção conta como a pessoa fora de quadro.
+TRACK_PRESENCE_GAP = 3.0
+# Teto de batidas consideradas por shot no zoom de antecipação — segura o
+# tamanho da expressão FFmpeg (um shot de ~8s a 128 BPM tem ~4-5 beats).
+BEAT_PUNCH_MAX_BEATS = 4
+
+
+def _resolve_cfg(intensity: str):
+    """Config efetiva para um nível de intensidade, SEM mutar o singleton.
+
+    ``settings`` é compartilhado entre jobs concorrentes (o worker roda os
+    renders num threadpool); mutar seus atributos por job seria condição de
+    corrida. ``model_copy(update=...)`` devolve uma cópia isolada com os knobs
+    do preset sobrescritos. ``medium`` (preset vazio) devolve o próprio
+    ``settings`` — zero cópia, comportamento idêntico ao atual.
+    """
+    preset = DYNAMIC_INTENSITY_PRESETS.get(intensity or "medium")
+    if not preset:
+        return settings
+    return settings.model_copy(update=preset)
 
 
 @dataclass
@@ -48,6 +72,11 @@ class Shot:
     x/y por frame; w/h continuam fixos). ``path`` e ``drift`` PODEM coexistir
     (Ken Burns: pan + zoom simultâneos) — o renderizador aplica o pan via
     ``crop`` e o zoom via um ``zoompan`` em cima do resultado já panorâmico.
+
+    ``zoom_keys`` (opcional) são keyframes ``(t relativo ao shot, z)`` do NÍVEL
+    de zoom do zoompan: quando presente, substitui a rampa uniforme por uma
+    curva "lento-depois-punch" ancorada nas batidas (ver
+    :func:`_beat_zoom_keys`). ``None`` = rampa de ``drift`` uniforme (padrão).
     """
 
     t0: float
@@ -56,6 +85,7 @@ class Shot:
     crop: tuple[int, int, int, int]
     drift: float = 0.0
     path: list[tuple[float, int, int]] | None = None
+    zoom_keys: list[tuple[float, float]] | None = None
 
 
 def _even(v: float) -> int:
@@ -73,6 +103,7 @@ def crop_for_box(
     src_h: int,
     zoom: float = 1.5,
     anchor_cx: float | None = None,
+    cfg=settings,
 ) -> tuple[int, int, int, int]:
     """Crop 9:16 (w, h, x, y) em px da fonte para enquadrar ``box``.
 
@@ -88,7 +119,7 @@ def crop_for_box(
     O zoom nunca passa de ``dynamic_zoom_max`` (a saída 1080×1920 já é
     upscale de fonte 1080p; aproximar demais pixelaria).
     """
-    out_ar = settings.output_width / settings.output_height  # 9/16
+    out_ar = cfg.output_width / cfg.output_height  # 9/16
 
     if box is None:
         h = _even(src_h)
@@ -97,7 +128,7 @@ def crop_for_box(
         x = min(max(cx * src_w - w / 2, 0), src_w - w)
         return w, h, _even_pos(x, src_w - w), 0
 
-    zoom = min(max(zoom, 1.0), settings.dynamic_zoom_max)
+    zoom = min(max(zoom, 1.0), cfg.dynamic_zoom_max)
     if box.w <= 0 or box.h <= 0:
         h = src_h / zoom
     else:
@@ -119,6 +150,13 @@ def crop_for_box(
     return w_i, h_i, x_i, y_i
 
 
+def _track_in_span(
+    track: list[tuple[float, Box]], t0: float, t1: float
+) -> list[tuple[float, Box]]:
+    """Detecções da track no trecho ``[t0, t1]`` (com folga TRACK_LOCAL_PAD)."""
+    return [(t, b) for t, b in track if t0 - TRACK_LOCAL_PAD <= t <= t1 + TRACK_LOCAL_PAD]
+
+
 def _local_box(track: list[tuple[float, Box]], t0: float, t1: float) -> Box | None:
     """Box mediano da track DENTRO do shot (com folga :data:`TRACK_LOCAL_PAD`).
 
@@ -128,10 +166,63 @@ def _local_box(track: list[tuple[float, Box]], t0: float, t1: float) -> Box | No
     menos de :data:`TRACK_LOCAL_MIN` detecções no trecho) → o chamador usa o
     box global.
     """
-    boxes = [b for t, b in track if t0 - TRACK_LOCAL_PAD <= t <= t1 + TRACK_LOCAL_PAD]
+    boxes = [b for _t, b in _track_in_span(track, t0, t1)]
     if len(boxes) < TRACK_LOCAL_MIN:
         return None
     return _median_box(boxes)
+
+
+def _local_track_stats(
+    track: list[tuple[float, Box]], t0: float, t1: float
+) -> tuple[int, float, float]:
+    """``(n_det, coverage, median_conf)`` da track no shot ``[t0, t1]``.
+
+    - ``n_det``: nº de detecções no trecho (com folga TRACK_LOCAL_PAD).
+    - ``coverage``: fração do shot "coberta" por detecções recentes — soma dos
+      gaps entre detecções consecutivas que são ``<= TRACK_PRESENCE_GAP``,
+      dividida pela duração do shot. Pega o caso "a track existia no início mas
+      a pessoa saiu de quadro no meio e ficou um buraco longo sem detecção".
+    - ``median_conf``: confiança mediana das detecções (0 quando não há).
+
+    É o sinal per-shot de "esse box corresponde MESMO a alguém aqui?" — usado
+    por :func:`_shot_presence_ok` para degradar o kind quando a track é fraca/
+    intermitente NAQUELE trecho (o box global da janela pode ser forte e ainda
+    assim estar vazio num shot específico).
+    """
+    pts = _track_in_span(track, t0, t1)
+    if not pts:
+        return 0, 0.0, 0.0
+    times = sorted(t for t, _ in pts)
+    dur = max(t1 - t0, 1e-6)
+    covered = 0.0
+    for a, b in zip(times, times[1:]):
+        gap = b - a
+        if gap <= TRACK_PRESENCE_GAP:
+            covered += gap
+    coverage = min(1.0, covered / dur)
+    confs = sorted(b.conf for _t, b in pts)
+    median_conf = confs[len(confs) // 2]
+    return len(pts), coverage, median_conf
+
+
+def _shot_presence_ok(
+    track: list[tuple[float, Box]], t0: float, t1: float, cfg=settings
+) -> bool:
+    """A track sustenta um enquadramento de pessoa neste shot?
+
+    Exige um mínimo de detecções, cobertura temporal (``dynamic_min_shot_coverage``)
+    e confiança mediana (``dynamic_min_shot_conf``). Track vazia → ``False`` (o
+    chamador degrada o kind). Sem track alguma (``[]`` — box de cena única da
+    IA, sem detecções por frame) o chamador NÃO deve chamar esta função: não há
+    o que medir e a decisão fica só na guarda de atividade.
+    """
+    n_det, coverage, median_conf = _local_track_stats(track, t0, t1)
+    if n_det < TRACK_LOCAL_MIN:
+        return False
+    return (
+        coverage >= cfg.dynamic_min_shot_coverage
+        and median_conf >= cfg.dynamic_min_shot_conf
+    )
 
 
 def _smooth(vals: list[float], k: int = PAN_SMOOTH) -> list[float]:
@@ -154,6 +245,7 @@ def _pan_path(
     crop_h: int,
     src_w: int,
     src_h: int,
+    cfg=settings,
 ) -> list[tuple[float, int, int]] | None:
     """Keyframes de pan ``(t relativo ao shot, x, y)`` seguindo a track.
 
@@ -165,9 +257,9 @@ def _pan_path(
     chicotear. ``None`` = sem movimento útil → crop estático (comportamento
     original).
     """
-    if not settings.dynamic_pan:
+    if not cfg.dynamic_pan:
         return None
-    pts = [(t, b) for t, b in track if t0 - TRACK_LOCAL_PAD <= t <= t1 + TRACK_LOCAL_PAD]
+    pts = _track_in_span(track, t0, t1)
     if len(pts) < 2:
         return None
     times = [t for t, _ in pts]
@@ -175,7 +267,7 @@ def _pan_path(
     cys = _smooth([b.cy for _, b in pts])
 
     # Zona morta: só vira keyframe o ponto que se afastou do último keyframe.
-    deadband = max(0.0, settings.dynamic_pan_deadband)
+    deadband = max(0.0, cfg.dynamic_pan_deadband)
     keys = [(times[0], cxs[0], cys[0])]
     for t, cx, cy in zip(times[1:], cxs[1:], cys[1:]):
         _, px, py = keys[-1]
@@ -186,7 +278,7 @@ def _pan_path(
 
     # Teto de velocidade (fração do frame/s): se a pessoa correu, o pan anda
     # só o permitido na direção dela e completa nos keyframes seguintes.
-    max_speed = max(1e-6, settings.dynamic_pan_max_speed)
+    max_speed = max(1e-6, cfg.dynamic_pan_max_speed)
     limited = [keys[0]]
     for t, cx, cy in keys[1:]:
         pt, px, py = limited[-1]
@@ -214,7 +306,7 @@ def _pan_path(
 
 
 def _inflate_for_span(
-    box: Box, track: list[tuple[float, Box]], t0: float, t1: float
+    box: Box, track: list[tuple[float, Box]], t0: float, t1: float, cfg=settings
 ) -> Box:
     """Alarga a altura do box pelo percurso VERTICAL da track no trecho.
 
@@ -222,18 +314,18 @@ def _inflate_for_span(
     vaivém da pessoa entre os keyframes do pan (com pan ligado só sobra o
     resíduo além da zona morta; com pan desligado, o percurso inteiro).
     """
-    pts = [b for t, b in track if t0 - TRACK_LOCAL_PAD <= t <= t1 + TRACK_LOCAL_PAD]
+    pts = [b for _t, b in _track_in_span(track, t0, t1)]
     if len(pts) < 2:
         return box
     span = max(b.cy for b in pts) - min(b.cy for b in pts)
-    if settings.dynamic_pan:
-        span = max(0.0, span - settings.dynamic_pan_deadband)
+    if cfg.dynamic_pan:
+        span = max(0.0, span - cfg.dynamic_pan_deadband)
     if span <= 0.0:
         return box
     return Box(cx=box.cx, cy=box.cy, w=box.w, h=box.h + span, conf=box.conf)
 
 
-def _face_anchor(box: Box, face_bias_y: float | None) -> Box:
+def _face_anchor(box: Box, face_bias_y: float | None, cfg=settings) -> Box:
     """Nudge vertical do crop em direção ao rosto (Fase 6 do plano de melhorias).
 
     ``face_bias_y`` é a mediana de ``(face.cy - box.cy) / box.h`` observada na
@@ -244,9 +336,9 @@ def _face_anchor(box: Box, face_bias_y: float | None) -> Box:
     quadro. Sem rosto detectado (``None``) ou feature desligada, devolve o box
     intacto.
     """
-    if face_bias_y is None or not settings.face_enabled:
+    if face_bias_y is None or not cfg.face_enabled:
         return box
-    weight = min(1.0, max(0.0, settings.face_anchor_weight))
+    weight = min(1.0, max(0.0, cfg.face_anchor_weight))
     new_cy = min(1.0, max(0.0, box.cy + face_bias_y * box.h * weight))
     return Box(cx=box.cx, cy=new_cy, w=box.w, h=box.h, conf=box.conf)
 
@@ -272,6 +364,64 @@ def _shot_activity(samples: list[FrameSample], t0: float, t1: float) -> float | 
     return sum(vals) / len(vals)
 
 
+def _local_baseline(
+    samples: list[FrameSample], t0: float, t1: float, window: float, fallback: float
+) -> float:
+    """Mediana da atividade dos VIZINHOS do shot (±``window`` s).
+
+    O baseline global (mediana da janela inteira de ~60s) mascara uma queda de
+    ação no MEIO de um clipe agitado: o trecho morto ainda fica acima de
+    ``ratio × mediana_global``. Comparar contra os vizinhos imediatos detecta
+    essa queda. Poucos samples locais (< 3) → cai no ``fallback`` global.
+    """
+    vals = [
+        s.motion for s in samples if t0 - window <= s.t <= t1 + window and s.motion > 0
+    ]
+    if len(vals) < 3:
+        return fallback
+    return statistics.median(vals)
+
+
+def _beat_zoom_keys(
+    dur: float,
+    drift: float,
+    shot_beats: list[float],
+    anticip_frac: float,
+    anticip_zoom_frac: float,
+) -> list[tuple[float, float]] | None:
+    """Keyframes ``(t, z)`` de zoom "lento-depois-punch" ancorados nas batidas.
+
+    Entre batidas consecutivas (com ``0`` e ``dur`` como bordas) o zoom sobe
+    DEVAGAR até ``z_prev + anticip_zoom_frac*(z_next-z_prev)`` na primeira
+    ``anticip_frac`` do intervalo, e RÁPIDO até ``z_next`` no resto (logo antes
+    do beat). O nível de zoom por beat interpola de ``1.0`` a ``1+drift`` ao
+    longo dos beats — o último ponto é ``1+drift`` no fim do shot, então o teto
+    do zoom continua o mesmo (o beat-punch só redistribui QUANDO o ganho
+    acontece, não QUANTO). A desproporção tempo/zoom (ex.: 70% do tempo cobre
+    30% do zoom, depois 30% do tempo cobre 70%) é o que dá o "punch" — a
+    interpolação com easing de :func:`clipper._pan_expr` faz o resto.
+
+    ``None`` quando não há batida dentro do shot (o chamador mantém a rampa
+    uniforme de ``drift``, sem mudar o visual dos shots sem beat).
+    """
+    beats = sorted(b for b in shot_beats if 0.0 < b < dur)
+    beats = beats[:BEAT_PUNCH_MAX_BEATS]
+    if not beats:
+        return None
+    bounds = [0.0] + beats + [dur]
+    n = len(bounds) - 1
+    z_at = [1.0 + drift * (i / n) for i in range(n + 1)]
+    points: list[tuple[float, float]] = [(0.0, 1.0)]
+    for i in range(1, len(bounds)):
+        t_prev, t_cur = bounds[i - 1], bounds[i]
+        z_prev, z_cur = z_at[i - 1], z_at[i]
+        anticip_t = t_prev + anticip_frac * (t_cur - t_prev)
+        z_anticip = z_prev + anticip_zoom_frac * (z_cur - z_prev)
+        points.append((round(anticip_t, 3), round(z_anticip, 4)))
+        points.append((round(t_cur, 3), round(z_cur, 4)))
+    return points
+
+
 def build_shot_plan(
     wv: WindowVisual | None,
     beats: list[float],
@@ -280,6 +430,7 @@ def build_shot_plan(
     src_h: int,
     peak_at: float | None = None,
     ai: "AIDirection | None" = None,
+    intensity: str = "medium",
 ) -> list[Shot]:
     """Monta a timeline de shots de um clipe de ``duration`` segundos.
 
@@ -310,10 +461,13 @@ def build_shot_plan(
     - Nunca ultrapassa :data:`settings.dynamic_max_shots` (o teto limita a
       largura do `split=N` no filtergraph renderizado, e portanto a memória).
     """
-    shot_min = settings.dynamic_shot_min
-    shot_max = settings.dynamic_shot_max
+    # Config efetiva do nível de intensidade escolhido pelo usuário — cópia
+    # isolada (nunca muta o singleton `settings`), passada às sub-funções.
+    cfg = _resolve_cfg(intensity)
+    shot_min = cfg.dynamic_shot_min
+    shot_max = cfg.dynamic_shot_max
     motion = wv.motion_score if wv is not None else 0.5
-    max_shots = max(1, settings.dynamic_max_shots)
+    max_shots = max(1, cfg.dynamic_max_shots)
 
     # Atividade de imagem por trecho (frame-diff dos samples): a MEDIANA da
     # janela é a referência contra a qual cada shot é medido — um trecho bem
@@ -439,7 +593,7 @@ def build_shot_plan(
         weak_track = (
             dj_box is not None
             and wv is not None
-            and wv.dj_track_ratio < settings.dynamic_ai_box_takeover_ratio
+            and wv.dj_track_ratio < cfg.dynamic_ai_box_takeover_ratio
         )
         if ai.dj_box is not None and (dj_box is None or weak_track):
             dj_box = ai.dj_box
@@ -507,6 +661,7 @@ def build_shot_plan(
     wide = crop_for_box(
         None, src_w, src_h,
         anchor_cx=anchor_box.cx if anchor_box is not None else None,
+        cfg=cfg,
     )
 
     # Continuidade de câmera: (cx, cy) de ONDE A CÂMERA PAROU no fim do último
@@ -522,7 +677,7 @@ def build_shot_plan(
         path: list[tuple[float, int, int]] | None,
     ) -> tuple[tuple[int, int, int, int], list[tuple[float, int, int]] | None]:
         cw, ch, cx, cy = crop
-        blend = min(1.0, max(0.0, settings.dynamic_camera_continuity))
+        blend = min(1.0, max(0.0, cfg.dynamic_camera_continuity))
         prev = prev_camera.get(kind)
         if path is None and prev is not None and blend > 0:
             # Shot estático: puxa o centro do crop uma fração em direção à
@@ -550,7 +705,7 @@ def build_shot_plan(
     ) -> tuple[tuple[int, int, int, int], list[tuple[float, int, int]] | None]:
         """Crop do shot + keyframes de pan (quando a track dá movimento)."""
         if kind == "crowd":
-            crop = crop_for_box(crowd_box, src_w, src_h, zoom=1.35)
+            crop = crop_for_box(crowd_box, src_w, src_h, zoom=1.35, cfg=cfg)
             return _apply_continuity(kind, crop, None)
         if kind in ("dj", "dancer"):
             # Enquadramento POR SHOT: mediana da track dentro do trecho —
@@ -560,37 +715,80 @@ def build_shot_plan(
             base = dj_box if kind == "dj" else dancer_box
             face_bias = dj_face_bias if kind == "dj" else dancer_face_bias
             box = _local_box(track, t0, t1) or base
-            box = _inflate_for_span(box, track, t0, t1)
+            box = _inflate_for_span(box, track, t0, t1, cfg=cfg)
             # Rosto: só um NUDGE vertical do crop (nunca w/h) — mantém a
             # dança/controladora no quadro, só evita cortar a cabeça.
-            box = _face_anchor(box, face_bias)
+            box = _face_anchor(box, face_bias, cfg=cfg)
             zoom = 1.65 if tight else 1.45
             # Bônus de zoom limitado: só em shots JÁ "tight" (punch-in no
             # drop/auge) e com rosto detectado — nunca vira um close-up
             # genérico fora desses momentos.
-            if tight and face_bias is not None and settings.face_enabled:
-                zoom += settings.face_zoom_bonus
+            if tight and face_bias is not None and cfg.face_enabled:
+                zoom += cfg.face_zoom_bonus
             # Take mais fechado quando a pessoa está claramente "on": trecho
             # com atividade de imagem bem acima da mediana da janela ganha um
             # aperto extra (clampado a `dynamic_zoom_max` em `crop_for_box`).
             act = _shot_activity(motion_samples, t0, t1)
             if (
-                settings.dynamic_activity_zoom_bonus > 0
+                cfg.dynamic_activity_zoom_bonus > 0
                 and baseline_activity > 0
                 and act is not None
-                and act >= settings.dynamic_tight_activity_ratio * baseline_activity
+                and act >= cfg.dynamic_tight_activity_ratio * baseline_activity
             ):
-                zoom += settings.dynamic_activity_zoom_bonus
-            crop = crop_for_box(box, src_w, src_h, zoom=zoom)
-            path = _pan_path(track, t0, t1, crop[0], crop[1], src_w, src_h)
+                zoom += cfg.dynamic_activity_zoom_bonus
+            crop = crop_for_box(box, src_w, src_h, zoom=zoom, cfg=cfg)
+            path = _pan_path(track, t0, t1, crop[0], crop[1], src_w, src_h, cfg=cfg)
             return _apply_continuity(kind, crop, path)
         # center: zoom puro no centro (box pontual), leve variação de intensidade.
         # Fica de fora da continuidade (fallback sem sujeito real).
         center = Box(cx=0.5, cy=0.5, w=0.0, h=0.0, conf=1.0)
         crop = crop_for_box(
-            center, src_w, src_h, zoom=CENTER_ZOOM + (0.15 if tight else 0.0)
+            center, src_w, src_h, zoom=CENTER_ZOOM + (0.15 if tight else 0.0), cfg=cfg
         )
         return crop, None
+
+    def _presence_ok_for(kind: str, t0: float, t1: float) -> bool:
+        """A track do kind sustenta um enquadramento de pessoa NESTE shot?
+
+        ``dj``/``dancer`` com track (do YOLO) são validados por
+        :func:`_shot_presence_ok`. Uma track vazia (``[]`` — box de cena única
+        da IA, sem detecções por frame) não tem o que medir → considera OK (a
+        decisão fica só na guarda de atividade). ``crowd``/``center``/``wide``
+        não têm track por pessoa → sempre OK.
+        """
+        if kind == "dj":
+            return _shot_presence_ok(dj_track, t0, t1, cfg=cfg) if dj_track else True
+        if kind == "dancer":
+            return (
+                _shot_presence_ok(dancer_track, t0, t1, cfg=cfg)
+                if dancer_track
+                else True
+            )
+        return True
+
+    def _degrade_by_presence(kind: str, t0: float, t1: float) -> str:
+        """Degrada um kind de pessoa cuja track não sustenta ESTE shot.
+
+        Se o DJ/dançarino não está de fato enquadrável neste trecho (saiu de
+        quadro, track intermitente), troca o SUJEITO em cascata em vez de
+        segurar um zoom num box vazio — só depois a guarda de atividade decide
+        se o sujeito resolvido está parado (vira wide). Nunca degrada direto
+        pra wide aqui (isso mataria um punch-in): sempre para outro sujeito ou
+        o zoom central.
+        """
+        if kind == "dj" and not _presence_ok_for("dj", t0, t1):
+            if have_dancer and _presence_ok_for("dancer", t0, t1):
+                return "dancer"
+            if have_crowd:
+                return "crowd"
+            return "center"
+        if kind == "dancer" and not _presence_ok_for("dancer", t0, t1):
+            if have_crowd:
+                return "crowd"
+            if have_dj and _presence_ok_for("dj", t0, t1):
+                return "dj"
+            return "center"
+        return kind
 
     shots: list[Shot] = []
     post_idx = 0
@@ -614,23 +812,38 @@ def build_shot_plan(
             kind = post_cycle[post_idx % len(post_cycle)]
             post_idx += 1
 
-        # Respiro reativo: se a imagem está PARADA neste trecho (ninguém
+        # Guarda de PRESENÇA (per-shot): troca o sujeito quando a track dele não
+        # tem sustentação neste trecho (aplica a punch-ins também — só troca o
+        # sujeito, nunca mata o zoom).
+        kind = _degrade_by_presence(kind, t0, t1)
+
+        # Respiro reativo à AÇÃO: se a imagem está PARADA neste trecho (ninguém
         # dançando de fato), não segura um zoom estático numa pessoa — vira
-        # wide. O punch-in do drop é intencional e fica de fora.
-        if (
-            kind in ("dj", "dancer", "crowd")
-            and not is_punch
-            and settings.dynamic_still_activity_ratio > 0
-            and baseline_activity > 0
-        ):
+        # wide. O punch-in do drop é intencional e fica de fora. Compara contra
+        # o baseline LOCAL (vizinhos) — pega uma queda de ação no meio de um
+        # clipe agitado — e contra um PISO absoluto — pega a janela inteira de
+        # baixa energia, onde o baseline relativo também é baixo.
+        if kind in ("dj", "dancer", "crowd") and not is_punch:
             act = _shot_activity(motion_samples, t0, t1)
-            if (
-                act is not None
-                and act < settings.dynamic_still_activity_ratio * baseline_activity
-            ):
-                kind = "wide"
+            if act is not None:
+                local_base = _local_baseline(
+                    motion_samples, t0, t1,
+                    cfg.dynamic_local_baseline_window, baseline_activity,
+                )
+                too_still = (
+                    cfg.dynamic_still_activity_ratio > 0
+                    and local_base > 0
+                    and act < cfg.dynamic_still_activity_ratio * local_base
+                )
+                below_floor = (
+                    cfg.dynamic_still_activity_floor > 0
+                    and act < cfg.dynamic_still_activity_floor
+                )
+                if too_still or below_floor:
+                    kind = "wide"
 
         path = None
+        zoom_keys = None
         if kind == "wide":
             crop = wide
             drift = 0.0
@@ -640,10 +853,24 @@ def build_shot_plan(
             # cego) era o que deixava os zooms "sem objetivo". Com ou sem
             # pan: a câmera aproxima ENQUANTO acompanha a pessoa (Ken Burns),
             # em vez de escolher entre panorâmica OU zoom por shot.
-            drift = abs(settings.dynamic_drift)
+            drift = abs(cfg.dynamic_drift)
+            # Zoom de antecipação de batida: em vez da rampa uniforme, aproxima
+            # devagar entre as batidas e dá o punch logo antes de cada beat
+            # DENTRO do shot. Só quando o nível liga (`beat_punch_enabled`) e há
+            # batida no trecho — senão `zoom_keys` fica None e o render usa a
+            # rampa de `drift` de sempre.
+            if cfg.beat_punch_enabled and drift > 0:
+                shot_beats = [b - t0 for b in beats if t0 < b < t1]
+                zoom_keys = _beat_zoom_keys(
+                    t1 - t0, drift, shot_beats,
+                    cfg.beat_punch_anticip_frac, cfg.beat_punch_anticip_zoom_frac,
+                )
 
         shots.append(
-            Shot(t0=t0, t1=t1, kind=kind, crop=crop, drift=drift, path=path)
+            Shot(
+                t0=t0, t1=t1, kind=kind, crop=crop, drift=drift,
+                path=path, zoom_keys=zoom_keys,
+            )
         )
 
     return shots
