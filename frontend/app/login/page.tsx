@@ -7,7 +7,17 @@ type Mode = "login" | "register";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("login");
+  const [mode, setMode] = useState<Mode>(() => {
+    // Permite abrir direto no cadastro (ex.: vindo do gerador da landing com
+    // /login?signup=1). Lê da URL sem useSearchParams p/ evitar Suspense.
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("signup") || params.get("mode") === "register") {
+        return "register";
+      }
+    }
+    return "login";
+  });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

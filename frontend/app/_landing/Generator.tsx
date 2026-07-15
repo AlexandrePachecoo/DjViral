@@ -1,52 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import styles from "./landing.module.css";
 
-type Phase = "idle" | "analyzing" | "done";
+type Phase = "idle" | "loaded" | "gate";
 
-const LABELS = [
-  "carregando áudio…",
-  "detectando drops e viradas…",
-  "medindo energia da pista…",
-  "escolhendo os melhores momentos…",
-  "cortando em 9:16…",
-];
+const SIGNUP_HREF = "/login?signup=1";
 
-const GRAD_PAIRS: [string, string][] = [
-  ["#a855f7", "#22d3ee"],
-  ["#d946ef", "#ec4899"],
-  ["#7c3aed", "#a855f7"],
-  ["#ec4899", "#22d3ee"],
-];
+// Waveform determinística (senoides sobrepostas) p/ o preview do set carregado.
+const PREVIEW_WAVE = Array.from({ length: 56 }, (_, i) => {
+  const v = Math.abs(
+    Math.sin(i * 0.5) * 0.6 + Math.sin(i * 0.17) * 0.4 + Math.sin(i * 1.1) * 0.22
+  );
+  return { h: `${20 + Math.round(v * 76)}%`, d: `${((i * 0.05) % 1.1).toFixed(2)}s` };
+});
 
-const DURS = ["0:15", "0:22", "0:18", "0:20", "0:16", "0:24", "0:19", "0:21"];
-const SCORES = [94, 91, 89, 96, 87, 92, 85, 90];
-
-function buildClips() {
-  return DURS.map((dur, i) => {
-    const [a, b] = GRAD_PAIRS[i % GRAD_PAIRS.length];
-    return {
-      dur,
-      score: SCORES[i],
-      n: String(i + 1).padStart(2, "0"),
-      grad: `linear-gradient(160deg, ${a}cc, ${b}cc)`,
-      delay: `${i * 0.11}s`,
-    };
-  });
-}
-
-function buildWave(count: number) {
-  return Array.from({ length: count }, (_, i) => {
-    const v = Math.abs(
-      Math.sin(i * 0.5) * 0.6 + Math.sin(i * 0.17) * 0.4 + Math.sin(i * 1.1) * 0.22
-    );
-    return { h: `${20 + Math.round(v * 76)}%`, d: `${((i * 0.05) % 1.1).toFixed(2)}s` };
-  });
-}
-
-const ANALYZE_WAVE = buildWave(44);
-const CLIPS = buildClips();
 const IDLE_BARS = [
   { color: "#a855f7", h: "60%", d: "0s" },
   { color: "#d946ef", h: "100%", d: ".15s" },
@@ -57,45 +25,21 @@ const IDLE_BARS = [
 
 export default function Generator() {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [progress, setProgress] = useState(0);
   const [fileName, setFileName] = useState("");
-  const progressRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  function run(name: string) {
-    if (timerRef.current) clearInterval(timerRef.current);
-    progressRef.current = 0;
-    setPhase("analyzing");
-    setProgress(0);
+  function loadFile(name: string) {
     setFileName(name);
-    timerRef.current = setInterval(() => {
-      progressRef.current += 2.5 + Math.random() * 4.5;
-      if (progressRef.current >= 100) {
-        if (timerRef.current) clearInterval(timerRef.current);
-        setProgress(100);
-        setPhase("done");
-      } else {
-        setProgress(progressRef.current);
-      }
-    }, 95);
+    setPhase("loaded");
   }
 
   function reset() {
-    if (timerRef.current) clearInterval(timerRef.current);
     setPhase("idle");
-    setProgress(0);
     setFileName("");
   }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files && e.target.files[0];
-    if (f) run(f.name);
+    if (f) loadFile(f.name);
   }
 
   function onDragOver(e: React.DragEvent) {
@@ -105,11 +49,8 @@ export default function Generator() {
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    run(f ? f.name : "seu-set.mp4");
+    loadFile(f ? f.name : "seu-set.mp4");
   }
-
-  const pct = Math.min(100, Math.round(progress));
-  const labelIndex = Math.min(LABELS.length - 1, Math.floor((pct / 100) * LABELS.length));
 
   return (
     <div id="gerador" className={styles.genCard}>
@@ -150,82 +91,57 @@ export default function Generator() {
           </label>
         )}
 
-        {phase === "analyzing" && (
-          <div className={styles.analyzing}>
-            <div className={styles.analyzingHead}>
-              <span className={styles.analyzingDot} data-anim />
-              <span className={styles.analyzingLabel}>analisando · {fileName}</span>
-            </div>
-            <div className={styles.analyzeWave}>
-              {ANALYZE_WAVE.map((bar, i) => (
-                <span
-                  key={i}
-                  data-anim
-                  className={styles.analyzeBar}
-                  style={{ height: bar.h, animationDelay: bar.d }}
-                />
-              ))}
-            </div>
-            <div className={styles.progressWrap}>
-              <div className={styles.progressRow}>
-                <span className={styles.progressLabel}>{LABELS[labelIndex]}</span>
-                <span className={styles.progressPct}>{pct}%</span>
-              </div>
-              <div className={styles.progressTrack}>
-                <div className={styles.progressFill} style={{ width: `${pct}%` }} />
+        {phase === "loaded" && (
+          <div className={styles.loaded}>
+            <div className={styles.loadedFileRow}>
+              <span className={styles.loadedCheck}>✓</span>
+              <div className={styles.loadedFileInfo}>
+                <span className={styles.loadedFileName}>{fileName}</span>
+                <span className={styles.loadedFileMeta}>set carregado · pronto pra cortar</span>
               </div>
             </div>
+
+            <div className={styles.loadedPreview}>
+              <span className={styles.loadedPreviewTag}>SEU SET</span>
+              <div className={styles.loadedWave}>
+                {PREVIEW_WAVE.map((bar, i) => (
+                  <span
+                    key={i}
+                    data-anim
+                    className={styles.loadedWaveBar}
+                    style={{ height: bar.h, animationDelay: bar.d }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className={styles.generateBtn}
+              onClick={() => setPhase("gate")}
+            >
+              ✂ Gerar 30 cortes
+            </button>
+            <button type="button" className={styles.changeFileBtn} onClick={reset}>
+              Trocar arquivo
+            </button>
           </div>
         )}
 
-        {phase === "done" && (
-          <div>
-            <div className={styles.doneHead}>
-              <div className={styles.doneHeadLeft}>
-                <span className={styles.doneScissors}>✂</span>
-                <span className={styles.doneTitle}>30 cortes gerados</span>
-                <span className={styles.doneFileName}>de {fileName}</span>
-              </div>
-              <span className={styles.doneChip}>✦ 4 momentos com score 90+</span>
-            </div>
-
-            <div className={styles.clipsGrid}>
-              {CLIPS.map((clip) => (
-                <div
-                  key={clip.n}
-                  data-anim
-                  className={styles.clipCard}
-                  style={{ animationDelay: clip.delay }}
-                >
-                  <div
-                    className={styles.clipThumb}
-                    style={{
-                      backgroundImage: `${clip.grad}, url('/images/dj-preview.webp')`,
-                    }}
-                  >
-                    <span className={styles.clipPlay}>▶</span>
-                    <span className={styles.clipDur}>{clip.dur}</span>
-                    <span className={styles.clipScoreBadge}>{clip.score}</span>
-                  </div>
-                  <div className={styles.clipFoot}>
-                    <span className={styles.clipLabel}>Corte {clip.n}</span>
-                    <span>📱</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className={styles.doneActions}>
-              <a className={styles.dlButton} href="/login">
-                ↓ Baixar os 30 cortes
-              </a>
-              <button type="button" onClick={reset} className={styles.resetButton}>
-                ↺ Testar outro set
-              </button>
-            </div>
-            <div className={styles.doneMicro}>
-              No plano Pro os 30 cortes saem legendados e em alta resolução.
-            </div>
+        {phase === "gate" && (
+          <div className={styles.gate}>
+            <span className={styles.gateSpark}>✦</span>
+            <div className={styles.gateTitle}>Crie sua conta pra gerar os cortes</div>
+            <p className={styles.gateText}>
+              É grátis — a IA vai cortar <strong>{fileName}</strong> em até 30 vídeos
+              verticais 9:16 prontos pro feed.
+            </p>
+            <a className={styles.gateCta} href={SIGNUP_HREF}>
+              Criar conta grátis
+            </a>
+            <button type="button" className={styles.gateBack} onClick={() => setPhase("loaded")}>
+              ← Voltar
+            </button>
           </div>
         )}
       </div>
