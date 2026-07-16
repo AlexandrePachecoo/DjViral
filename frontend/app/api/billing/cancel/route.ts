@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { cancelSubscription } from "@/lib/abacatepay";
+import { cancelProviderSubscription } from "@/lib/billing";
 
-// Cancela a assinatura ativa do usuário na AbacatePay e rebaixa para o plano
-// free. Espelha o que o webhook faz num downgrade
-// (frontend/app/api/webhooks/abacatepay/route.ts).
+// Cancela a assinatura ativa do usuário no provedor certo (Stripe ou
+// AbacatePay) e rebaixa para o plano free. Espelha o que os webhooks fazem num
+// downgrade (frontend/app/api/webhooks/{abacatepay,stripe}/route.ts).
 export async function POST() {
   const user = await getSessionUser();
   if (!user) {
@@ -14,7 +14,7 @@ export async function POST() {
 
   const { data: sub } = await supabaseAdmin
     .from("subscriptions")
-    .select("id, provider_subscription_id")
+    .select("id, provider, provider_subscription_id")
     .eq("user_id", user.id)
     .in("status", ["active", "past_due"])
     .order("updated_at", { ascending: false })
@@ -27,12 +27,12 @@ export async function POST() {
     );
   }
 
-  // Best effort: pode já estar cancelada na AbacatePay; segue o downgrade.
+  // Best effort: pode já estar cancelada no provedor; segue o downgrade.
   if (sub.provider_subscription_id) {
     try {
-      await cancelSubscription(sub.provider_subscription_id);
+      await cancelProviderSubscription(sub.provider, sub.provider_subscription_id);
     } catch {
-      // ignora — a assinatura pode já não existir do lado da AbacatePay.
+      // ignora — a assinatura pode já não existir do lado do provedor.
     }
   }
 

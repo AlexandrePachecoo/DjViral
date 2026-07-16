@@ -121,7 +121,7 @@
         "free": { "name": "Free trial", "priceNote": "to try it out", "f1": "1 hour of set in total", "f2": "10 clips per set", "f3": "9:16 vertical videos" },
         "pro": { "name": "Pro", "f1": "Up to 5 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
         "premium": { "name": "Premium", "f1": "Up to 12 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
-        "paidPriceNote": "/mo"
+        "paidPriceNote": "/mo · card"
       },
       "errors": {
         "loadFailed": "Couldn't load your plan. Reload the page.",
@@ -129,7 +129,7 @@
         "unexpected": "Unexpected error"
       },
       "justPaid": {
-        "text": "✓ Payment complete! Your plan activates as soon as AbacatePay's confirmation arrives (usually a few seconds).",
+        "text": "✓ Payment complete! Your plan activates as soon as the payment confirmation arrives (usually a few seconds).",
         "refresh": "Refresh"
       },
       "yourPlan": "Your plan:",
@@ -138,13 +138,13 @@
       "onTrial": " on trial",
       "remaining": "{remaining} of set left · up to {maxCuts} clips per set",
       "renewsOn": " · renews on {date}",
-      "pastDue": "⚠ The last charge failed — AbacatePay will retry. Check your card to avoid losing access.",
+      "pastDue": "⚠ The last charge failed — we'll retry. Check your card to avoid losing access.",
       "adminAccount": "Admin account — unlimited usage, no billing. The cards below are just the publicly sold plans.",
       "currentPlan": "Current plan",
       "openingCheckout": "Opening checkout...",
       "contactCta": "Contact us",
       "subscribeTo": "Subscribe to {name}",
-      "paymentFootnote": "Payments are processed by AbacatePay (Brazil). International billing is not available yet — contact us to subscribe."
+      "paymentFootnote": "Payments are securely processed by Stripe. Cards renew automatically every month; cancel anytime."
     },
     "saved": {
       "empty": "No clips saved yet. Generate a set and save your favorite clips.",

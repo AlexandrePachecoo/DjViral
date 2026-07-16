@@ -405,40 +405,63 @@ ganchos detalhados em [`design.md`](design.md).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
-  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento) e `APP_URL`
-  (opcional, origem pública para as URLs de retorno do checkout).
+  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento no Brasil),
+  `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (pagamento internacional) e
+  `APP_URL` (opcional, origem pública para as URLs de retorno do checkout).
 
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
 consegue disparar `POST /process` no worker.
 
-## Pagamento / planos (AbacatePay)
+## Pagamento / planos (AbacatePay no Brasil, Stripe no internacional)
 
-Três planos, com cota de **horas de set** e limite de cortes por set:
+Três planos, com cota de **horas de set** e limite de cortes por set. O preço é
+mostrado na moeda do locale (BRL no `pt`, USD no `en`):
 
-| Plano   | Preço       | Cota                    | Cortes por set |
-|---------|-------------|-------------------------|----------------|
-| free    | R$0         | 1 hora de set no TOTAL  | 10             |
-| pro     | R$39,90/mês | 5 horas de set por mês  | 30             |
-| premium | R$59,90/mês | 12 horas de set por mês | 30             |
+| Plano   | Preço BRL   | Preço USD  | Cota                    | Cortes por set |
+|---------|-------------|------------|-------------------------|----------------|
+| free    | R$0         | $0         | 1 hora de set no TOTAL  | 10             |
+| pro     | R$39,90/mês | $9.90/mês  | 5 horas de set por mês  | 30             |
+| premium | R$59,90/mês | $14.90/mês | 12 horas de set por mês | 30             |
 
-Cobrança via **AbacatePay** (API v2, `https://api.abacatepay.com/v2`) com
-checkout de assinatura hospedado: o usuário escolhe **PIX ou cartão** na
-própria página da AbacatePay; cartão renova automaticamente todo mês.
+**O provedor de cobrança é escolhido pelo locale (host — ver i18n), não pelo
+usuário:** o Brasil (`pt`, `djviral.com.br`) cobra via **AbacatePay** (BRL, PIX
+ou cartão); o internacional (`en`, Vercel) cobra via **Stripe** (USD, cartão).
+Os dois usam checkout de assinatura hospedado com renovação mensal automática, e
+`subscriptions.provider` (`abacatepay | stripe`) registra qual gerou a linha.
+Os valores BRL/USD ficam em `frontend/lib/plans.ts` (`priceCents` /
+`priceCentsUsd`) — trocar o preço é editar só isso.
 
-- `frontend/lib/plans.ts` — definição dos planos + cálculo de uso do período
-  (soma `sources.duracao` dos projetos não-`error` do usuário; janela = mês da
-  assinatura para pagos, desde sempre no free).
-- `frontend/lib/abacatepay.ts` — cliente da API (produtos com `cycle=MONTHLY`
-  criados sob demanda com `externalId` fixo `djviral-{plano}-monthly`,
-  checkout de assinatura, verificação HMAC dos webhooks).
-- `POST /api/billing/checkout {plan}` — cria o checkout e a linha
-  `subscriptions` (status `pending`); devolve a URL de pagamento.
+- `frontend/lib/plans.ts` — definição dos planos (preço BRL **e** USD) + cálculo
+  de uso do período (soma `sources.duracao` dos projetos não-`error` do usuário;
+  janela = mês da assinatura para pagos, desde sempre no free). Helpers
+  `providerForLocale(locale)` e `priceLabel(plan, locale)`.
+- `frontend/lib/abacatepay.ts` — cliente da AbacatePay (produtos com
+  `cycle=MONTHLY` criados sob demanda com `externalId` fixo
+  `djviral-{plano}-monthly`, checkout de assinatura, verificação HMAC dos
+  webhooks).
+- `frontend/lib/stripe.ts` — cliente do Stripe (REST form-encoded, sem SDK):
+  Price recorrente USD criado sob demanda com o mesmo `lookup_key`
+  `djviral-{plano}-monthly`, Checkout Session em modo `subscription`,
+  verificação da assinatura `Stripe-Signature` (HMAC-SHA256 do
+  `${timestamp}.${body}` com `STRIPE_WEBHOOK_SECRET`, janela anti-replay).
+- `frontend/lib/billing.ts` — `cancelProviderSubscription(provider, id)`
+  despacha o cancelamento para o provedor certo (usado no cancel + upgrade).
+- `POST /api/billing/checkout {plan}` — resolve o locale pelo host, cria o
+  checkout no provedor correspondente e a linha `subscriptions` (status
+  `pending`, com `provider`); devolve a URL de pagamento.
 - `GET /api/billing` — plano atual + uso (alimenta a aba "Plano" do estúdio).
-- `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook (assinatura
-  HMAC no header `X-Webhook-Signature` + secret na query; idempotência via
-  tabela `webhook_events`). `subscription.completed`/`renewed` ativam o plano
-  e o período; `payment_failed` marca `past_due`; `cancelled` rebaixa para
-  `free`. O plano efetivo é espelhado em `users.plan`.
+- `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook da AbacatePay
+  (assinatura HMAC no header `X-Webhook-Signature` + secret na query;
+  idempotência via tabela `webhook_events`). `subscription.completed`/`renewed`
+  ativam o plano e o período; `payment_failed` marca `past_due`; `cancelled`
+  rebaixa para `free`.
+- `POST /api/webhooks/stripe` — webhook do Stripe (assinatura `Stripe-Signature`;
+  mesma tabela `webhook_events` para idempotência).
+  `checkout.session.completed` ativa; `invoice.paid`
+  (`billing_reason=subscription_cycle`) renova o período; `invoice.payment_failed`
+  marca `past_due`; `customer.subscription.deleted` rebaixa para `free`.
+
+O plano efetivo é espelhado em `users.plan` pelos dois webhooks.
 
 **Enforcement da cota:**
 1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do

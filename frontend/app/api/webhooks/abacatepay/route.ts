@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cancelSubscription, verifyWebhookSignature } from "@/lib/abacatepay";
+import { verifyWebhookSignature } from "@/lib/abacatepay";
+import { cancelProviderSubscription } from "@/lib/billing";
 import { supabaseAdmin } from "@/lib/supabase";
 
 // Webhook da AbacatePay. Cadastre no dashboard apontando para:
@@ -134,16 +135,16 @@ export async function POST(req: NextRequest) {
     // derruba a ativação.
     const { data: others } = await supabaseAdmin
       .from("subscriptions")
-      .select("id, provider_subscription_id")
+      .select("id, provider, provider_subscription_id")
       .eq("user_id", row.user_id)
       .in("status", ["active", "past_due"])
       .neq("id", row.id);
     for (const other of others ?? []) {
       if (other.provider_subscription_id) {
         try {
-          await cancelSubscription(other.provider_subscription_id);
+          await cancelProviderSubscription(other.provider, other.provider_subscription_id);
         } catch {
-          // já pode estar cancelada na AbacatePay; segue o baile
+          // já pode estar cancelada no provedor; segue o baile
         }
       }
       await supabaseAdmin
