@@ -1,9 +1,12 @@
+import { getLocale, getTranslations } from "next-intl/server";
 import styles from "./page.module.css";
 import Generator from "./_landing/Generator";
 import BeforeAfter from "./_landing/BeforeAfter";
+import LangSwitch from "./_landing/LangSwitch";
 
 const EQ_COLORS = ["#a855f7", "#d946ef", "#ec4899", "#22d3ee"];
 const TRIAL_HREF = "/login";
+const CONTACT_HREF = "mailto:contato@djviral.com.br";
 
 function Logo() {
   return (
@@ -26,7 +29,11 @@ function Logo() {
   );
 }
 
-export default function Landing() {
+export default async function Landing() {
+  const t = await getTranslations("landing");
+  const locale = await getLocale();
+  const paidCtaHref = locale === "en" ? CONTACT_HREF : TRIAL_HREF;
+
   return (
     <div className={styles.page}>
       <div className={styles.glowTop} />
@@ -39,20 +46,21 @@ export default function Landing() {
           <Logo />
           <div className={styles.navLinks}>
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="#gerador">
-              Testar agora
+              {t("nav.tryNow")}
             </a>
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="#como-funciona">
-              Como funciona
+              {t("nav.howItWorks")}
             </a>
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="#precos">
-              Preços
+              {t("nav.pricing")}
             </a>
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="/login">
-              Entrar
+              {t("nav.login")}
             </a>
             <a className={styles.navCta} href={TRIAL_HREF}>
-              Teste grátis
+              {t("nav.tryFree")}
             </a>
+            <LangSwitch className={`${styles.navLink} ${styles.navLinksText}`} />
           </div>
         </nav>
 
@@ -60,15 +68,11 @@ export default function Landing() {
         <section className={styles.hero}>
           <div className={styles.heroCopy}>
             <h1 className={styles.h1}>
-              1 set longo.
+              {t("hero.titleLine1")}
               <br />
-              <span className={styles.gradientText}>30 cortes virais.</span>
+              <span className={styles.gradientText}>{t("hero.titleLine2")}</span>
             </h1>
-            <p className={styles.sub}>
-              Suba o vídeo do seu set. A IA acha os drops, as viradas e os
-              momentos de maior energia&nbsp; e devolve vídeos verticais
-              prontos pro feed.
-            </p>
+            <p className={styles.sub}>{t("hero.subtitle")}</p>
           </div>
 
           <div className={styles.heroGen}>
@@ -82,10 +86,8 @@ export default function Landing() {
         {/* como funciona */}
         <section id="como-funciona" className={styles.howSection}>
           <div className={styles.howHead}>
-            <div className={styles.sectionEyebrow}>COMO FUNCIONA</div>
-            <h2 className={styles.howTitle}>
-              Do arquivo ao feed em três passos.
-            </h2>
+            <div className={styles.sectionEyebrow}>{t("how.eyebrow")}</div>
+            <h2 className={styles.howTitle}>{t("how.title")}</h2>
           </div>
           <div className={styles.steps}>
             <div className={styles.stepsLine} />
@@ -96,10 +98,8 @@ export default function Landing() {
               >
                 1
               </div>
-              <h3 className={styles.stepTitle}>Envie seu set</h3>
-              <p className={styles.stepBody}>
-                Arraste o vídeo do seu set de até 3 horas
-              </p>
+              <h3 className={styles.stepTitle}>{t("how.step1.title")}</h3>
+              <p className={styles.stepBody}>{t("how.step1.body")}</p>
             </div>
             <div className={styles.stepCard}>
               <div
@@ -108,11 +108,8 @@ export default function Landing() {
               >
                 2
               </div>
-              <h3 className={styles.stepTitle}>A IA corta os picos</h3>
-              <p className={styles.stepBody}>
-                Detectamos drops, viradas e os momentos de maior energia e
-                cortamos automaticamente&nbsp; sem você rever tudo.
-              </p>
+              <h3 className={styles.stepTitle}>{t("how.step2.title")}</h3>
+              <p className={styles.stepBody}>{t("how.step2.body")}</p>
             </div>
             <div className={styles.stepCard}>
               <div
@@ -121,12 +118,8 @@ export default function Landing() {
               >
                 3
               </div>
-              <h3 className={styles.stepTitle}>Receba 30 cortes</h3>
-              <p className={styles.stepBody}>
-                Vídeos verticais 9:16, prontos para postar no TikTok, Reels e
-                Shorts. Ainda tem a opção de editar o corte do jeito que
-                quiser&nbsp;
-              </p>
+              <h3 className={styles.stepTitle}>{t("how.step3.title")}</h3>
+              <p className={styles.stepBody}>{t("how.step3.body")}</p>
             </div>
           </div>
         </section>
@@ -134,60 +127,54 @@ export default function Landing() {
         {/* preços */}
         <section id="precos" className={styles.pricing}>
           <div className={styles.pricingHead}>
-            <div className={styles.sectionEyebrow}>PREÇOS</div>
-            <h2 className={styles.pricingTitle}>
-              Comece grátis. Cresça quando bombar.
-            </h2>
+            <div className={styles.sectionEyebrow}>{t("pricing.eyebrow")}</div>
+            <h2 className={styles.pricingTitle}>{t("pricing.title")}</h2>
           </div>
           <div className={styles.plans}>
             <div className={styles.plan}>
-              <div className={styles.planName}>Teste grátis</div>
+              <div className={styles.planName}>{t("pricing.free.name")}</div>
               <div className={styles.planPrice}>R$0</div>
-              <div className={styles.planSub}>para experimentar</div>
+              <div className={styles.planSub}>{t("pricing.free.sub")}</div>
               <div className={styles.planFeatures}>
-                <span>✓ 1 hora de set para testar</span>
-                <span>✓ 10 cortes verticais 9:16</span>
-                <span>✓ Cortes automáticos dos drops</span>
+                <span>✓ {t("pricing.free.feature1")}</span>
+                <span>✓ {t("pricing.free.feature2")}</span>
+                <span>✓ {t("pricing.free.feature3")}</span>
               </div>
               <a className={styles.planCtaGhost} href={TRIAL_HREF}>
-                Começar grátis
+                {t("pricing.free.cta")}
               </a>
             </div>
             <div className={`${styles.plan} ${styles.planPro}`}>
-              <span className={styles.planBadge}>★ MAIS POPULAR</span>
-              <div className={styles.planName}>Pro</div>
+              <span className={styles.planBadge}>{t("pricing.popularBadge")}</span>
+              <div className={styles.planName}>{t("pricing.pro.name")}</div>
               <div className={styles.planPrice}>
-                R$39,90<span className={styles.planPriceUnit}>/mês</span>
+                R$39,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
-              <div className={styles.planSub}>
-                PIX ou cartão · renova todo mês
-              </div>
+              <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={`${styles.planFeatures} ${styles.planFeaturesPro}`}>
-                <span>✓ Até 5 horas de set por mês</span>
-                <span>✓ Sets de até 3 horas</span>
-                <span>✓ Até 30 cortes por set</span>
-                <span>✓ Re-corte no minuto exato</span>
+                <span>✓ {t("pricing.pro.feature1")}</span>
+                <span>✓ {t("pricing.pro.feature2")}</span>
+                <span>✓ {t("pricing.pro.feature3")}</span>
+                <span>✓ {t("pricing.pro.feature4")}</span>
               </div>
-              <a className={styles.planCtaFill} href={TRIAL_HREF}>
-                Assinar Pro
+              <a className={styles.planCtaFill} href={paidCtaHref}>
+                {locale === "en" ? t("pricing.contactCta") : t("pricing.pro.cta")}
               </a>
             </div>
             <div className={styles.plan}>
-              <div className={styles.planName}>Premium</div>
+              <div className={styles.planName}>{t("pricing.premium.name")}</div>
               <div className={styles.planPrice}>
-                R$59,90<span className={styles.planPriceUnit}>/mês</span>
+                R$59,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
-              <div className={styles.planSub}>
-                PIX ou cartão · renova todo mês
-              </div>
+              <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={styles.planFeatures}>
-                <span>✓ Até 12 horas de set por mês</span>
-                <span>✓ Sets de até 3 horas</span>
-                <span>✓ Até 30 cortes por set</span>
-                <span>✓ Re-corte no minuto exato</span>
+                <span>✓ {t("pricing.premium.feature1")}</span>
+                <span>✓ {t("pricing.premium.feature2")}</span>
+                <span>✓ {t("pricing.premium.feature3")}</span>
+                <span>✓ {t("pricing.premium.feature4")}</span>
               </div>
-              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
-                Assinar Premium
+              <a className={styles.planCtaGhost} href={paidCtaHref}>
+                {locale === "en" ? t("pricing.contactCta") : t("pricing.premium.cta")}
               </a>
             </div>
           </div>
@@ -195,15 +182,10 @@ export default function Landing() {
 
         {/* CTA final */}
         <section className={styles.ctaFinal}>
-          <h2 className={styles.ctaTitle}>
-            Seu próximo set já tem 30 cortes esperando.
-          </h2>
-          <p className={styles.ctaSub}>
-            Suba um set agora e veja a DJviral cortar 1 hora em 10 clipes —
-            de graça.
-          </p>
+          <h2 className={styles.ctaTitle}>{t("finalCta.title")}</h2>
+          <p className={styles.ctaSub}>{t("finalCta.subtitle")}</p>
           <a className={styles.ctaButton} href="#gerador">
-            Testar grátis agora
+            {t("finalCta.button")}
           </a>
         </section>
 
@@ -213,9 +195,7 @@ export default function Landing() {
             <span className="wmDj">DJ</span>
             <span className="wmViral">viral</span>
           </span>
-          <span className={styles.footerCopy}>
-            © 2026 DJviral · cortes que viram feed
-          </span>
+          <span className={styles.footerCopy}>{t("footer.copy")}</span>
         </footer>
       </div>
     </div>

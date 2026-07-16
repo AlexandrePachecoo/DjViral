@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import styles from "./landing.module.css";
 
 type Phase = "idle" | "form" | "gate";
@@ -18,17 +19,17 @@ const IDLE_BARS = [
   { color: "#22d3ee", h: "55%", d: ".6s" },
 ];
 
-const STYLE_OPTIONS: { id: CutStyle; title: string; desc: string }[] = [
-  { id: "basic", title: "Corte seco", desc: "Enquadramento fixo no centro. Mais rápido." },
-  { id: "dynamic", title: "Corte dinâmico", desc: "Zoom no DJ e no público, no ritmo da batida." },
-];
-
 // Deriva um nome de set a partir do arquivo (tira a extensão).
 function nameFromFile(fileName: string) {
   return fileName.replace(/\.[^/.]+$/, "").slice(0, 80);
 }
 
 export default function Generator() {
+  const t = useTranslations("landing.generator");
+  const STYLE_OPTIONS: { id: CutStyle; title: string; desc: string }[] = [
+    { id: "basic", title: t("style.basic.title"), desc: t("style.basic.desc") },
+    { id: "dynamic", title: t("style.dynamic.title"), desc: t("style.dynamic.desc") },
+  ];
   const [phase, setPhase] = useState<Phase>("idle");
   const [fileName, setFileName] = useState("");
   const [name, setName] = useState("");
@@ -73,7 +74,7 @@ export default function Generator() {
   return (
     <div id="gerador" className={styles.genCard}>
       <div className={styles.genHead}>
-        <span className={styles.genHeadText}>Gerador de cortes</span>
+        <span className={styles.genHeadText}>{t("headerLabel")}</span>
       </div>
 
       <div className={styles.genBody}>
@@ -94,11 +95,9 @@ export default function Generator() {
                 />
               ))}
             </div>
-            <div className={styles.dropTitle}>Arraste o vídeo do seu set aqui</div>
-            <div className={styles.dropHint}>
-              MP4 · até 3 horas · o arquivo não sai do seu navegador
-            </div>
-            <span className={styles.dropCta}>Selecionar arquivo e testar grátis</span>
+            <div className={styles.dropTitle}>{t("dropTitle")}</div>
+            <div className={styles.dropHint}>{t("dropHint")}</div>
+            <span className={styles.dropCta}>{t("dropCta")}</span>
             <input
               id="djv-file"
               type="file"
@@ -115,19 +114,19 @@ export default function Generator() {
               <span className={styles.loadedCheck}>✓</span>
               <div className={styles.loadedFileInfo}>
                 <span className={styles.loadedFileName}>{fileName}</span>
-                <span className={styles.loadedFileMeta}>set carregado</span>
+                <span className={styles.loadedFileMeta}>{t("fileLoaded")}</span>
               </div>
             </div>
 
             <div className={styles.formField}>
               <label className={styles.formLabel} htmlFor="djv-name">
-                Nome do set
+                {t("nameLabel")}
               </label>
               <input
                 id="djv-name"
                 type="text"
                 className={styles.textInput}
-                placeholder="Ex.: Set verão 2026"
+                placeholder={t("namePlaceholder")}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 maxLength={80}
@@ -135,11 +134,11 @@ export default function Generator() {
             </div>
 
             <div className={styles.formField}>
-              <span className={styles.formLabel}>Estilo de corte</span>
+              <span className={styles.formLabel}>{t("styleLabel")}</span>
               <div
                 className={styles.styleGrid}
                 role="radiogroup"
-                aria-label="Estilo de corte"
+                aria-label={t("styleLabel")}
               >
                 {STYLE_OPTIONS.map((opt) => {
                   const active = cutStyle === opt.id;
@@ -168,7 +167,7 @@ export default function Generator() {
 
             <div className={styles.formField}>
               <div className={styles.formLabelRow}>
-                <span className={styles.formLabel}>Quantidade de cortes</span>
+                <span className={styles.formLabel}>{t("cutsLabel")}</span>
                 <span className={styles.formValue}>{numCuts}</span>
               </div>
               <input
@@ -178,18 +177,18 @@ export default function Generator() {
                 max={FREE_MAX_CUTS}
                 value={numCuts}
                 onChange={(e) => setNumCuts(Number(e.target.value))}
-                aria-label="Quantidade de cortes"
+                aria-label={t("cutsLabel")}
               />
               <div className={styles.fieldHint}>
-                No teste grátis, até {FREE_MAX_CUTS} cortes por set.
+                {t("cutsHint", { max: FREE_MAX_CUTS })}
               </div>
             </div>
 
             <button type="submit" className={styles.generateBtn} disabled={!name.trim()}>
-              ✂ Gerar cortes
+              {t("generateBtn")}
             </button>
             <button type="button" className={styles.changeFileBtn} onClick={reset}>
-              Trocar arquivo
+              {t("changeFileBtn")}
             </button>
           </form>
         )}
@@ -197,17 +196,18 @@ export default function Generator() {
         {phase === "gate" && (
           <div className={styles.gate}>
             <span className={styles.gateSpark}>✦</span>
-            <div className={styles.gateTitle}>Crie sua conta pra gerar os cortes</div>
+            <div className={styles.gateTitle}>{t("gate.title")}</div>
             <p className={styles.gateText}>
-              É grátis — a IA vai cortar <strong>{name || fileName}</strong> em{" "}
-              {numCuts} vídeo{numCuts > 1 ? "s" : ""} vertica{numCuts > 1 ? "is" : "l"} 9:16
-              prontos pro feed.
+              {t.rich("gate.text", {
+                name: () => <strong>{name || fileName}</strong>,
+                count: numCuts,
+              })}
             </p>
             <a className={styles.gateCta} href={SIGNUP_HREF}>
-              Criar conta grátis
+              {t("gate.cta")}
             </a>
             <button type="button" className={styles.gateBack} onClick={() => setPhase("form")}>
-              ← Voltar
+              {t("gate.back")}
             </button>
           </div>
         )}

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getTranslations } from "next-intl/server";
 import { getPublicShare } from "@/lib/share";
 import { toStudioCut, downloadUrl } from "@/app/app/_studio/cut";
 import { theme, font, scoreColor } from "@/app/app/_studio/theme";
@@ -12,15 +13,17 @@ export const dynamic = "force-dynamic";
 type Props = { params: { token: string } };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const t = await getTranslations("publicShare");
   const share = await getPublicShare(params.token);
-  if (!share) return { title: "Link não encontrado · DJviral" };
+  if (!share) return { title: t("metadata.notFoundTitle") };
   return {
     title: `${share.setName} · DJviral`,
-    description: share.message || `Cortes do set ${share.setName}`,
+    description: share.message || t("metadata.description", { setName: share.setName }),
   };
 }
 
 export default async function PublicSetPage({ params }: Props) {
+  const t = await getTranslations("publicShare");
   const share = await getPublicShare(params.token);
 
   return (
@@ -50,7 +53,7 @@ export default async function PublicSetPage({ params }: Props) {
               fontSize: 15,
             }}
           >
-            Link não encontrado ou desativado.
+            {t("notFound")}
           </div>
         ) : (
           <>
@@ -59,7 +62,7 @@ export default async function PublicSetPage({ params }: Props) {
               {share.setName}
             </h1>
             <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: share.message ? 24 : 34 }}>
-              {share.cuts.length} corte{share.cuts.length === 1 ? "" : "s"}
+              {t("cutsCount", { count: share.cuts.length })}
             </div>
 
             {/* Mensagem do dono */}
@@ -94,7 +97,7 @@ export default async function PublicSetPage({ params }: Props) {
                   fontSize: 14,
                 }}
               >
-                Este set ainda não tem cortes publicados.
+                {t("noCuts")}
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
@@ -130,7 +133,7 @@ export default async function PublicSetPage({ params }: Props) {
                     <div style={{ padding: 14 }}>
                       <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
                       <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-                        {cut.dur} · no set · {cut.moment}
+                        {cut.dur} · {t("inSet")} · {cut.moment}
                       </div>
                       <a
                         href={downloadUrl(cut)}
@@ -149,7 +152,7 @@ export default async function PublicSetPage({ params }: Props) {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        Baixar
+                        {t("download")}
                       </a>
                     </div>
                   </div>
@@ -159,7 +162,7 @@ export default async function PublicSetPage({ params }: Props) {
 
             {/* Rodapé / CTA */}
             <div style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${theme.border}`, fontSize: 13, color: theme.textMuted }}>
-              Cortes gerados com{" "}
+              {t("footer.prefix")}{" "}
               <a href="/" style={{ color: theme.accent, textDecoration: "none", fontWeight: 500 }}>
                 DJviral
               </a>

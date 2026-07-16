@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { theme, font, scoreColor, btnPrimary } from "./theme";
 import { type Cut } from "./data";
 import { type ApiCut, toStudioCut, downloadUrl } from "./cut";
@@ -53,7 +54,8 @@ function readVideoDuration(file: File): Promise<number | null> {
 function uploadWithProgress(
   url: string,
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
+  t: (key: string, values?: Record<string, string | number>) => string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -71,17 +73,18 @@ function uploadWithProgress(
         const detail = xhr.responseText;
         reject(
           new Error(
-            `Falha no upload do vídeo (HTTP ${xhr.status})${detail ? `: ${detail}` : ""}`
+            t("errors.uploadFailedStatus", { status: xhr.status }) + (detail ? `: ${detail}` : "")
           )
         );
       }
     };
-    xhr.onerror = () => reject(new Error("Falha no upload do vídeo (erro de rede)"));
+    xhr.onerror = () => reject(new Error(t("errors.uploadFailedNetwork")));
     xhr.send(file);
   });
 }
 
 export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
+  const t = useTranslations("studio.generator");
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -139,7 +142,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
         setPhase("done");
       } else if (data.status === "error") {
         setPhase("error");
-        setMessage("O processamento falhou. Confira os logs do worker.");
+        setMessage(t("errors.processingFailed"));
       }
     }, 5000);
     return () => {
@@ -156,7 +159,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
       // 1. Cria projeto + signed upload URL. A duração (metadados do arquivo)
       // vai junto para o backend validar a cota de horas do plano.
       setPhase("uploading");
-      setMessage("Criando projeto...");
+      setMessage(t("status.creatingProject"));
       const duration = await readVideoDuration(file);
       const createRes = await fetch("/api/projects", {
         method: "POST",
@@ -181,12 +184,12 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
 
       // 2. Upload direto pro Supabase Storage (não passa pela Vercel), com
       // progresso real via XMLHttpRequest (alimenta a barra na UI).
-      setMessage("Enviando vídeo...");
-      await uploadWithProgress(signedUrl, file, setUploadProgress);
+      setMessage(t("status.uploadingVideo"));
+      await uploadWithProgress(signedUrl, file, setUploadProgress, t);
       setUploadProgress(100);
 
       // 3. Dispara o worker.
-      setMessage("Analisando o áudio e gerando cortes...");
+      setMessage(t("status.analyzing"));
       setPhase("processing");
       const procRes = await fetch(`/api/projects/${project_id}/process`, {
         method: "POST",
@@ -198,7 +201,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
       }
     } catch (err) {
       setPhase("error");
-      setMessage(err instanceof Error ? err.message : "Erro inesperado");
+      setMessage(err instanceof Error ? err.message : t("errors.unexpected"));
     }
   }
 
@@ -235,7 +238,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
       setSelected(new Set());
       onSaved();
     } catch {
-      setSaveError("Não foi possível salvar. Tente de novo.");
+      setSaveError(t("errors.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -292,12 +295,10 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
       >
         <div>
           <div style={{ font: `500 24px ${font.display}`, letterSpacing: "-.01em" }}>
-            {cuts.length} cortes gerados
+            {t("cutsGenerated", { count: cuts.length })}
           </div>
           <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>
-            {savableIds.length > 0
-              ? "selecione os que quer salvar — os não salvos somem ao recarregar"
-              : "todos os cortes foram salvos"}
+            {savableIds.length > 0 ? t("selectHint") : t("allSaved")}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -311,7 +312,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
               cursor: savableIds.length === 0 ? "default" : "pointer",
             }}
           >
-            {allSelected ? "Limpar seleção" : "Selecionar todos"}
+            {allSelected ? t("clearSelection") : t("selectAll")}
           </button>
           <button
             type="button"
@@ -324,7 +325,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
               cursor: saving || selected.size === 0 ? "default" : "pointer",
             }}
           >
-            {saving ? "Salvando..." : `Salvar selecionados${selected.size ? ` (${selected.size})` : ""}`}
+            {saving ? t("saving") : t("saveSelected", { count: selected.size })}
           </button>
         </div>
       </div>
@@ -335,7 +336,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
 
       {savedCount > 0 && (
         <div style={{ fontSize: 13, color: "#059669", marginBottom: 18 }}>
-          ✓ {savedCount} corte{savedCount > 1 ? "s" : ""} salvo{savedCount > 1 ? "s" : ""} · disponíve{savedCount > 1 ? "is" : "l"} na aba Cortes salvos
+          {t("savedInTab", { count: savedCount })}
         </div>
       )}
 
@@ -386,14 +387,14 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
                       border: "1px solid #a7f3d0",
                     }}
                   >
-                    ✓ Salvo
+                    {t("savedBadge")}
                   </div>
                 ) : (
                   <div
                     onClick={() => toggle(c.id)}
                     role="checkbox"
                     aria-checked={isSelected}
-                    aria-label={`Selecionar ${c.title}`}
+                    aria-label={t("selectAria", { title: c.title })}
                     style={{
                       position: "absolute",
                       top: 13,
@@ -436,11 +437,11 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
               <div style={{ padding: 15 }}>
                 <div style={{ font: `500 15px ${font.display}`, marginBottom: 2 }}>{c.title}</div>
                 <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
-                  {c.dur} · no set · {c.moment}
+                  {c.dur} · {t("inSet")} · {c.moment}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
                   {c.saved ? (
-                    <div style={{ ...ghostBtn, textAlign: "center", opacity: 0.6, cursor: "default" }}>Salvo ✓</div>
+                    <div style={{ ...ghostBtn, textAlign: "center", opacity: 0.6, cursor: "default" }}>{t("savedCheck")}</div>
                   ) : (
                     <div
                       onClick={() => toggle(c.id)}
@@ -453,17 +454,17 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
                         background: isSelected ? theme.accentSoft : theme.surface,
                       }}
                     >
-                      {isSelected ? "Selecionado" : "Selecionar"}
+                      {isSelected ? t("selected") : t("select")}
                     </div>
                   )}
                   <div
                     onClick={() => projectId && onEdit(projectId, name, c)}
                     style={{ ...ghostBtn, textAlign: "center", cursor: "pointer" }}
                   >
-                    ✎ Editar
+                    {t("edit")}
                   </div>
                   <a href={downloadUrl(c)} target="_blank" rel="noopener" style={{ ...ghostBtn, textAlign: "center", textDecoration: "none" }}>
-                    Baixar
+                    {t("download")}
                   </a>
                 </div>
               </div>
@@ -525,25 +526,26 @@ function UploadForm({
   onUpgrade: () => void;
   onRetry: () => void;
 }) {
+  const t = useTranslations("studio.generator");
   const busy = phase === "uploading" || phase === "processing";
 
   const styleOptions: { id: CutStyle; title: string; desc: string }[] = [
     {
       id: "basic",
-      title: "Corte seco",
-      desc: "Enquadramento fixo no centro. Processamento mais rápido.",
+      title: t("form.style.basic.title"),
+      desc: t("form.style.basic.desc"),
     },
     {
       id: "dynamic",
-      title: "Corte dinâmico",
-      desc: "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais.",
+      title: t("form.style.dynamic.title"),
+      desc: t("form.style.dynamic.desc"),
     },
   ];
 
   const intensityOptions: { id: CutIntensity; title: string; desc: string }[] = [
-    { id: "subtle", title: "Sutil", desc: "Poucas trocas de shot, zooms discretos." },
-    { id: "medium", title: "Médio", desc: "Equilíbrio entre ritmo e naturalidade." },
-    { id: "intense", title: "Intenso", desc: "Muita troca dj/público, zooms fortes na batida." },
+    { id: "subtle", title: t("form.intensity.subtle.title"), desc: t("form.intensity.subtle.desc") },
+    { id: "medium", title: t("form.intensity.medium.title"), desc: t("form.intensity.medium.desc") },
+    { id: "intense", title: t("form.intensity.intense.title"), desc: t("form.intensity.intense.desc") },
   ];
 
   return (
@@ -574,16 +576,16 @@ function UploadForm({
           🎧
         </div>
         <div>
-          <div style={{ font: `500 20px ${font.display}` }}>Novo set</div>
+          <div style={{ font: `500 20px ${font.display}` }}>{t("form.title")}</div>
           <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
-            Envie seu set e receba os cortes mais virais automaticamente.
+            {t("form.subtitle")}
           </div>
         </div>
       </div>
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 20 }}>
         <input
-          placeholder="Nome do set"
+          placeholder={t("form.namePlaceholder")}
           value={name}
           onChange={(e) => onName(e.target.value)}
           disabled={busy}
@@ -599,11 +601,11 @@ function UploadForm({
 
         {/* Estilo de corte */}
         <div>
-          <div style={fieldLabel}>Estilo de corte</div>
+          <div style={fieldLabel}>{t("form.styleLabel")}</div>
           <div
             className="dj-style-grid"
             role="radiogroup"
-            aria-label="Estilo de corte"
+            aria-label={t("form.styleLabel")}
             style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
           >
             {styleOptions.map((opt) => {
@@ -652,11 +654,11 @@ function UploadForm({
         {/* Intensidade do corte dinâmico (só quando o estilo é dinâmico) */}
         {cutStyle === "dynamic" && (
           <div>
-            <div style={fieldLabel}>Intensidade</div>
+            <div style={fieldLabel}>{t("form.intensityLabel")}</div>
             <div
               className="dj-style-grid"
               role="radiogroup"
-              aria-label="Intensidade do corte dinâmico"
+              aria-label={t("form.intensityAria")}
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}
             >
               {intensityOptions.map((opt) => {
@@ -706,7 +708,7 @@ function UploadForm({
         {/* Quantidade de cortes */}
         <div>
           <div style={{ ...fieldLabel, display: "flex", justifyContent: "space-between" }}>
-            <span>Quantidade de cortes</span>
+            <span>{t("form.numCutsLabel")}</span>
             <span style={{ color: theme.accent, fontWeight: 600 }}>{numCuts}</span>
           </div>
           <input
@@ -716,17 +718,17 @@ function UploadForm({
             value={Math.min(numCuts, maxCuts)}
             onChange={(e) => onNumCuts(Number(e.target.value))}
             disabled={busy}
-            aria-label="Quantidade de cortes"
+            aria-label={t("form.numCutsLabel")}
             style={{ width: "100%", accentColor: theme.accent }}
           />
           <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
-            Seu plano permite até {maxCuts} cortes por set.{" "}
+            {t("form.planAllows", { max: maxCuts })}{" "}
             {maxCuts < 30 && (
               <span
                 onClick={onUpgrade}
                 style={{ color: theme.accent, cursor: "pointer", textDecoration: "underline" }}
               >
-                Ver planos
+                {t("form.seePlans")}
               </span>
             )}
           </div>
@@ -744,7 +746,7 @@ function UploadForm({
             cursor: busy || !name || !file ? "default" : "pointer",
           }}
         >
-          {busy ? "Processando..." : "Gerar cortes"}
+          {busy ? t("form.processing") : t("form.generate")}
         </button>
       </form>
 
@@ -786,7 +788,7 @@ function UploadForm({
                   color: theme.textMuted,
                 }}
               >
-                <span>Isso pode demorar um pouco, dependendo do tamanho do vídeo e da sua conexão.</span>
+                <span>{t("form.uploadHint")}</span>
                 <span style={{ color: theme.accent, fontWeight: 600 }}>{uploadProgress}%</span>
               </div>
             </div>
@@ -814,11 +816,11 @@ function UploadForm({
               onClick={onUpgrade}
               style={{ ...btnPrimary, padding: "9px 16px", cursor: "pointer" }}
             >
-              Ver planos
+              {t("form.seePlans")}
             </button>
           )}
           <button type="button" onClick={onRetry} style={{ ...ghostBtn, width: "auto", cursor: "pointer" }}>
-            Tentar de novo
+            {t("form.tryAgain")}
           </button>
         </div>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { theme, font, scoreColor, btnPrimary, btnGhost } from "./theme";
 import { type Cut } from "./data";
 import { downloadUrl } from "./cut";
@@ -17,6 +18,7 @@ type Props = {
 
 // Botão de download (âncora real; o `?download=` do Supabase força o attachment).
 function DownloadLink({ cut }: { cut: Cut }) {
+  const t = useTranslations("studio.saved");
   return (
     <a
       href={downloadUrl(cut)}
@@ -35,7 +37,7 @@ function DownloadLink({ cut }: { cut: Cut }) {
         whiteSpace: "nowrap",
       }}
     >
-      Baixar
+      {t("download")}
     </a>
   );
 }
@@ -50,6 +52,7 @@ function CutDeleteButton({
   cutId: string;
   onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
 }) {
+  const t = useTranslations("studio.saved");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -79,7 +82,7 @@ function CutDeleteButton({
             whiteSpace: "nowrap",
           }}
         >
-          {busy ? "..." : "Confirmar"}
+          {busy ? "..." : t("confirm")}
         </button>
         <button
           type="button"
@@ -96,7 +99,7 @@ function CutDeleteButton({
             whiteSpace: "nowrap",
           }}
         >
-          Cancelar
+          {t("cancel")}
         </button>
       </div>
     );
@@ -106,7 +109,7 @@ function CutDeleteButton({
     <button
       type="button"
       onClick={() => setConfirm(true)}
-      title="Apagar corte"
+      title={t("deleteCut")}
       style={{
         padding: "9px 12px",
         borderRadius: 8,
@@ -125,6 +128,7 @@ function CutDeleteButton({
 // Painel de compartilhamento público de um set. Gera/revoga o link (/s/<token>)
 // e salva a mensagem do dono via POST /api/projects/[id]/share.
 function SharePanel({ folder }: { folder: SavedFolder }) {
+  const t = useTranslations("studio.saved");
   const [token, setToken] = useState<string | null>(folder.shareToken ?? null);
   const [message, setMessage] = useState(folder.shareMessage ?? "");
   const [savedMessage, setSavedMessage] = useState(folder.shareMessage ?? "");
@@ -142,7 +146,7 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error("falha");
+    if (!res.ok) throw new Error("fail");
     return res.json() as Promise<{ shareToken: string | null; message: string }>;
   }
 
@@ -199,11 +203,9 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
       {/* Ativar / desativar o link */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <div style={{ font: `500 14px ${font.display}` }}>Link público</div>
+          <div style={{ font: `500 14px ${font.display}` }}>{t("share.title")}</div>
           <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
-            {enabled
-              ? "Qualquer pessoa com o link vê e baixa os cortes salvos."
-              : "Gere um link para qualquer pessoa ver e baixar os cortes salvos."}
+            {enabled ? t("share.enabledHint") : t("share.disabledHint")}
           </div>
         </div>
         <button
@@ -216,7 +218,7 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
             cursor: busy ? "default" : "pointer",
           }}
         >
-          {busy ? "..." : enabled ? "Desativar link" : "Ativar link"}
+          {busy ? "..." : enabled ? t("share.disable") : t("share.enable")}
         </button>
       </div>
 
@@ -240,7 +242,7 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
             }}
           />
           <button type="button" onClick={copyLink} style={btnGhost}>
-            {copied ? "Copiado!" : "Copiar link"}
+            {copied ? t("share.copied") : t("share.copyLink")}
           </button>
         </div>
       )}
@@ -248,14 +250,14 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
       {/* Mensagem do dono */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: 500 }}>
-          Mensagem exibida no topo do link (opcional)
+          {t("share.messageLabel")}
         </label>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           maxLength={500}
           rows={3}
-          placeholder="Ex.: Valeu por curtir o set! Baixa os cortes e marca @seuperfil 🔥"
+          placeholder={t("share.messagePlaceholder")}
           style={{
             padding: "10px 12px",
             borderRadius: 9,
@@ -278,7 +280,7 @@ function SharePanel({ folder }: { folder: SavedFolder }) {
               cursor: savingMsg || !messageDirty ? "default" : "pointer",
             }}
           >
-            {savingMsg ? "Salvando..." : "Salvar mensagem"}
+            {savingMsg ? t("share.saving") : t("share.saveMessage")}
           </button>
           <span style={{ fontSize: 12, color: theme.textMuted }}>{message.length}/500</span>
         </div>
@@ -300,6 +302,7 @@ function FolderSection({
   onDeleteFolder: (projectId: string) => Promise<boolean>;
   onEdit: (projectId: string, setName: string, cut: Cut) => void;
 }) {
+  const t = useTranslations("studio.saved");
   const [shareOpen, setShareOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -321,7 +324,7 @@ function FolderSection({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={expanded ? "Recolher pasta" : "Expandir pasta"}
+          aria-label={expanded ? t("folder.collapse") : t("folder.expand")}
           style={{
             background: "none",
             border: "none",
@@ -361,7 +364,7 @@ function FolderSection({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ font: `500 18px ${font.display}`, letterSpacing: "-.01em" }}>{folder.setName}</div>
           <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
-            {folder.cuts.length} corte{folder.cuts.length > 1 ? "s" : ""} salvo{folder.cuts.length > 1 ? "s" : ""}
+            {t("folder.cutsCount", { count: folder.cuts.length })}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -370,7 +373,7 @@ function FolderSection({
             onClick={() => setShareOpen((v) => !v)}
             style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
           >
-            {shared ? "🔗 Compartilhado" : "🔗 Compartilhar"}
+            {shared ? t("folder.shared") : t("folder.share")}
           </button>
           {!confirmDelete ? (
             <button
@@ -378,7 +381,7 @@ function FolderSection({
               onClick={() => setConfirmDelete(true)}
               style={{ ...btnGhost, padding: "7px 13px", fontSize: 12, color: "#dc2626" }}
             >
-              🗑 Apagar set
+              {t("folder.deleteSet")}
             </button>
           ) : (
             <>
@@ -404,7 +407,7 @@ function FolderSection({
                   opacity: deleting ? 0.6 : 1,
                 }}
               >
-                {deleting ? "..." : "Confirmar"}
+                {deleting ? "..." : t("confirm")}
               </button>
               <button
                 type="button"
@@ -412,7 +415,7 @@ function FolderSection({
                 onClick={() => setConfirmDelete(false)}
                 style={{ ...btnGhost, padding: "7px 13px", fontSize: 12 }}
               >
-                Cancelar
+                {t("cancel")}
               </button>
             </>
           )}
@@ -455,7 +458,7 @@ function FolderSection({
               <div style={{ padding: 14 }}>
                 <div style={{ font: `500 14px ${font.display}`, marginBottom: 6 }}>{cut.title}</div>
                 <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
-                  {cut.dur} · no set · {cut.moment}
+                  {cut.dur} · {t("folder.inSet")} · {cut.moment}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
@@ -474,7 +477,7 @@ function FolderSection({
                       fontFamily: font.body,
                     }}
                   >
-                    ✎ Editar
+                    {t("folder.edit")}
                   </button>
                   <div style={{ flex: 1 }}>
                     <DownloadLink cut={cut} />
@@ -491,6 +494,7 @@ function FolderSection({
 }
 
 export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onEdit }: Props) {
+  const t = useTranslations("studio.saved");
   if (folders.length === 0) {
     return (
       <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
@@ -505,7 +509,7 @@ export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onE
             fontSize: 14,
           }}
         >
-          Nenhum corte salvo ainda. Gere um set e salve seus cortes favoritos.
+          {t("empty")}
         </div>
       </div>
     );

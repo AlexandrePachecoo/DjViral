@@ -1,0 +1,458 @@
+{
+  "metadata": {
+    "title": "DJviral — Seu set vira 30 cortes virais. Sem editar nada.",
+    "description": "Suba um set de até 3 horas. A DJviral encontra os melhores momentos e te entrega 30 vídeos verticais prontos pro TikTok e Reels."
+  },
+  "landing": {
+    "nav": {
+      "tryNow": "Testar agora",
+      "howItWorks": "Como funciona",
+      "pricing": "Preços",
+      "login": "Entrar",
+      "tryFree": "Teste grátis"
+    },
+    "hero": {
+      "titleLine1": "1 set longo.",
+      "titleLine2": "30 cortes virais.",
+      "subtitle": "Suba o vídeo do seu set. A IA acha os drops, as viradas e os momentos de maior energia  e devolve vídeos verticais prontos pro feed."
+    },
+    "how": {
+      "eyebrow": "COMO FUNCIONA",
+      "title": "Do arquivo ao feed em três passos.",
+      "step1": {
+        "title": "Envie seu set",
+        "body": "Arraste o vídeo do seu set de até 3 horas"
+      },
+      "step2": {
+        "title": "A IA corta os picos",
+        "body": "Detectamos drops, viradas e os momentos de maior energia e cortamos automaticamente  sem você rever tudo."
+      },
+      "step3": {
+        "title": "Receba 30 cortes",
+        "body": "Vídeos verticais 9:16, prontos para postar no TikTok, Reels e Shorts. Ainda tem a opção de editar o corte do jeito que quiser "
+      }
+    },
+    "pricing": {
+      "eyebrow": "PREÇOS",
+      "title": "Comece grátis. Cresça quando bombar.",
+      "popularBadge": "★ MAIS POPULAR",
+      "perMonth": "/mês",
+      "paymentSub": "PIX ou cartão · renova todo mês",
+      "contactCta": "Fale conosco",
+      "free": {
+        "name": "Teste grátis",
+        "sub": "para experimentar",
+        "feature1": "1 hora de set para testar",
+        "feature2": "10 cortes verticais 9:16",
+        "feature3": "Cortes automáticos dos drops",
+        "cta": "Começar grátis"
+      },
+      "pro": {
+        "name": "Pro",
+        "feature1": "Até 5 horas de set por mês",
+        "feature2": "Sets de até 3 horas",
+        "feature3": "Até 30 cortes por set",
+        "feature4": "Re-corte no minuto exato",
+        "cta": "Assinar Pro"
+      },
+      "premium": {
+        "name": "Premium",
+        "feature1": "Até 12 horas de set por mês",
+        "feature2": "Sets de até 3 horas",
+        "feature3": "Até 30 cortes por set",
+        "feature4": "Re-corte no minuto exato",
+        "cta": "Assinar Premium"
+      }
+    },
+    "finalCta": {
+      "title": "Seu próximo set já tem 30 cortes esperando.",
+      "subtitle": "Suba um set agora e veja a DJviral cortar 1 hora em 10 clipes — de graça.",
+      "button": "Testar grátis agora"
+    },
+    "footer": {
+      "copy": "© 2026 DJviral · cortes que viram feed"
+    },
+    "generator": {
+      "headerLabel": "Gerador de cortes",
+      "dropTitle": "Arraste o vídeo do seu set aqui",
+      "dropHint": "MP4 · até 3 horas · o arquivo não sai do seu navegador",
+      "dropCta": "Selecionar arquivo e testar grátis",
+      "fileLoaded": "set carregado",
+      "nameLabel": "Nome do set",
+      "namePlaceholder": "Ex.: Set verão 2026",
+      "styleLabel": "Estilo de corte",
+      "style": {
+        "basic": {
+          "title": "Corte seco",
+          "desc": "Enquadramento fixo no centro. Mais rápido."
+        },
+        "dynamic": {
+          "title": "Corte dinâmico",
+          "desc": "Zoom no DJ e no público, no ritmo da batida."
+        }
+      },
+      "cutsLabel": "Quantidade de cortes",
+      "cutsHint": "No teste grátis, até {max} cortes por set.",
+      "generateBtn": "✂ Gerar cortes",
+      "changeFileBtn": "Trocar arquivo",
+      "gate": {
+        "title": "Crie sua conta pra gerar os cortes",
+        "text": "É grátis — a IA vai cortar {name} em {count, plural, one {# vídeo vertical 9:16} other {# vídeos verticais 9:16}} prontos pro feed.",
+        "cta": "Criar conta grátis",
+        "back": "← Voltar"
+      }
+    },
+    "beforeAfter": {
+      "eyebrow": "ANTES → DEPOIS",
+      "title": "De um set gigante a um feed inteiro.",
+      "videoTag": "SEU SET · 2:47:11",
+      "generateBtn": "✂ Gerar cortes",
+      "footer": "Um clique transforma o set inteiro em cortes prontos pra TikTok, Reels e Shorts."
+    }
+  },
+  "studio": {
+    "header": {
+      "tabs": { "generator": "Gerador", "editor": "Edição", "saved": "Cortes salvos" },
+      "newSet": "＋ Novo set",
+      "menu": { "profile": "Perfil", "plan": "Planos/Uso", "logout": "Sair da conta" }
+    },
+    "plan": {
+      "cards": {
+        "free": { "name": "Teste grátis", "priceNote": "para experimentar", "f1": "1 hora de set no total", "f2": "10 cortes por set", "f3": "Vídeos verticais 9:16" },
+        "pro": { "name": "Pro", "f1": "Até 5 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
+        "premium": { "name": "Premium", "f1": "Até 12 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
+        "paidPriceNote": "/mês · PIX ou cartão"
+      },
+      "errors": {
+        "loadFailed": "Não foi possível carregar seu plano. Recarregue a página.",
+        "checkoutFailed": "falha ao abrir o checkout",
+        "unexpected": "Erro inesperado"
+      },
+      "justPaid": {
+        "text": "✓ Pagamento concluído! Seu plano é ativado assim que a confirmação da AbacatePay chegar (normalmente em segundos).",
+        "refresh": "Atualizar"
+      },
+      "yourPlan": "Seu plano:",
+      "usedOf": "{used} de {limit} usados",
+      "thisMonth": " neste mês",
+      "onTrial": " no teste",
+      "remaining": "Restam {remaining} de set · até {maxCuts} cortes por set",
+      "renewsOn": " · renova em {date}",
+      "pastDue": "⚠ A última cobrança falhou — a AbacatePay vai tentar de novo. Confira seu cartão para não perder o acesso.",
+      "adminAccount": "Conta admin — uso ilimitado, sem cobrança. Os cards abaixo são só os planos vendidos publicamente.",
+      "currentPlan": "Plano atual",
+      "openingCheckout": "Abrindo checkout...",
+      "contactCta": "Fale conosco",
+      "subscribeTo": "Assinar {name}",
+      "paymentFootnote": "Pagamento processado pela AbacatePay. Cartão renova automaticamente todo mês; no PIX você recebe a cobrança da renovação a cada ciclo."
+    },
+    "saved": {
+      "empty": "Nenhum corte salvo ainda. Gere um set e salve seus cortes favoritos.",
+      "download": "Baixar",
+      "confirm": "Confirmar",
+      "cancel": "Cancelar",
+      "deleteCut": "Apagar corte",
+      "share": {
+        "title": "Link público",
+        "enabledHint": "Qualquer pessoa com o link vê e baixa os cortes salvos.",
+        "disabledHint": "Gere um link para qualquer pessoa ver e baixar os cortes salvos.",
+        "disable": "Desativar link",
+        "enable": "Ativar link",
+        "copied": "Copiado!",
+        "copyLink": "Copiar link",
+        "messageLabel": "Mensagem exibida no topo do link (opcional)",
+        "messagePlaceholder": "Ex.: Valeu por curtir o set! Baixa os cortes e marca @seuperfil 🔥",
+        "saving": "Salvando...",
+        "saveMessage": "Salvar mensagem"
+      },
+      "folder": {
+        "collapse": "Recolher pasta",
+        "expand": "Expandir pasta",
+        "cutsCount": "{count, plural, one {# corte salvo} other {# cortes salvos}}",
+        "shared": "🔗 Compartilhado",
+        "share": "🔗 Compartilhar",
+        "deleteSet": "🗑 Apagar set",
+        "inSet": "no set",
+        "edit": "✎ Editar"
+      }
+    },
+    "generator": {
+      "errors": {
+        "uploadFailedStatus": "Falha no upload do vídeo (HTTP {status})",
+        "uploadFailedNetwork": "Falha no upload do vídeo (erro de rede)",
+        "processingFailed": "O processamento falhou. Confira os logs do worker.",
+        "unexpected": "Erro inesperado",
+        "saveFailed": "Não foi possível salvar. Tente de novo."
+      },
+      "status": {
+        "creatingProject": "Criando projeto...",
+        "uploadingVideo": "Enviando vídeo...",
+        "analyzing": "Analisando o áudio e gerando cortes..."
+      },
+      "cutsGenerated": "{count} cortes gerados",
+      "selectHint": "selecione os que quer salvar — os não salvos somem ao recarregar",
+      "allSaved": "todos os cortes foram salvos",
+      "clearSelection": "Limpar seleção",
+      "selectAll": "Selecionar todos",
+      "saving": "Salvando...",
+      "saveSelected": "{count, plural, =0 {Salvar selecionados} other {Salvar selecionados (#)}}",
+      "savedInTab": "✓ {count, plural, one {# corte salvo} other {# cortes salvos}} · disponível na aba Cortes salvos",
+      "savedBadge": "✓ Salvo",
+      "selectAria": "Selecionar {title}",
+      "inSet": "no set",
+      "savedCheck": "Salvo ✓",
+      "selected": "Selecionado",
+      "select": "Selecionar",
+      "edit": "✎ Editar",
+      "download": "Baixar",
+      "form": {
+        "title": "Novo set",
+        "subtitle": "Envie seu set e receba os cortes mais virais automaticamente.",
+        "namePlaceholder": "Nome do set",
+        "styleLabel": "Estilo de corte",
+        "style": {
+          "basic": { "title": "Corte seco", "desc": "Enquadramento fixo no centro. Processamento mais rápido." },
+          "dynamic": { "title": "Corte dinâmico", "desc": "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais." }
+        },
+        "intensityLabel": "Intensidade",
+        "intensityAria": "Intensidade do corte dinâmico",
+        "intensity": {
+          "subtle": { "title": "Sutil", "desc": "Poucas trocas de shot, zooms discretos." },
+          "medium": { "title": "Médio", "desc": "Equilíbrio entre ritmo e naturalidade." },
+          "intense": { "title": "Intenso", "desc": "Muita troca dj/público, zooms fortes na batida." }
+        },
+        "numCutsLabel": "Quantidade de cortes",
+        "planAllows": "Seu plano permite até {max} cortes por set.",
+        "seePlans": "Ver planos",
+        "processing": "Processando...",
+        "generate": "Gerar cortes",
+        "uploadHint": "Isso pode demorar um pouco, dependendo do tamanho do vídeo e da sua conexão.",
+        "tryAgain": "Tentar de novo"
+      }
+    },
+    "profile": {
+      "title": "Perfil",
+      "planLabels": { "free": "Teste grátis", "pro": "Pro", "premium": "Premium", "admin": "Admin" },
+      "errors": {
+        "saveFailed": "falha ao salvar",
+        "unexpected": "Erro inesperado",
+        "passwordChangeFailed": "falha ao alterar a senha",
+        "cancelFailed": "falha ao cancelar"
+      },
+      "account": {
+        "title": "Conta",
+        "nameEmptyError": "O nome não pode ficar vazio.",
+        "email": "Email",
+        "name": "Nome",
+        "saving": "Salvando...",
+        "save": "Salvar",
+        "cancel": "Cancelar",
+        "edit": "Editar"
+      },
+      "plan": {
+        "title": "Plano",
+        "current": "Plano atual:",
+        "manage": "Gerenciar plano"
+      },
+      "subscription": {
+        "title": "Assinatura",
+        "canceledOk": "✓ Assinatura cancelada. Você voltou ao plano gratuito.",
+        "confirmText": "Tem certeza? Você volta ao plano free e perde o acesso aos limites do plano pago.",
+        "canceling": "Cancelando...",
+        "confirmYes": "Sim, cancelar",
+        "keepPlan": "Manter plano",
+        "cancelHint": "Cancela a renovação e volta ao plano gratuito.",
+        "cancelCta": "Cancelar assinatura"
+      },
+      "security": {
+        "title": "Segurança",
+        "passwordTooShort": "A nova senha deve ter ao menos 6 caracteres.",
+        "passwordMismatch": "A confirmação não confere com a nova senha.",
+        "currentPassword": "Senha atual",
+        "newPassword": "Nova senha",
+        "confirmPassword": "Confirmar nova senha",
+        "passwordChanged": "✓ Senha alterada com sucesso.",
+        "saving": "Salvando...",
+        "changePassword": "Alterar senha"
+      }
+    },
+    "editor": {
+      "back": "Voltar",
+      "errors": {
+        "codecUnsupported": "o navegador não consegue reproduzir o formato/codec do arquivo original (ex.: HEVC/MOV de iPhone ou MKV)",
+        "networkFailure": "falha de rede ao baixar o vídeo original do armazenamento",
+        "sourceLoadFailed": "o vídeo original não pôde ser carregado",
+        "code": "código",
+        "recutFailed": "O re-corte falhou. Tente de novo.",
+        "recutSlow": "O re-corte está demorando. Tente novamente em instantes.",
+        "titleEmpty": "O título não pode ficar vazio.",
+        "nothingToSave": "Nada para salvar.",
+        "renameFailed": "Falha ao renomear",
+        "recutRequestFailed": "Falha ao re-cortar",
+        "saveFailed": "Erro ao salvar"
+      },
+      "status": {
+        "regenerating": "Regenerando o vídeo do corte...",
+        "saving": "Salvando..."
+      },
+      "cutNamePlaceholder": "Nome do corte",
+      "cutTitleAria": "Título do corte",
+      "editorFallbackName": "Editor",
+      "exporting": "Exportando...",
+      "saveCut": "Salvar corte",
+      "loadingSet": "Carregando o set original...",
+      "sourceUnavailable": {
+        "withError": "Não deu para tocar o vídeo original deste set: {reason}. O preview abaixo mostra o corte já gerado; dá para ajustar o início/fim e o título — o zoom manual precisa do vídeo original.",
+        "noSource": "O vídeo original deste set não está disponível para pré-visualização (set do YouTube ou arquivo removido). Dá para ajustar o início/fim na timeline — o zoom manual precisa do vídeo original."
+      },
+      "loadingVideo": "Carregando o vídeo do set...",
+      "regeneratingVideo": "Regenerando o vídeo com a nova edição...",
+      "pause": "Pausar",
+      "play": "Tocar",
+      "startHere": "⇤ Início aqui",
+      "endHere": "Fim aqui ⇥",
+      "removeKeyframe": "Remover keyframe",
+      "addKeyframe": "Adicionar keyframe",
+      "panel": {
+        "framing": "Enquadramento",
+        "zoom": "Zoom",
+        "cameraZoomAria": "Zoom da câmera",
+        "framingHint": "Arraste o vídeo no preview (ou role o scroll) para enquadrar. Cada ajuste vira um keyframe ◆ no ponto atual.",
+        "keyframes": "Keyframes",
+        "noKeyframes": "Nenhum keyframe ainda — a câmera fica parada no centro.",
+        "clearKeyframes": "Limpar todos os keyframes",
+        "trim": "Trecho",
+        "start": "Início",
+        "end": "Fim",
+        "duration": "Duração: {dur}s (mín. {min}s · máx. {max}s)"
+      },
+      "timeline": {
+        "fitToClip": "Ajustar ao corte",
+        "fullWindow": "Janela toda",
+        "hint": "arraste as alças roxas para encurtar ou estender o corte — pode ir além do trecho que a IA escolheu (a linha branca embaixo marca a escolha original). Para o editor ficar leve, a timeline carrega ~1 min antes e depois do corte; ao estender o corte, a janela acompanha."
+      }
+    },
+    "editPicker": {
+      "empty": "Nenhum corte para editar ainda. Gere um set no Gerador ou salve cortes — eles aparecem aqui para ajustar tempo, zoom e keyframes.",
+      "title": "Escolha um corte para editar",
+      "subtitle": "ajuste início/fim na timeline, arraste a janela do TikTok e crie keyframes de zoom",
+      "inSet": "no set",
+      "edit": "✎ Editar"
+    }
+  },
+  "publicShare": {
+    "metadata": {
+      "notFoundTitle": "Link não encontrado · DJviral",
+      "description": "Cortes do set {setName}"
+    },
+    "notFound": "Link não encontrado ou desativado.",
+    "cutsCount": "{count, plural, one {# corte} other {# cortes}}",
+    "noCuts": "Este set ainda não tem cortes publicados.",
+    "inSet": "no set",
+    "download": "Baixar",
+    "footer": {
+      "prefix": "Cortes gerados com"
+    }
+  },
+  "login": {
+    "titleLogin": "Entrar",
+    "titleRegister": "Criar conta",
+    "subtitleLogin": "Acesse sua conta para gerar cortes.",
+    "subtitleRegister": "É grátis — sem cartão de crédito.",
+    "namePlaceholder": "Seu nome",
+    "emailPlaceholder": "Email",
+    "passwordPlaceholder": "Senha",
+    "submitBusy": "Aguarde...",
+    "submitLogin": "Entrar",
+    "submitRegister": "Criar conta grátis",
+    "noAccount": "Ainda não tem conta? ",
+    "hasAccount": "Já tem conta? ",
+    "switchToRegister": "Criar conta",
+    "switchToLogin": "Entrar",
+    "errors": {
+      "somethingWrong": "Algo deu errado",
+      "unexpected": "Erro inesperado"
+    }
+  },
+  "escura": {
+    "nav": {
+      "howItWorks": "Como funciona",
+      "pricing": "Preços",
+      "login": "Entrar",
+      "tryFree": "Testar grátis"
+    },
+    "hero": {
+      "eyebrow": "FEITO PRA DJS QUE QUEREM BOMBAR",
+      "titlePrefix": "Seu set vira",
+      "titleHighlight": "30 cortes virais",
+      "titleSuffix": ". Sem editar nada.",
+      "subtitle": "Suba um set de até 3 horas. A DJviral encontra os melhores momentos e te entrega 30 vídeos verticais prontos pro TikTok e Reels.",
+      "primaryCta": "Testar grátis — 1h vira 10 cortes",
+      "secondaryCta": "▸ Ver como funciona",
+      "microcopy": "Sem cartão de crédito · Primeiros cortes em minutos",
+      "stat1": "de set por upload",
+      "stat2": "cortes prontos",
+      "stat3": "vertical pra postar"
+    },
+    "card": {
+      "analyzing": "analisando · set-verão.mp3",
+      "momentsFound": "✦ 30 momentos virais encontrados"
+    },
+    "how": {
+      "eyebrow": "COMO FUNCIONA",
+      "title": "Do arquivo ao feed em 3 passos.",
+      "step1": {
+        "title": "Suba seu set",
+        "body": "Arraste um arquivo de até 3 horas ou cole o link do SoundCloud, YouTube ou Mixcloud."
+      },
+      "step2": {
+        "title": "A IA acha os picos",
+        "body": "Detectamos drops, viradas e os momentos de maior energia da pista — sem você ouvir tudo de novo."
+      },
+      "step3": {
+        "title": "Receba 30 cortes",
+        "body": "Vídeos verticais 9:16, já legendados e prontos pra postar no TikTok e Reels."
+      }
+    },
+    "pricing": {
+      "eyebrow": "PREÇOS",
+      "title": "Comece grátis. Cresça quando bombar.",
+      "popularBadge": "★ MAIS POPULAR",
+      "perMonth": "/mês",
+      "paymentSub": "PIX ou cartão · renova todo mês",
+      "contactCta": "Fale conosco",
+      "free": {
+        "name": "Teste grátis",
+        "sub": "pra experimentar",
+        "feature1": "1 hora de set pra testar",
+        "feature2": "10 cortes verticais 9:16",
+        "feature3": "Análise automática dos drops",
+        "feature4": "Sem cartão de crédito",
+        "cta": "Começar grátis"
+      },
+      "pro": {
+        "name": "Pro",
+        "feature1": "Até 5 horas de set por mês",
+        "feature2": "Sets de até 3 horas",
+        "feature3": "Até 30 cortes por set",
+        "feature4": "Re-corte no minuto exato",
+        "cta": "Assinar Pro"
+      },
+      "premium": {
+        "name": "Premium",
+        "feature1": "Até 12 horas de set por mês",
+        "feature2": "Sets de até 3 horas",
+        "feature3": "Até 30 cortes por set",
+        "feature4": "Re-corte no minuto exato",
+        "cta": "Assinar Premium"
+      }
+    },
+    "finalCta": {
+      "title": "Seus melhores drops não merecem morrer no SoundCloud.",
+      "subtitle": "Suba um set agora e veja a DJviral transformar 1 hora em 10 cortes — de graça."
+    },
+    "footer": {
+      "copy": "© 2026 DJviral · cortes que viram feed"
+    }
+  }
+}
