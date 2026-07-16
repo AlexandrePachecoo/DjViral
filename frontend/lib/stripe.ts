@@ -135,6 +135,11 @@ export async function createStripeCheckout(opts: {
     method: "POST",
     body: {
       mode: "subscription",
+      // Explícito: sem isto o Stripe usa os "automatic payment methods" do
+      // dashboard e rejeita a sessão (HTTP 400) se a conta não tiver método
+      // ativado para USD. `card` cobre USD em qualquer conta ativada e ainda
+      // oferece Apple/Google Pay por baixo do mesmo tipo no Checkout.
+      payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${opts.appUrl}/app?billing=success`,
       cancel_url: `${opts.appUrl}/app?billing=cancelled`,
