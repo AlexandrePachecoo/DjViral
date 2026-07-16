@@ -4,12 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Logo } from "./Logo";
 import { theme, font, btnPrimary } from "./theme";
+import { localeUrl } from "@/i18n/config";
 import type { Tab } from "./types";
-
-const OTHER_HOST: Record<string, string> = {
-  pt: "djviral.vercel.app",
-  en: "djviral.com.br",
-};
 
 type Props = {
   tab: Tab;
@@ -24,8 +20,8 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
   const otherLocale = locale === "pt" ? "en" : "pt";
   const langHref =
     typeof window !== "undefined"
-      ? `${window.location.protocol}//${OTHER_HOST[locale]}${window.location.pathname}${window.location.search}`
-      : `https://${OTHER_HOST[locale]}`;
+      ? `${localeUrl[otherLocale]}${window.location.pathname}${window.location.search}`
+      : localeUrl[otherLocale];
   // Abas do menu central. Perfil e Planos/Uso agora vivem no menu do usuário
   // (dropdown no avatar), não aqui.
   const TABS: { key: Tab; label: string }[] = [

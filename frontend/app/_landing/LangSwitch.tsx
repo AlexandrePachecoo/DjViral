@@ -1,21 +1,18 @@
 "use client";
 
 import { useLocale } from "next-intl";
-
-const OTHER_HOST: Record<string, string> = {
-  pt: "djviral.vercel.app",
-  en: "djviral.com.br",
-};
+import { localeUrl } from "@/i18n/config";
 
 export default function LangSwitch({ className }: { className?: string }) {
   const locale = useLocale();
   const otherLocale = locale === "pt" ? "en" : "pt";
-  const otherHost = OTHER_HOST[locale];
 
+  // Preserva o caminho/query atual ao trocar de host quando possível.
+  const base = localeUrl[otherLocale];
   const href =
     typeof window !== "undefined"
-      ? `${window.location.protocol}//${otherHost}${window.location.pathname}${window.location.search}`
-      : `https://${otherHost}`;
+      ? `${base}${window.location.pathname}${window.location.search}`
+      : base;
 
   return (
     <a className={className} href={href}>
