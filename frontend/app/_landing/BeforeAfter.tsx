@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import styles from "./landing.module.css";
 
 const GRAD_PAIRS: [string, string][] = [
@@ -69,6 +70,7 @@ const PLATFORM_ICON = {
 };
 
 export default function BeforeAfter() {
+  const t = useTranslations("landing.beforeAfter");
   const [step, setStep] = useState(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -101,8 +103,8 @@ export default function BeforeAfter() {
   return (
     <section className={styles.abSection}>
       <div className={styles.abHead}>
-        <div className={styles.sectionEyebrow}>ANTES → DEPOIS</div>
-        <h2 className={styles.abTitle}>De um set gigante a um feed inteiro.</h2>
+        <div className={styles.sectionEyebrow}>{t("eyebrow")}</div>
+        <h2 className={styles.abTitle}>{t("title")}</h2>
       </div>
 
       <div className={styles.abWrap}>
@@ -112,7 +114,7 @@ export default function BeforeAfter() {
               data-anim={imgShown ? "" : undefined}
               className={`${styles.abVideo} ${imgShown ? styles.abVideoShown : ""}`}
             >
-              <span className={styles.abVideoTag}>SEU SET · 2:47:11</span>
+              <span className={styles.abVideoTag}>{t("videoTag")}</span>
               <div className={styles.abVideoWave}>
                 {SET_WAVE.map((b, i) => (
                   <span
@@ -135,7 +137,7 @@ export default function BeforeAfter() {
                 boxShadow: `0 12px 30px rgba(217,70,239,${btnShadow})`,
               }}
             >
-              ✂ Gerar cortes
+              {t("generateBtn")}
             </span>
             <div className={styles.abCursor} style={{ transform: cursorTransform }}>
               <svg
@@ -179,9 +181,7 @@ export default function BeforeAfter() {
             })}
           </div>
 
-          <div className={styles.abFoot}>
-            Um clique transforma o set inteiro em cortes prontos pra TikTok, Reels e Shorts.
-          </div>
+          <div className={styles.abFoot}>{t("footer")}</div>
         </div>
       </div>
     </section>

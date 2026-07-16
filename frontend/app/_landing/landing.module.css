@@ -138,8 +138,8 @@
   display: none;
 }
 
-/* ---- set carregado ---- */
-.loaded {
+/* ---- set carregado + formulário ---- */
+.form {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -192,49 +192,105 @@
   color: #71717a;
 }
 
-.loadedPreview {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  border-radius: 16px;
-  overflow: hidden;
-  background-image: linear-gradient(180deg, rgba(13, 13, 18, 0.15), rgba(13, 13, 18, 0.55)),
-    url("/images/dj-preview.webp");
-  background-size: cover;
-  background-position: center 30%;
-}
-
-.loadedPreviewTag {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.45);
-  padding: 4px 9px;
-  border-radius: 100px;
-}
-
-.loadedWave {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 14px;
+.formField {
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 30px;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.loadedWaveBar {
-  flex: 1;
-  min-width: 2px;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.85);
-  opacity: 0.75;
-  transform-origin: bottom;
-  animation: wave 1.4s ease-in-out infinite;
+.formLabel {
+  font-size: 13px;
+  color: #52525b;
+  font-weight: 500;
+}
+
+.formLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.formValue {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #7c3aed;
+}
+
+.textInput {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #e4e4ea;
+  background: #fff;
+  color: #18181b;
+  font-family: "Outfit", sans-serif;
+  /* 16px impede o iOS de dar zoom ao focar o campo. */
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.textInput:focus {
+  border-color: #a855f7;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.12);
+}
+
+.styleGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.styleCard {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 13px;
+  border-radius: 12px;
+  border: 1px solid #e4e4ea;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.styleCard:focus-visible {
+  outline: none;
+  border-color: #a855f7;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.12);
+}
+
+.styleCardActive {
+  border-color: #d946ef;
+  background: linear-gradient(180deg, #faf5ff, #fdf2fb);
+  box-shadow: 0 0 0 1px #d946ef;
+}
+
+.styleCardTitle {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.styleCardActive .styleCardTitle {
+  color: #7c3aed;
+}
+
+.styleCardDesc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #71717a;
+}
+
+.rangeInput {
+  width: 100%;
+  accent-color: #a855f7;
+}
+
+.fieldHint {
+  font-size: 12px;
+  color: #71717a;
 }
 
 .generateBtn {
@@ -256,9 +312,14 @@
   transition: filter 0.18s ease, transform 0.18s ease;
 }
 
-.generateBtn:hover {
+.generateBtn:hover:not(:disabled) {
   filter: brightness(1.06);
   transform: translateY(-1px);
+}
+
+.generateBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .changeFileBtn {
@@ -576,8 +637,7 @@
 /* ============ reduced motion ============ */
 @media (prefers-reduced-motion: reduce) {
   .idleBar,
-  .loadedWaveBar,
-  .loaded,
+  .form,
   .gate,
   .abVideoShown,
   .abWaveBar {

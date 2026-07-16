@@ -1,0 +1,458 @@
+{
+  "metadata": {
+    "title": "DJviral — Your set becomes 30 viral clips. No editing required.",
+    "description": "Upload a set up to 3 hours long. DJviral finds the best moments and delivers 30 vertical videos ready for TikTok and Reels."
+  },
+  "landing": {
+    "nav": {
+      "tryNow": "Try now",
+      "howItWorks": "How it works",
+      "pricing": "Pricing",
+      "login": "Log in",
+      "tryFree": "Try for free"
+    },
+    "hero": {
+      "titleLine1": "1 long set.",
+      "titleLine2": "30 viral clips.",
+      "subtitle": "Upload your set. Our AI finds the drops, the switch-ups and the highest-energy moments and hands back vertical videos ready for your feed."
+    },
+    "how": {
+      "eyebrow": "HOW IT WORKS",
+      "title": "From file to feed in three steps.",
+      "step1": {
+        "title": "Upload your set",
+        "body": "Drag in your set video, up to 3 hours long"
+      },
+      "step2": {
+        "title": "AI cuts the peaks",
+        "body": "We detect drops, switch-ups and the highest-energy moments and cut automatically  no need to review everything yourself."
+      },
+      "step3": {
+        "title": "Get 30 clips",
+        "body": "9:16 vertical videos, ready to post on TikTok, Reels and Shorts. You can still edit any clip however you like "
+      }
+    },
+    "pricing": {
+      "eyebrow": "PRICING",
+      "title": "Start free. Grow when it pops off.",
+      "popularBadge": "★ MOST POPULAR",
+      "perMonth": "/mo",
+      "paymentSub": "Renews monthly",
+      "contactCta": "Contact us",
+      "free": {
+        "name": "Free trial",
+        "sub": "to try it out",
+        "feature1": "1 hour of set to test",
+        "feature2": "10 vertical 9:16 clips",
+        "feature3": "Automatic drop cuts",
+        "cta": "Start for free"
+      },
+      "pro": {
+        "name": "Pro",
+        "feature1": "Up to 5 hours of sets per month",
+        "feature2": "Sets up to 3 hours long",
+        "feature3": "Up to 30 clips per set",
+        "feature4": "Re-cut down to the exact minute",
+        "cta": "Subscribe to Pro"
+      },
+      "premium": {
+        "name": "Premium",
+        "feature1": "Up to 12 hours of sets per month",
+        "feature2": "Sets up to 3 hours long",
+        "feature3": "Up to 30 clips per set",
+        "feature4": "Re-cut down to the exact minute",
+        "cta": "Subscribe to Premium"
+      }
+    },
+    "finalCta": {
+      "title": "Your next set already has 30 clips waiting.",
+      "subtitle": "Upload a set now and watch DJviral turn 1 hour into 10 clips — for free.",
+      "button": "Try it free now"
+    },
+    "footer": {
+      "copy": "© 2026 DJviral · cuts that become feed"
+    },
+    "generator": {
+      "headerLabel": "Clip generator",
+      "dropTitle": "Drag your set video here",
+      "dropHint": "MP4 · up to 3 hours · the file never leaves your browser",
+      "dropCta": "Select a file and try for free",
+      "fileLoaded": "set loaded",
+      "nameLabel": "Set name",
+      "namePlaceholder": "e.g. Summer set 2026",
+      "styleLabel": "Cut style",
+      "style": {
+        "basic": {
+          "title": "Static cut",
+          "desc": "Fixed center framing. Faster."
+        },
+        "dynamic": {
+          "title": "Dynamic cut",
+          "desc": "Zooms on the DJ and the crowd, on the beat."
+        }
+      },
+      "cutsLabel": "Number of clips",
+      "cutsHint": "On the free trial, up to {max} clips per set.",
+      "generateBtn": "✂ Generate clips",
+      "changeFileBtn": "Change file",
+      "gate": {
+        "title": "Create your account to generate the clips",
+        "text": "It's free — our AI will cut {name} into {count, plural, one {# vertical 9:16 video} other {# vertical 9:16 videos}} ready for your feed.",
+        "cta": "Create free account",
+        "back": "← Back"
+      }
+    },
+    "beforeAfter": {
+      "eyebrow": "BEFORE → AFTER",
+      "title": "From one giant set to a whole feed.",
+      "videoTag": "YOUR SET · 2:47:11",
+      "generateBtn": "✂ Generate clips",
+      "footer": "One click turns the whole set into clips ready for TikTok, Reels and Shorts."
+    }
+  },
+  "studio": {
+    "header": {
+      "tabs": { "generator": "Generator", "editor": "Editor", "saved": "Saved clips" },
+      "newSet": "＋ New set",
+      "menu": { "profile": "Profile", "plan": "Plan/Usage", "logout": "Log out" }
+    },
+    "plan": {
+      "cards": {
+        "free": { "name": "Free trial", "priceNote": "to try it out", "f1": "1 hour of set in total", "f2": "10 clips per set", "f3": "9:16 vertical videos" },
+        "pro": { "name": "Pro", "f1": "Up to 5 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
+        "premium": { "name": "Premium", "f1": "Up to 12 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
+        "paidPriceNote": "/mo"
+      },
+      "errors": {
+        "loadFailed": "Couldn't load your plan. Reload the page.",
+        "checkoutFailed": "failed to open checkout",
+        "unexpected": "Unexpected error"
+      },
+      "justPaid": {
+        "text": "✓ Payment complete! Your plan activates as soon as AbacatePay's confirmation arrives (usually a few seconds).",
+        "refresh": "Refresh"
+      },
+      "yourPlan": "Your plan:",
+      "usedOf": "{used} of {limit} used",
+      "thisMonth": " this month",
+      "onTrial": " on trial",
+      "remaining": "{remaining} of set left · up to {maxCuts} clips per set",
+      "renewsOn": " · renews on {date}",
+      "pastDue": "⚠ The last charge failed — AbacatePay will retry. Check your card to avoid losing access.",
+      "adminAccount": "Admin account — unlimited usage, no billing. The cards below are just the publicly sold plans.",
+      "currentPlan": "Current plan",
+      "openingCheckout": "Opening checkout...",
+      "contactCta": "Contact us",
+      "subscribeTo": "Subscribe to {name}",
+      "paymentFootnote": "Payments are processed by AbacatePay (Brazil). International billing is not available yet — contact us to subscribe."
+    },
+    "saved": {
+      "empty": "No clips saved yet. Generate a set and save your favorite clips.",
+      "download": "Download",
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "deleteCut": "Delete clip",
+      "share": {
+        "title": "Public link",
+        "enabledHint": "Anyone with the link can view and download the saved clips.",
+        "disabledHint": "Generate a link so anyone can view and download the saved clips.",
+        "disable": "Disable link",
+        "enable": "Enable link",
+        "copied": "Copied!",
+        "copyLink": "Copy link",
+        "messageLabel": "Message shown at the top of the link (optional)",
+        "messagePlaceholder": "e.g.: Thanks for checking out the set! Grab the clips and tag @yourprofile 🔥",
+        "saving": "Saving...",
+        "saveMessage": "Save message"
+      },
+      "folder": {
+        "collapse": "Collapse folder",
+        "expand": "Expand folder",
+        "cutsCount": "{count, plural, one {# saved clip} other {# saved clips}}",
+        "shared": "🔗 Shared",
+        "share": "🔗 Share",
+        "deleteSet": "🗑 Delete set",
+        "inSet": "in set",
+        "edit": "✎ Edit"
+      }
+    },
+    "generator": {
+      "errors": {
+        "uploadFailedStatus": "Video upload failed (HTTP {status})",
+        "uploadFailedNetwork": "Video upload failed (network error)",
+        "processingFailed": "Processing failed. Check the worker logs.",
+        "unexpected": "Unexpected error",
+        "saveFailed": "Couldn't save. Try again."
+      },
+      "status": {
+        "creatingProject": "Creating project...",
+        "uploadingVideo": "Uploading video...",
+        "analyzing": "Analyzing audio and generating clips..."
+      },
+      "cutsGenerated": "{count} clips generated",
+      "selectHint": "select the ones you want to save — unsaved clips disappear on reload",
+      "allSaved": "all clips have been saved",
+      "clearSelection": "Clear selection",
+      "selectAll": "Select all",
+      "saving": "Saving...",
+      "saveSelected": "{count, plural, =0 {Save selected} other {Save selected (#)}}",
+      "savedInTab": "✓ {count, plural, one {# clip} other {# clips}} saved · available in the Saved clips tab",
+      "savedBadge": "✓ Saved",
+      "selectAria": "Select {title}",
+      "inSet": "in set",
+      "savedCheck": "Saved ✓",
+      "selected": "Selected",
+      "select": "Select",
+      "edit": "✎ Edit",
+      "download": "Download",
+      "form": {
+        "title": "New set",
+        "subtitle": "Upload your set and automatically get the most viral clips.",
+        "namePlaceholder": "Set name",
+        "styleLabel": "Cut style",
+        "style": {
+          "basic": { "title": "Static cut", "desc": "Fixed center framing. Faster processing." },
+          "dynamic": { "title": "Dynamic cut", "desc": "Zooms on the DJ and the crowd, cut to the beat. Takes longer." }
+        },
+        "intensityLabel": "Intensity",
+        "intensityAria": "Dynamic cut intensity",
+        "intensity": {
+          "subtle": { "title": "Subtle", "desc": "Few shot changes, discreet zooms." },
+          "medium": { "title": "Medium", "desc": "Balance between rhythm and naturalness." },
+          "intense": { "title": "Intense", "desc": "Lots of dj/crowd switching, strong beat zooms." }
+        },
+        "numCutsLabel": "Number of clips",
+        "planAllows": "Your plan allows up to {max} clips per set.",
+        "seePlans": "See plans",
+        "processing": "Processing...",
+        "generate": "Generate clips",
+        "uploadHint": "This can take a bit depending on the video size and your connection.",
+        "tryAgain": "Try again"
+      }
+    },
+    "profile": {
+      "title": "Profile",
+      "planLabels": { "free": "Free trial", "pro": "Pro", "premium": "Premium", "admin": "Admin" },
+      "errors": {
+        "saveFailed": "failed to save",
+        "unexpected": "Unexpected error",
+        "passwordChangeFailed": "failed to change password",
+        "cancelFailed": "failed to cancel"
+      },
+      "account": {
+        "title": "Account",
+        "nameEmptyError": "Name can't be empty.",
+        "email": "Email",
+        "name": "Name",
+        "saving": "Saving...",
+        "save": "Save",
+        "cancel": "Cancel",
+        "edit": "Edit"
+      },
+      "plan": {
+        "title": "Plan",
+        "current": "Current plan:",
+        "manage": "Manage plan"
+      },
+      "subscription": {
+        "title": "Subscription",
+        "canceledOk": "✓ Subscription canceled. You're back on the free plan.",
+        "confirmText": "Are you sure? You'll go back to the free plan and lose access to the paid plan's limits.",
+        "canceling": "Canceling...",
+        "confirmYes": "Yes, cancel",
+        "keepPlan": "Keep plan",
+        "cancelHint": "Cancels the renewal and goes back to the free plan.",
+        "cancelCta": "Cancel subscription"
+      },
+      "security": {
+        "title": "Security",
+        "passwordTooShort": "The new password must be at least 6 characters.",
+        "passwordMismatch": "The confirmation doesn't match the new password.",
+        "currentPassword": "Current password",
+        "newPassword": "New password",
+        "confirmPassword": "Confirm new password",
+        "passwordChanged": "✓ Password changed successfully.",
+        "saving": "Saving...",
+        "changePassword": "Change password"
+      }
+    },
+    "editor": {
+      "back": "Back",
+      "errors": {
+        "codecUnsupported": "the browser can't play this file's format/codec (e.g. iPhone HEVC/MOV or MKV)",
+        "networkFailure": "network failure while downloading the original video from storage",
+        "sourceLoadFailed": "the original video couldn't be loaded",
+        "code": "code",
+        "recutFailed": "The re-cut failed. Try again.",
+        "recutSlow": "The re-cut is taking a while. Try again shortly.",
+        "titleEmpty": "The title can't be empty.",
+        "nothingToSave": "Nothing to save.",
+        "renameFailed": "Failed to rename",
+        "recutRequestFailed": "Failed to re-cut",
+        "saveFailed": "Error saving"
+      },
+      "status": {
+        "regenerating": "Regenerating the clip's video...",
+        "saving": "Saving..."
+      },
+      "cutNamePlaceholder": "Clip name",
+      "cutTitleAria": "Clip title",
+      "editorFallbackName": "Editor",
+      "exporting": "Exporting...",
+      "saveCut": "Save clip",
+      "loadingSet": "Loading the original set...",
+      "sourceUnavailable": {
+        "withError": "Couldn't play this set's original video: {reason}. The preview below shows the already-generated clip; you can still adjust start/end and the title — manual zoom needs the original video.",
+        "noSource": "This set's original video isn't available for preview (YouTube set or removed file). You can adjust start/end on the timeline — manual zoom needs the original video."
+      },
+      "loadingVideo": "Loading the set's video...",
+      "regeneratingVideo": "Regenerating the video with the new edit...",
+      "pause": "Pause",
+      "play": "Play",
+      "startHere": "⇤ Start here",
+      "endHere": "End here ⇥",
+      "removeKeyframe": "Remove keyframe",
+      "addKeyframe": "Add keyframe",
+      "panel": {
+        "framing": "Framing",
+        "zoom": "Zoom",
+        "cameraZoomAria": "Camera zoom",
+        "framingHint": "Drag the video in the preview (or scroll) to frame it. Each adjustment becomes a ◆ keyframe at the current point.",
+        "keyframes": "Keyframes",
+        "noKeyframes": "No keyframes yet — the camera stays centered.",
+        "clearKeyframes": "Clear all keyframes",
+        "trim": "Trim",
+        "start": "Start",
+        "end": "End",
+        "duration": "Duration: {dur}s (min. {min}s · max. {max}s)"
+      },
+      "timeline": {
+        "fitToClip": "Fit to clip",
+        "fullWindow": "Full window",
+        "hint": "drag the purple handles to shorten or extend the clip — you can go beyond what the AI picked (the white line below marks the original choice). To keep the editor light, the timeline loads ~1 min before and after the clip; extending the clip moves the window along."
+      }
+    },
+    "editPicker": {
+      "empty": "No clips to edit yet. Generate a set in the Generator or save clips — they'll show up here to adjust timing, zoom and keyframes.",
+      "title": "Choose a clip to edit",
+      "subtitle": "adjust start/end on the timeline, drag the TikTok window and create zoom keyframes",
+      "inSet": "in set",
+      "edit": "✎ Edit"
+    }
+  },
+  "publicShare": {
+    "metadata": {
+      "notFoundTitle": "Link not found · DJviral",
+      "description": "Clips from the {setName} set"
+    },
+    "notFound": "Link not found or disabled.",
+    "cutsCount": "{count, plural, one {# clip} other {# clips}}",
+    "noCuts": "This set doesn't have any published clips yet.",
+    "inSet": "in set",
+    "download": "Download",
+    "footer": {
+      "prefix": "Clips generated with"
+    }
+  },
+  "login": {
+    "titleLogin": "Log in",
+    "titleRegister": "Create account",
+    "subtitleLogin": "Access your account to generate clips.",
+    "subtitleRegister": "It's free — no credit card required.",
+    "namePlaceholder": "Your name",
+    "emailPlaceholder": "Email",
+    "passwordPlaceholder": "Password",
+    "submitBusy": "Please wait...",
+    "submitLogin": "Log in",
+    "submitRegister": "Create free account",
+    "noAccount": "Don't have an account yet? ",
+    "hasAccount": "Already have an account? ",
+    "switchToRegister": "Create account",
+    "switchToLogin": "Log in",
+    "errors": {
+      "somethingWrong": "Something went wrong",
+      "unexpected": "Unexpected error"
+    }
+  },
+  "escura": {
+    "nav": {
+      "howItWorks": "How it works",
+      "pricing": "Pricing",
+      "login": "Log in",
+      "tryFree": "Try for free"
+    },
+    "hero": {
+      "eyebrow": "MADE FOR DJS WHO WANT TO BLOW UP",
+      "titlePrefix": "Your set becomes",
+      "titleHighlight": "30 viral clips",
+      "titleSuffix": ". No editing required.",
+      "subtitle": "Upload a set up to 3 hours long. DJviral finds the best moments and delivers 30 vertical videos ready for TikTok and Reels.",
+      "primaryCta": "Try for free — 1h becomes 10 clips",
+      "secondaryCta": "▸ See how it works",
+      "microcopy": "No credit card · First clips in minutes",
+      "stat1": "of set per upload",
+      "stat2": "clips ready",
+      "stat3": "vertical, ready to post"
+    },
+    "card": {
+      "analyzing": "analyzing · summer-set.mp3",
+      "momentsFound": "✦ 30 viral moments found"
+    },
+    "how": {
+      "eyebrow": "HOW IT WORKS",
+      "title": "From file to feed in 3 steps.",
+      "step1": {
+        "title": "Upload your set",
+        "body": "Drag in a file up to 3 hours long, or paste a SoundCloud, YouTube or Mixcloud link."
+      },
+      "step2": {
+        "title": "AI finds the peaks",
+        "body": "We detect drops, switch-ups and the highest-energy moments of the set — no need to listen through it all again."
+      },
+      "step3": {
+        "title": "Get 30 clips",
+        "body": "9:16 vertical videos, already captioned and ready to post on TikTok and Reels."
+      }
+    },
+    "pricing": {
+      "eyebrow": "PRICING",
+      "title": "Start free. Grow when it pops off.",
+      "popularBadge": "★ MOST POPULAR",
+      "perMonth": "/mo",
+      "paymentSub": "Renews monthly",
+      "contactCta": "Contact us",
+      "free": {
+        "name": "Free trial",
+        "sub": "to try it out",
+        "feature1": "1 hour of set to test",
+        "feature2": "10 vertical 9:16 clips",
+        "feature3": "Automatic drop analysis",
+        "feature4": "No credit card",
+        "cta": "Start for free"
+      },
+      "pro": {
+        "name": "Pro",
+        "feature1": "Up to 5 hours of sets per month",
+        "feature2": "Sets up to 3 hours long",
+        "feature3": "Up to 30 clips per set",
+        "feature4": "Re-cut down to the exact minute",
+        "cta": "Subscribe to Pro"
+      },
+      "premium": {
+        "name": "Premium",
+        "feature1": "Up to 12 hours of sets per month",
+        "feature2": "Sets up to 3 hours long",
+        "feature3": "Up to 30 clips per set",
+        "feature4": "Re-cut down to the exact minute",
+        "cta": "Subscribe to Premium"
+      }
+    },
+    "finalCta": {
+      "title": "Your best drops don't deserve to die on SoundCloud.",
+      "subtitle": "Upload a set now and watch DJviral turn 1 hour into 10 clips — for free."
+    },
+    "footer": {
+      "copy": "© 2026 DJviral · cuts that become feed"
+    }
+  }
+}

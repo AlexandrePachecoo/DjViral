@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
 // Aba "Perfil": dados da conta, editar nome, alterar senha, atalho para o
@@ -14,13 +15,6 @@ type Props = {
 };
 
 type Me = { id: string; name: string; email: string; plan: string };
-
-const PLAN_LABEL: Record<string, string> = {
-  free: "Teste grátis",
-  pro: "Pro",
-  premium: "Premium",
-  admin: "Admin",
-};
 
 const danger = "#dc2626";
 const okBg = "#ecfdf5";
@@ -67,6 +61,13 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
+  const t = useTranslations("studio.profile");
+  const PLAN_LABEL: Record<string, string> = {
+    free: t("planLabels.free"),
+    pro: t("planLabels.pro"),
+    premium: t("planLabels.premium"),
+    admin: t("planLabels.admin"),
+  };
   const [me, setMe] = useState<Me | null>(null);
 
   // --- editar nome ---
@@ -112,7 +113,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
   async function saveName() {
     const trimmed = nameDraft.trim();
     if (!trimmed) {
-      setNameError("O nome não pode ficar vazio.");
+      setNameError(t("account.nameEmptyError"));
       return;
     }
     setNameSaving(true);
@@ -124,12 +125,12 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
         body: JSON.stringify({ name: trimmed }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "falha ao salvar");
+      if (!res.ok) throw new Error(data.error ?? t("errors.saveFailed"));
       setMe(data.user);
       onNameChange(data.user.name);
       setEditingName(false);
     } catch (err) {
-      setNameError(err instanceof Error ? err.message : "Erro inesperado");
+      setNameError(err instanceof Error ? err.message : t("errors.unexpected"));
     } finally {
       setNameSaving(false);
     }
@@ -140,11 +141,11 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
     setPwError("");
     setPwOk(false);
     if (next.length < 6) {
-      setPwError("A nova senha deve ter ao menos 6 caracteres.");
+      setPwError(t("security.passwordTooShort"));
       return;
     }
     if (next !== confirm) {
-      setPwError("A confirmação não confere com a nova senha.");
+      setPwError(t("security.passwordMismatch"));
       return;
     }
     setPwSaving(true);
@@ -155,13 +156,13 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
         body: JSON.stringify({ currentPassword: current, newPassword: next }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "falha ao alterar a senha");
+      if (!res.ok) throw new Error(data.error ?? t("errors.passwordChangeFailed"));
       setPwOk(true);
       setCurrent("");
       setNext("");
       setConfirm("");
     } catch (err) {
-      setPwError(err instanceof Error ? err.message : "Erro inesperado");
+      setPwError(err instanceof Error ? err.message : t("errors.unexpected"));
     } finally {
       setPwSaving(false);
     }
@@ -173,12 +174,12 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
     try {
       const res = await fetch("/api/billing/cancel", { method: "POST" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "falha ao cancelar");
+      if (!res.ok) throw new Error(data.error ?? t("errors.cancelFailed"));
       setCanceledOk(true);
       setConfirmingCancel(false);
       await loadMe();
     } catch (err) {
-      setCancelError(err instanceof Error ? err.message : "Erro inesperado");
+      setCancelError(err instanceof Error ? err.message : t("errors.unexpected"));
     } finally {
       setCanceling(false);
     }
@@ -189,16 +190,16 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
 
   return (
     <div style={{ animation: "dj-fadeUp .4s ease", maxWidth: 720, margin: "0 auto" }} data-anim>
-      <h1 style={{ font: `600 24px ${font.display}`, margin: "0 0 24px" }}>Perfil</h1>
+      <h1 style={{ font: `600 24px ${font.display}`, margin: "0 0 24px" }}>{t("title")}</h1>
 
       {/* Conta: email + nome editável */}
-      <Card title="Conta">
+      <Card title={t("account.title")}>
         <div style={{ marginBottom: 18 }}>
-          <span style={labelStyle}>Email</span>
+          <span style={labelStyle}>{t("account.email")}</span>
           <div style={{ fontSize: 14, color: theme.textSecondary }}>{me?.email ?? "…"}</div>
         </div>
 
-        <span style={labelStyle}>Nome</span>
+        <span style={labelStyle}>{t("account.name")}</span>
         {editingName ? (
           <div>
             <input
@@ -218,7 +219,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
                 disabled={nameSaving}
                 style={{ ...btnPrimary, opacity: nameSaving ? 0.6 : 1 }}
               >
-                {nameSaving ? "Salvando..." : "Salvar"}
+                {nameSaving ? t("account.saving") : t("account.save")}
               </button>
               <button
                 type="button"
@@ -226,7 +227,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
                 disabled={nameSaving}
                 style={btnGhost}
               >
-                Cancelar
+                {t("account.cancel")}
               </button>
             </div>
           </div>
@@ -234,36 +235,35 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ fontSize: 14, color: theme.textSecondary }}>{me?.name ?? userName}</div>
             <button type="button" onClick={startEditName} style={btnGhost}>
-              Editar
+              {t("account.edit")}
             </button>
           </div>
         )}
       </Card>
 
       {/* Plano: label + atalho para a aba Plano */}
-      <Card title="Plano">
+      <Card title={t("plan.title")}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ fontSize: 14, color: theme.textSecondary }}>
-            Plano atual: <span style={{ color: theme.accent, fontWeight: 500 }}>{planLabel}</span>
+            {t("plan.current")} <span style={{ color: theme.accent, fontWeight: 500 }}>{planLabel}</span>
           </div>
           <button type="button" onClick={onManagePlan} style={btnGhost}>
-            Gerenciar plano
+            {t("plan.manage")}
           </button>
         </div>
       </Card>
 
       {/* Assinatura: cancelar (só planos pagos) */}
       {isPaid && (
-        <Card title="Assinatura">
+        <Card title={t("subscription.title")}>
           {canceledOk ? (
             <div style={{ fontSize: 13, color: okText }}>
-              ✓ Assinatura cancelada. Você voltou ao plano gratuito.
+              {t("subscription.canceledOk")}
             </div>
           ) : confirmingCancel ? (
             <div>
               <div style={{ fontSize: 13, color: theme.textSecondary, marginBottom: 14 }}>
-                Tem certeza? Você volta ao plano free e perde o acesso aos limites
-                do plano pago.
+                {t("subscription.confirmText")}
               </div>
               {cancelError && (
                 <div style={{ fontSize: 12, color: danger, marginBottom: 10 }}>{cancelError}</div>
@@ -275,7 +275,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
                   disabled={canceling}
                   style={{ ...btnGhost, color: danger, borderColor: danger, opacity: canceling ? 0.6 : 1 }}
                 >
-                  {canceling ? "Cancelando..." : "Sim, cancelar"}
+                  {canceling ? t("subscription.canceling") : t("subscription.confirmYes")}
                 </button>
                 <button
                   type="button"
@@ -283,21 +283,21 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
                   disabled={canceling}
                   style={btnGhost}
                 >
-                  Manter plano
+                  {t("subscription.keepPlan")}
                 </button>
               </div>
             </div>
           ) : (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, color: theme.textSecondary }}>
-                Cancela a renovação e volta ao plano gratuito.
+                {t("subscription.cancelHint")}
               </div>
               <button
                 type="button"
                 onClick={() => setConfirmingCancel(true)}
                 style={{ ...btnGhost, color: danger, borderColor: danger }}
               >
-                Cancelar assinatura
+                {t("subscription.cancelCta")}
               </button>
             </div>
           )}
@@ -305,10 +305,10 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
       )}
 
       {/* Segurança: trocar senha */}
-      <Card title="Segurança">
+      <Card title={t("security.title")}>
         <form onSubmit={changePassword}>
           <div style={{ marginBottom: 14 }}>
-            <span style={labelStyle}>Senha atual</span>
+            <span style={labelStyle}>{t("security.currentPassword")}</span>
             <input
               type="password"
               value={current}
@@ -317,7 +317,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
             />
           </div>
           <div style={{ marginBottom: 14 }}>
-            <span style={labelStyle}>Nova senha</span>
+            <span style={labelStyle}>{t("security.newPassword")}</span>
             <input
               type="password"
               value={next}
@@ -326,7 +326,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
             />
           </div>
           <div style={{ marginBottom: 16 }}>
-            <span style={labelStyle}>Confirmar nova senha</span>
+            <span style={labelStyle}>{t("security.confirmPassword")}</span>
             <input
               type="password"
               value={confirm}
@@ -348,7 +348,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
                 marginBottom: 12,
               }}
             >
-              ✓ Senha alterada com sucesso.
+              {t("security.passwordChanged")}
             </div>
           )}
 
@@ -361,7 +361,7 @@ export function ProfileView({ userName, onNameChange, onManagePlan }: Props) {
               cursor: pwSaving || !current || !next || !confirm ? "default" : "pointer",
             }}
           >
-            {pwSaving ? "Salvando..." : "Alterar senha"}
+            {pwSaving ? t("security.saving") : t("security.changePassword")}
           </button>
         </form>
       </Card>

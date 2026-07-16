@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
 import { SavedView } from "./_studio/SavedView";
@@ -201,6 +202,7 @@ function EditPicker({
   folders: SavedFolder[];
   onEdit: (projectId: string, setName: string, cut: Cut) => void;
 }) {
+  const t = useTranslations("studio.editPicker");
   const hasCuts = folders.some((f) => f.cuts.length > 0);
   if (!hasCuts) {
     return (
@@ -216,8 +218,7 @@ function EditPicker({
             fontSize: 14,
           }}
         >
-          Nenhum corte para editar ainda. Gere um set no Gerador ou salve cortes —
-          eles aparecem aqui para ajustar tempo, zoom e keyframes.
+          {t("empty")}
         </div>
       </div>
     );
@@ -230,11 +231,9 @@ function EditPicker({
     >
       <div>
         <div style={{ font: `500 24px ${font.display}`, letterSpacing: "-.01em" }}>
-          Escolha um corte para editar
+          {t("title")}
         </div>
-        <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>
-          ajuste início/fim na timeline, arraste a janela do TikTok e crie keyframes de zoom
-        </div>
+        <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>{t("subtitle")}</div>
       </div>
       {folders.map((folder) => (
         <section key={folder.projectId}>
@@ -287,7 +286,7 @@ function EditPicker({
                     {cut.title}
                   </div>
                   <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 10 }}>
-                    {cut.dur} · no set · {cut.moment}
+                    {cut.dur} · {t("inSet")} · {cut.moment}
                   </div>
                   <div
                     style={{
@@ -300,7 +299,7 @@ function EditPicker({
                       border: `1px solid ${theme.accentBorder}`,
                     }}
                   >
-                    ✎ Editar
+                    {t("edit")}
                   </div>
                 </div>
               </div>

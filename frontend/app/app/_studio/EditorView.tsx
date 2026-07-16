@@ -15,6 +15,7 @@
 // em `cuts.crop_keyframes`.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { theme, font } from "./theme";
 import { type Cut } from "./data";
 import {
@@ -126,6 +127,7 @@ function rulerStep(span: number): number {
 }
 
 export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) {
+  const t = useTranslations("studio.editor");
   const [title, setTitle] = useState(cut.title);
   const [start, setStart] = useState(cut.startSec);
   const [end, setEnd] = useState(cut.endSec);
@@ -277,11 +279,11 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     const code = err?.code ?? 0;
     const why =
       code === 3 || code === 4
-        ? "o navegador não consegue reproduzir o formato/codec do arquivo original (ex.: HEVC/MOV de iPhone ou MKV)"
+        ? t("errors.codecUnsupported")
         : code === 2
-          ? "falha de rede ao baixar o vídeo original do armazenamento"
-          : "o vídeo original não pôde ser carregado";
-    setSrcFailed(`${why} [código ${code}${err?.message ? `: ${err.message}` : ""}]`);
+          ? t("errors.networkFailure")
+          : t("errors.sourceLoadFailed");
+    setSrcFailed(`${why} [${t("errors.code")} ${code}${err?.message ? `: ${err.message}` : ""}]`);
   }
 
   // Largura real do canvas 9:16 (para converter arrasto em px da fonte).
@@ -595,9 +597,9 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
       );
       if (!api) continue;
       if (api.status === "ready") return toStudioCut(api);
-      if (api.status === "error") throw new Error("O re-corte falhou. Tente de novo.");
+      if (api.status === "error") throw new Error(t("errors.recutFailed"));
     }
-    throw new Error("O re-corte está demorando. Tente novamente em instantes.");
+    throw new Error(t("errors.recutSlow"));
   }
 
   async function handleSave() {
@@ -605,16 +607,16 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
     const newTitle = title.trim();
     if (!newTitle) {
       setSaveState("error");
-      setMsg("O título não pode ficar vazio.");
+      setMsg(t("errors.titleEmpty"));
       return;
     }
     if (!dirty) {
-      setMsg("Nada para salvar.");
+      setMsg(t("errors.nothingToSave"));
       return;
     }
 
     setSaveState("saving");
-    setMsg(trimChanged || kfChanged ? "Regenerando o vídeo do corte..." : "Salvando...");
+    setMsg(trimChanged || kfChanged ? t("status.regenerating") : t("status.saving"));
     videoRef.current?.pause();
     try {
       if (titleChanged) {
@@ -624,7 +626,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
           body: JSON.stringify({ titulo: newTitle }),
         });
         if (!r.ok) {
-          throw new Error((await r.json().catch(() => ({})))?.error ?? "Falha ao renomear");
+          throw new Error((await r.json().catch(() => ({})))?.error ?? t("errors.renameFailed"));
         }
       }
 
@@ -644,7 +646,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
           body: JSON.stringify({ inicio: start, fim: end, keyframes: rel }),
         });
         if (!r.ok) {
-          throw new Error((await r.json().catch(() => ({})))?.error ?? "Falha ao re-cortar");
+          throw new Error((await r.json().catch(() => ({})))?.error ?? t("errors.recutRequestFailed"));
         }
         const updated = await pollUntilReady();
         setSaveState("idle");
@@ -660,7 +662,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
       onSaved({ ...cut, title: newTitle });
     } catch (e) {
       setSaveState("error");
-      setMsg(e instanceof Error ? e.message : "Erro ao salvar");
+      setMsg(e instanceof Error ? e.message : t("errors.saveFailed"));
     }
   }
 
@@ -715,7 +717,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
         <button
           type="button"
           onClick={saving ? undefined : onBack}
-          aria-label="Voltar"
+          aria-label={t("back")}
           style={{
             width: 34,
             height: 34,
@@ -736,8 +738,8 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
             onChange={(e) => setTitle(e.target.value)}
             disabled={saving}
             maxLength={120}
-            placeholder="Nome do corte"
-            aria-label="Título do corte"
+            placeholder={t("cutNamePlaceholder")}
+            aria-label={t("cutTitleAria")}
             style={{
               width: "100%",
               background: "transparent",
@@ -757,7 +759,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
               textOverflow: "ellipsis",
             }}
           >
-            {setName || "Editor"} · {formatTimecode(start)} → {formatTimecode(end)} ·{" "}
+            {setName || t("editorFallbackName")} · {formatTimecode(start)} → {formatTimecode(end)} ·{" "}
             {(end - start).toFixed(1)}s
           </div>
         </div>
@@ -776,7 +778,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
             whiteSpace: "nowrap",
           }}
         >
-          {saving ? "Exportando..." : "Salvar corte"}
+          {saving ? t("exporting") : t("saveCut")}
         </button>
       </div>
 
@@ -798,7 +800,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
 
       {source === null ? (
         <div style={{ padding: "80px 24px", textAlign: "center", color: dk.sub, fontSize: 14 }}>
-          Carregando o set original...
+          {t("loadingSet")}
         </div>
       ) : (
         <>
@@ -815,12 +817,8 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
               }}
             >
               {srcFailed
-                ? `Não deu para tocar o vídeo original deste set: ${srcFailed}. ` +
-                  "O preview abaixo mostra o corte já gerado; dá para ajustar o " +
-                  "início/fim e o título — o zoom manual precisa do vídeo original."
-                : "O vídeo original deste set não está disponível para pré-visualização " +
-                  "(set do YouTube ou arquivo removido). Dá para ajustar o início/fim na " +
-                  "timeline — o zoom manual precisa do vídeo original."}
+                ? t("sourceUnavailable.withError", { reason: srcFailed })
+                : t("sourceUnavailable.noSource")}
             </div>
           )}
 
@@ -902,7 +900,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                         pointerEvents: "none",
                       }}
                     >
-                      Carregando o vídeo do set...
+                      {t("loadingVideo")}
                     </div>
                   )}
                   {/* Grade de terços enquanto arrasta (guia, estilo CapCut) */}
@@ -1001,7 +999,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                         padding: 16,
                       }}
                     >
-                      Regenerando o vídeo com a nova edição...
+                      {t("regeneratingVideo")}
                     </div>
                   )}
                 </div>
@@ -1048,7 +1046,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                   type="button"
                   onClick={togglePlay}
                   disabled={saving || !canPreview}
-                  aria-label={playing ? "Pausar" : "Tocar"}
+                  aria-label={playing ? t("pause") : t("play")}
                   style={{
                     width: 42,
                     height: 42,
@@ -1075,17 +1073,17 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                   <span style={{ color: dk.faint }}>/ {formatTimecode(maxT)}</span>
                 </span>
                 <DarkBtn disabled={saving} onClick={() => nudge("start", curT - start)}>
-                  ⇤ Início aqui
+                  {t("startHere")}
                 </DarkBtn>
                 <DarkBtn disabled={saving} onClick={() => nudge("end", curT - end)}>
-                  Fim aqui ⇥
+                  {t("endHere")}
                 </DarkBtn>
                 {canPreview && (
                   <button
                     type="button"
                     onClick={toggleKfAtPlayhead}
                     disabled={saving}
-                    title={activeKf !== -1 ? "Remover keyframe" : "Adicionar keyframe"}
+                    title={activeKf !== -1 ? t("removeKeyframe") : t("addKeyframe")}
                     style={{
                       width: 34,
                       height: 34,
@@ -1117,7 +1115,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
             >
               {canPreview && (
                 <div>
-                  <PanelLabel>Enquadramento</PanelLabel>
+                  <PanelLabel>{t("panel.framing")}</PanelLabel>
                   <div
                     style={{
                       display: "flex",
@@ -1127,7 +1125,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                       marginBottom: 5,
                     }}
                   >
-                    <span>Zoom</span>
+                    <span>{t("panel.zoom")}</span>
                     <span style={{ color: "#c4b5fd", fontWeight: 600 }}>
                       {crop.zoom.toFixed(2)}×
                     </span>
@@ -1140,12 +1138,11 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     value={crop.zoom}
                     disabled={saving}
                     onChange={(e) => updateKfAtPlayhead({ zoom: Number(e.target.value) })}
-                    aria-label="Zoom da câmera"
+                    aria-label={t("panel.cameraZoomAria")}
                     style={{ width: "100%", accentColor: dk.accent }}
                   />
                   <div style={{ fontSize: 11, color: dk.faint, marginTop: 6, lineHeight: 1.5 }}>
-                    Arraste o vídeo no preview (ou role o scroll) para enquadrar.
-                    Cada ajuste vira um keyframe ◆ no ponto atual.
+                    {t("panel.framingHint")}
                   </div>
                 </div>
               )}
@@ -1153,12 +1150,12 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
               {canPreview && (
                 <div>
                   <PanelLabel>
-                    Keyframes{" "}
+                    {t("panel.keyframes")}{" "}
                     <span style={{ color: dk.faint, fontWeight: 400 }}>({kfs.length})</span>
                   </PanelLabel>
                   {kfs.length === 0 ? (
                     <div style={{ fontSize: 12, color: dk.faint }}>
-                      Nenhum keyframe ainda — a câmera fica parada no centro.
+                      {t("panel.noKeyframes")}
                     </div>
                   ) : (
                     <div
@@ -1195,7 +1192,7 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                               e.stopPropagation();
                               if (!saving) setKfs((prev) => prev.filter((_, j) => j !== i));
                             }}
-                            aria-label="Remover keyframe"
+                            aria-label={t("removeKeyframe")}
                             style={{ marginLeft: "auto", color: dk.faint, padding: "0 4px" }}
                           >
                             ×
@@ -1220,19 +1217,19 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                         fontFamily: font.body,
                       }}
                     >
-                      Limpar todos os keyframes
+                      {t("panel.clearKeyframes")}
                     </button>
                   )}
                 </div>
               )}
 
               <div>
-                <PanelLabel>Trecho</PanelLabel>
-                <FineRow label="Início" value={formatTimecode(start)} disabled={saving} onNudge={(d) => nudge("start", d)} />
+                <PanelLabel>{t("panel.trim")}</PanelLabel>
+                <FineRow label={t("panel.start")} value={formatTimecode(start)} disabled={saving} onNudge={(d) => nudge("start", d)} />
                 <div style={{ height: 8 }} />
-                <FineRow label="Fim" value={formatTimecode(end)} disabled={saving} onNudge={(d) => nudge("end", d)} />
+                <FineRow label={t("panel.end")} value={formatTimecode(end)} disabled={saving} onNudge={(d) => nudge("end", d)} />
                 <div style={{ fontSize: 11, color: dk.faint, marginTop: 8 }}>
-                  Duração: {(end - start).toFixed(1)}s (mín. {MIN_DUR}s · máx. {MAX_DUR}s)
+                  {t("panel.duration", { dur: (end - start).toFixed(1), min: MIN_DUR, max: MAX_DUR })}
                 </div>
               </div>
             </div>
@@ -1511,19 +1508,16 @@ export function EditorView({ cut, setName, projectId, onBack, onSaved }: Props) 
                     })
                   }
                 >
-                  Ajustar ao corte
+                  {t("timeline.fitToClip")}
                 </DarkBtn>
                 <DarkBtn disabled={saving} onClick={() => setView({ v0: winLo, v1: winHi })}>
-                  Janela toda
+                  {t("timeline.fullWindow")}
                 </DarkBtn>
               </div>
               <span style={{ fontSize: 10, color: dk.faint }}>{formatTimecode(v.v1)}</span>
             </div>
             <div style={{ fontSize: 11, color: dk.faint, marginTop: 6 }}>
-              arraste as alças roxas para encurtar ou estender o corte — pode ir além
-              do trecho que a IA escolheu (a linha branca embaixo marca a escolha
-              original). Para o editor ficar leve, a timeline carrega ~1 min antes e
-              depois do corte; ao estender o corte, a janela acompanha.
+              {t("timeline.hint")}
             </div>
           </div>
 

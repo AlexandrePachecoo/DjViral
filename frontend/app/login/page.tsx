@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 type Mode = "login" | "register";
 
 export default function LoginPage() {
+  const t = useTranslations("login");
   const router = useRouter();
   const [mode, setMode] = useState<Mode>(() => {
     // Permite abrir direto no cadastro (ex.: vindo do gerador da landing com
@@ -39,12 +41,12 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Algo deu errado");
+        throw new Error(data.error ?? t("errors.somethingWrong"));
       }
       router.push("/app");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro inesperado");
+      setError(err instanceof Error ? err.message : t("errors.unexpected"));
     } finally {
       setBusy(false);
     }
@@ -58,18 +60,16 @@ export default function LoginPage() {
 
       <div style={cardStyle}>
         <h1 style={{ margin: 0, fontSize: 26 }}>
-          {mode === "login" ? "Entrar" : "Criar conta"}
+          {mode === "login" ? t("titleLogin") : t("titleRegister")}
         </h1>
         <p style={{ opacity: 0.7, marginTop: 4 }}>
-          {mode === "login"
-            ? "Acesse sua conta para gerar cortes."
-            : "É grátis — sem cartão de crédito."}
+          {mode === "login" ? t("subtitleLogin") : t("subtitleRegister")}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 20 }}>
           {mode === "register" && (
             <input
-              placeholder="Seu nome"
+              placeholder={t("namePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={busy}
@@ -79,7 +79,7 @@ export default function LoginPage() {
           )}
           <input
             type="email"
-            placeholder="Email"
+            placeholder={t("emailPlaceholder")}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={busy}
@@ -89,7 +89,7 @@ export default function LoginPage() {
           />
           <input
             type="password"
-            placeholder="Senha"
+            placeholder={t("passwordPlaceholder")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={busy}
@@ -99,18 +99,14 @@ export default function LoginPage() {
             style={inputStyle}
           />
           <button type="submit" disabled={busy} style={buttonStyle}>
-            {busy
-              ? "Aguarde..."
-              : mode === "login"
-                ? "Entrar"
-                : "Criar conta grátis"}
+            {busy ? t("submitBusy") : mode === "login" ? t("submitLogin") : t("submitRegister")}
           </button>
         </form>
 
         {error && <p style={{ marginTop: 14, color: "#ff6b6b" }}>{error}</p>}
 
         <p style={{ marginTop: 18, opacity: 0.8, fontSize: 14 }}>
-          {mode === "login" ? "Ainda não tem conta? " : "Já tem conta? "}
+          {mode === "login" ? t("noAccount") : t("hasAccount")}
           <button
             type="button"
             onClick={() => {
@@ -119,7 +115,7 @@ export default function LoginPage() {
             }}
             style={linkButton}
           >
-            {mode === "login" ? "Criar conta" : "Entrar"}
+            {mode === "login" ? t("switchToRegister") : t("switchToLogin")}
           </button>
         </p>
       </div>
