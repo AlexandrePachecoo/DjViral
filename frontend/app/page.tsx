@@ -3,10 +3,10 @@ import styles from "./page.module.css";
 import Generator from "./_landing/Generator";
 import BeforeAfter from "./_landing/BeforeAfter";
 import LangSwitch from "./_landing/LangSwitch";
+import { PLANS, priceLabel } from "@/lib/plans";
 
 const EQ_COLORS = ["#a855f7", "#d946ef", "#ec4899", "#22d3ee"];
 const TRIAL_HREF = "/login";
-const CONTACT_HREF = "mailto:contato@djviral.com.br";
 
 function Logo() {
   return (
@@ -32,7 +32,11 @@ function Logo() {
 export default async function Landing() {
   const t = await getTranslations("landing");
   const locale = await getLocale();
-  const paidCtaHref = locale === "en" ? CONTACT_HREF : TRIAL_HREF;
+  // Preços por locale: USD (Stripe) no internacional, BRL (AbacatePay) no BR.
+  // Ambos os planos pagos levam ao cadastro; o checkout acontece dentro do app.
+  const proPrice = priceLabel(PLANS.pro, locale);
+  const premiumPrice = priceLabel(PLANS.premium, locale);
+  const freePrice = locale === "en" ? "$0" : "R$0";
 
   return (
     <div className={styles.page}>
@@ -133,7 +137,7 @@ export default async function Landing() {
           <div className={styles.plans}>
             <div className={styles.plan}>
               <div className={styles.planName}>{t("pricing.free.name")}</div>
-              <div className={styles.planPrice}>R$0</div>
+              <div className={styles.planPrice}>{freePrice}</div>
               <div className={styles.planSub}>{t("pricing.free.sub")}</div>
               <div className={styles.planFeatures}>
                 <span>✓ {t("pricing.free.feature1")}</span>
@@ -148,7 +152,7 @@ export default async function Landing() {
               <span className={styles.planBadge}>{t("pricing.popularBadge")}</span>
               <div className={styles.planName}>{t("pricing.pro.name")}</div>
               <div className={styles.planPrice}>
-                R$39,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
+                {proPrice}<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
               <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={`${styles.planFeatures} ${styles.planFeaturesPro}`}>
@@ -157,14 +161,14 @@ export default async function Landing() {
                 <span>✓ {t("pricing.pro.feature3")}</span>
                 <span>✓ {t("pricing.pro.feature4")}</span>
               </div>
-              <a className={styles.planCtaFill} href={paidCtaHref}>
-                {locale === "en" ? t("pricing.contactCta") : t("pricing.pro.cta")}
+              <a className={styles.planCtaFill} href={TRIAL_HREF}>
+                {t("pricing.pro.cta")}
               </a>
             </div>
             <div className={styles.plan}>
               <div className={styles.planName}>{t("pricing.premium.name")}</div>
               <div className={styles.planPrice}>
-                R$59,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
+                {premiumPrice}<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
               <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={styles.planFeatures}>
@@ -173,8 +177,8 @@ export default async function Landing() {
                 <span>✓ {t("pricing.premium.feature3")}</span>
                 <span>✓ {t("pricing.premium.feature4")}</span>
               </div>
-              <a className={styles.planCtaGhost} href={paidCtaHref}>
-                {locale === "en" ? t("pricing.contactCta") : t("pricing.premium.cta")}
+              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+                {t("pricing.premium.cta")}
               </a>
             </div>
           </div>

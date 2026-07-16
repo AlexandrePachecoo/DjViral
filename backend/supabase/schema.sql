@@ -118,20 +118,23 @@ alter table cuts add column if not exists crop_keyframes jsonb;
 -- Pagamento / planos (AbacatePay)
 -- ---------------------------------------------------------------------------
 
--- Assinaturas dos planos pagos ('pro' | 'premium'), pagas via AbacatePay
--- (checkout de assinatura, cartão com recorrência mensal ou PIX). Uma linha é
--- criada com status 'pending' quando o usuário abre o checkout; os webhooks
--- (subscription.completed / renewed / payment_failed / cancelled) atualizam o
--- status e o período vigente, e espelham o plano em `users.plan`.
+-- Assinaturas dos planos pagos ('pro' | 'premium'). O provedor depende do
+-- locale: AbacatePay (BRL, PIX ou cartão) no Brasil, Stripe (USD, cartão) no
+-- internacional — gravado em `provider`. Uma linha é criada com status
+-- 'pending' quando o usuário abre o checkout; os webhooks de cada provedor
+-- (AbacatePay: subscription.completed / renewed / payment_failed / cancelled;
+-- Stripe: checkout.session.completed / invoice.paid / invoice.payment_failed /
+-- customer.subscription.deleted) atualizam o status e o período vigente, e
+-- espelham o plano em `users.plan`.
 create table if not exists subscriptions (
     id                       uuid primary key default gen_random_uuid(),
     user_id                  uuid not null references users (id) on delete cascade,
     plan                     text not null,                    -- pro | premium
     status                   text not null default 'pending',  -- pending | active | past_due | cancelled
     method                   text,                             -- PIX | CARD (definido no webhook)
-    provider                 text not null default 'abacatepay',
-    provider_checkout_id     text,          -- bill_... (checkout de assinatura)
-    provider_subscription_id text,          -- subs_... (assinatura ativa)
+    provider                 text not null default 'abacatepay', -- abacatepay | stripe
+    provider_checkout_id     text,          -- bill_... (AbacatePay) / cs_... (Stripe)
+    provider_subscription_id text,          -- subs_... (AbacatePay) / sub_... (Stripe)
     external_id              text unique,   -- nosso id enviado no checkout
     current_period_start     timestamptz,
     current_period_end       timestamptz,
@@ -143,8 +146,8 @@ create index if not exists idx_subscriptions_user on subscriptions (user_id);
 create index if not exists idx_subscriptions_checkout on subscriptions (provider_checkout_id);
 create index if not exists idx_subscriptions_provider_sub on subscriptions (provider_subscription_id);
 
--- Idempotência dos webhooks da AbacatePay: cada evento tem um id único e
--- retentativas reenviam o mesmo id — se já processamos, respondemos 200 sem
+-- Idempotência dos webhooks (AbacatePay e Stripe): cada evento tem um id único
+-- e retentativas reenviam o mesmo id — se já processamos, respondemos 200 sem
 -- reprocessar.
 create table if not exists webhook_events (
     id          text primary key,          -- id do evento (ex.: log_...)

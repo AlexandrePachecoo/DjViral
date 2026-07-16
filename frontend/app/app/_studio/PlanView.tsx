@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { PLANS, priceLabel } from "@/lib/plans";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
-// Aba "Plano": plano atual + uso do período + upgrade via AbacatePay
-// (checkout hospedado com PIX ou cartão em recorrência mensal). A AbacatePay
-// só cobra em PIX/cartão BR, então em locale en o upgrade vira um contato em
-// vez de abrir o checkout (ver CLAUDE.md / plano de i18n).
-const CONTACT_HREF = "mailto:contato@djviral.com.br";
+// Aba "Plano": plano atual + uso do período + upgrade via checkout hospedado.
+// O provedor é escolhido pelo locale no servidor (/api/billing/checkout):
+// Stripe (USD, cartão) no internacional (en), AbacatePay (BRL, PIX ou cartão)
+// no Brasil (pt). A UI só mostra o preço na moeda do locale e abre a URL de
+// pagamento que a rota devolver.
 
 type Billing = {
   plan: "free" | "pro" | "premium" | "admin";
@@ -50,21 +51,21 @@ export function PlanView() {
     {
       id: "free",
       name: t("cards.free.name"),
-      price: "R$0",
+      price: priceLabel(PLANS.free, locale),
       priceNote: t("cards.free.priceNote"),
       features: [t("cards.free.f1"), t("cards.free.f2"), t("cards.free.f3")],
     },
     {
       id: "pro",
       name: t("cards.pro.name"),
-      price: "R$39,90",
+      price: priceLabel(PLANS.pro, locale),
       priceNote: t("cards.paidPriceNote"),
       features: [t("cards.pro.f1"), t("cards.pro.f2"), t("cards.pro.f3")],
     },
     {
       id: "premium",
       name: t("cards.premium.name"),
-      price: "R$59,90",
+      price: priceLabel(PLANS.premium, locale),
       priceNote: t("cards.paidPriceNote"),
       features: [t("cards.premium.f1"), t("cards.premium.f2"), t("cards.premium.f3")],
     },
@@ -96,10 +97,6 @@ export function PlanView() {
   }
 
   async function upgrade(plan: "pro" | "premium") {
-    if (locale === "en") {
-      window.location.href = CONTACT_HREF;
-      return;
-    }
     setLoadingPlan(plan);
     setError("");
     try {
@@ -268,9 +265,7 @@ export function PlanView() {
                   >
                     {loadingPlan === card.id
                       ? t("openingCheckout")
-                      : locale === "en"
-                        ? t("contactCta")
-                        : t("subscribeTo", { name: card.name })}
+                      : t("subscribeTo", { name: card.name })}
                   </button>
                 ) : (
                   <div style={{ ...btnGhost, textAlign: "center", cursor: "default", opacity: 0.7 }}>

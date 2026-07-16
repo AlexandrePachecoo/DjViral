@@ -18,11 +18,14 @@ export type PlanId = "free" | "pro" | "premium" | "admin";
 export type PlanDef = {
   id: PlanId;
   label: string;
-  priceCents: number; // 0 para o free
+  priceCents: number; // preço em BRL (centavos), cobrado pela AbacatePay (pt)
+  priceCentsUsd: number; // preço em USD (centavos), cobrado pelo Stripe (en)
   hours: number; // horas de set incluídas
   monthly: boolean; // true = cota renova por mês; false = cota total (trial)
   maxCutsPerSet: number; // máximo de cortes gerados por set
-  // Identificador do produto na loja AbacatePay (externalId). Só planos pagos.
+  // Identificador do produto na loja AbacatePay (externalId) e lookup_key do
+  // preço no Stripe. Só planos pagos. Fixo por plano (ex.: djviral-pro-monthly)
+  // — os dois provedores criam o produto/preço sob demanda com esse id.
   productExternalId?: string;
 };
 
@@ -31,6 +34,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     id: "free",
     label: "Teste grátis",
     priceCents: 0,
+    priceCentsUsd: 0,
     hours: 1,
     monthly: false,
     maxCutsPerSet: 10,
@@ -39,6 +43,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     id: "pro",
     label: "Pro",
     priceCents: 3990,
+    priceCentsUsd: 990,
     hours: 5,
     monthly: true,
     maxCutsPerSet: 30,
@@ -48,6 +53,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     id: "premium",
     label: "Premium",
     priceCents: 5990,
+    priceCentsUsd: 1490,
     hours: 12,
     monthly: true,
     maxCutsPerSet: 30,
@@ -57,6 +63,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     id: "admin",
     label: "Admin",
     priceCents: 0,
+    priceCentsUsd: 0,
     // Sentinela grande (não Infinity: quebraria a serialização JSON das
     // rotas de API, que vira `null`) — na prática nunca é atingido.
     hours: 100000,
@@ -64,6 +71,22 @@ export const PLANS: Record<PlanId, PlanDef> = {
     maxCutsPerSet: 30,
   },
 };
+
+// Provedor de pagamento por locale: o Brasil (pt) cobra em BRL pela
+// AbacatePay; o resto do mundo (en) cobra em USD pelo Stripe.
+export type PaymentProvider = "abacatepay" | "stripe";
+
+export function providerForLocale(locale: string | null | undefined): PaymentProvider {
+  return locale === "en" ? "stripe" : "abacatepay";
+}
+
+// Rótulo de preço já formatado por locale (R$39,90 no pt, $9.90 no en).
+export function priceLabel(plan: PlanDef, locale: string | null | undefined): string {
+  if (locale === "en") {
+    return `$${(plan.priceCentsUsd / 100).toFixed(2)}`;
+  }
+  return `R$${(plan.priceCents / 100).toFixed(2).replace(".", ",")}`;
+}
 
 export function isPaidPlan(plan: string): plan is "pro" | "premium" {
   return plan === "pro" || plan === "premium";
