@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { Logo } from "./Logo";
 import { theme, font, btnPrimary } from "./theme";
 import type { Tab } from "./types";
+
+const OTHER_HOST: Record<string, string> = {
+  pt: "djviral.vercel.app",
+  en: "djviral.com.br",
+};
 
 type Props = {
   tab: Tab;
@@ -12,15 +18,21 @@ type Props = {
   onNewSet: () => void;
 };
 
-// Abas do menu central. Perfil e Planos/Uso agora vivem no menu do usuário
-// (dropdown no avatar), não aqui.
-const TABS: { key: Tab; label: string }[] = [
-  { key: "gerador", label: "Gerador" },
-  { key: "edicao", label: "Edição" },
-  { key: "salvos", label: "Cortes salvos" },
-];
-
 export function Header({ tab, onTab, userName, onNewSet }: Props) {
+  const t = useTranslations("studio.header");
+  const locale = useLocale();
+  const otherLocale = locale === "pt" ? "en" : "pt";
+  const langHref =
+    typeof window !== "undefined"
+      ? `${window.location.protocol}//${OTHER_HOST[locale]}${window.location.pathname}${window.location.search}`
+      : `https://${OTHER_HOST[locale]}`;
+  // Abas do menu central. Perfil e Planos/Uso agora vivem no menu do usuário
+  // (dropdown no avatar), não aqui.
+  const TABS: { key: Tab; label: string }[] = [
+    { key: "gerador", label: t("tabs.generator") },
+    { key: "edicao", label: t("tabs.editor") },
+    { key: "salvos", label: t("tabs.saved") },
+  ];
   const initial = (userName || "DJ").trim().charAt(0).toUpperCase() || "M";
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -103,7 +115,7 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
 
       <div className="dj-header-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <div onClick={onNewSet} style={btnPrimary}>
-          ＋ Novo set
+          {t("newSet")}
         </div>
 
         {/* Menu do usuário: avatar + nome abrem um dropdown com Perfil,
@@ -204,7 +216,7 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
                   color: theme.textSecondary,
                 }}
               >
-                Perfil
+                {t("menu.profile")}
               </div>
               <div
                 role="menuitem"
@@ -218,8 +230,27 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
                   color: theme.textSecondary,
                 }}
               >
-                Planos/Uso
+                {t("menu.plan")}
               </div>
+
+              <div style={{ height: 1, background: theme.border, margin: "6px 0" }} />
+
+              <a
+                role="menuitem"
+                className="dj-usermenu-item"
+                href={langHref}
+                style={{
+                  display: "block",
+                  padding: "9px 12px",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontSize: 14,
+                  color: theme.textSecondary,
+                  textDecoration: "none",
+                }}
+              >
+                {otherLocale === "en" ? "English" : "Português"}
+              </a>
 
               <div style={{ height: 1, background: theme.border, margin: "6px 0" }} />
 
@@ -235,7 +266,7 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
                   color: "#dc2626",
                 }}
               >
-                Sair da conta
+                {t("menu.logout")}
               </div>
             </div>
           )}

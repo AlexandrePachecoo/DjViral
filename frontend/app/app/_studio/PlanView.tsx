@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
 // Aba "Plano": plano atual + uso do período + upgrade via AbacatePay
-// (checkout hospedado com PIX ou cartão em recorrência mensal).
+// (checkout hospedado com PIX ou cartão em recorrência mensal). A AbacatePay
+// só cobra em PIX/cartão BR, então em locale en o upgrade vira um contato em
+// vez de abrir o checkout (ver CLAUDE.md / plano de i18n).
+const CONTACT_HREF = "mailto:contato@djviral.com.br";
 
 type Billing = {
   plan: "free" | "pro" | "premium" | "admin";
@@ -24,36 +28,6 @@ type Billing = {
   } | null;
 };
 
-const CARDS: {
-  id: "free" | "pro" | "premium";
-  name: string;
-  price: string;
-  priceNote: string;
-  features: string[];
-}[] = [
-  {
-    id: "free",
-    name: "Teste grátis",
-    price: "R$0",
-    priceNote: "para experimentar",
-    features: ["1 hora de set no total", "10 cortes por set", "Vídeos verticais 9:16"],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    price: "R$39,90",
-    priceNote: "/mês · PIX ou cartão",
-    features: ["Até 5 horas de set por mês", "Até 30 cortes por set", "Re-corte no minuto exato"],
-  },
-  {
-    id: "premium",
-    name: "Premium",
-    price: "R$59,90",
-    priceNote: "/mês · PIX ou cartão",
-    features: ["Até 12 horas de set por mês", "Até 30 cortes por set", "Re-corte no minuto exato"],
-  },
-];
-
 function fmtHours(seconds: number): string {
   const h = seconds / 3600;
   if (h >= 1) {
@@ -64,6 +38,37 @@ function fmtHours(seconds: number): string {
 }
 
 export function PlanView() {
+  const t = useTranslations("studio.plan");
+  const locale = useLocale();
+  const CARDS: {
+    id: "free" | "pro" | "premium";
+    name: string;
+    price: string;
+    priceNote: string;
+    features: string[];
+  }[] = [
+    {
+      id: "free",
+      name: t("cards.free.name"),
+      price: "R$0",
+      priceNote: t("cards.free.priceNote"),
+      features: [t("cards.free.f1"), t("cards.free.f2"), t("cards.free.f3")],
+    },
+    {
+      id: "pro",
+      name: t("cards.pro.name"),
+      price: "R$39,90",
+      priceNote: t("cards.paidPriceNote"),
+      features: [t("cards.pro.f1"), t("cards.pro.f2"), t("cards.pro.f3")],
+    },
+    {
+      id: "premium",
+      name: t("cards.premium.name"),
+      price: "R$59,90",
+      priceNote: t("cards.paidPriceNote"),
+      features: [t("cards.premium.f1"), t("cards.premium.f2"), t("cards.premium.f3")],
+    },
+  ];
   const [billing, setBilling] = useState<Billing | null>(null);
   const [error, setError] = useState("");
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
@@ -86,11 +91,15 @@ export function PlanView() {
       if (!res.ok) throw new Error();
       setBilling(await res.json());
     } catch {
-      setError("Não foi possível carregar seu plano. Recarregue a página.");
+      setError(t("errors.loadFailed"));
     }
   }
 
   async function upgrade(plan: "pro" | "premium") {
+    if (locale === "en") {
+      window.location.href = CONTACT_HREF;
+      return;
+    }
     setLoadingPlan(plan);
     setError("");
     try {
@@ -100,10 +109,10 @@ export function PlanView() {
         body: JSON.stringify({ plan }),
       });
       const data = await res.json();
-      if (!res.ok || !data.url) throw new Error(data.error ?? "falha ao abrir o checkout");
+      if (!res.ok || !data.url) throw new Error(data.error ?? t("errors.checkoutFailed"));
       window.location.href = data.url; // página de pagamento da AbacatePay
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro inesperado");
+      setError(err instanceof Error ? err.message : t("errors.unexpected"));
       setLoadingPlan(null);
     }
   }
@@ -127,10 +136,9 @@ export function PlanView() {
             border: "1px solid #a7f3d0",
           }}
         >
-          ✓ Pagamento concluído! Seu plano é ativado assim que a confirmação da
-          AbacatePay chegar (normalmente em segundos).{" "}
+          {t("justPaid.text")}{" "}
           <span onClick={load} style={{ textDecoration: "underline", cursor: "pointer" }}>
-            Atualizar
+            {t("justPaid.refresh")}
           </span>
         </div>
       )}
@@ -147,13 +155,13 @@ export function PlanView() {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
           <div style={{ font: `500 20px ${font.display}` }}>
-            Seu plano:{" "}
+            {t("yourPlan")}{" "}
             <span style={{ color: theme.accent }}>{billing?.planLabel ?? "…"}</span>
           </div>
           {usage && (
             <div style={{ fontSize: 13, color: theme.textMuted }}>
-              {fmtHours(usage.usedSeconds)} de {fmtHours(usage.limitSeconds)} usados
-              {usage.monthly ? " neste mês" : " no teste"}
+              {t("usedOf", { used: fmtHours(usage.usedSeconds), limit: fmtHours(usage.limitSeconds) })}
+              {usage.monthly ? t("thisMonth") : t("onTrial")}
             </div>
           )}
         </div>
@@ -180,10 +188,13 @@ export function PlanView() {
               />
             </div>
             <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 8 }}>
-              Restam {fmtHours(usage.remainingSeconds)} de set · até {usage.maxCutsPerSet}{" "}
-              cortes por set
+              {t("remaining", { remaining: fmtHours(usage.remainingSeconds), maxCuts: usage.maxCutsPerSet })}
               {usage.monthly && usage.periodEnd
-                ? ` · renova em ${new Date(usage.periodEnd).toLocaleDateString("pt-BR")}`
+                ? t("renewsOn", {
+                    date: new Date(usage.periodEnd).toLocaleDateString(
+                      locale === "en" ? "en-US" : "pt-BR"
+                    ),
+                  })
                 : ""}
             </div>
           </>
@@ -191,8 +202,7 @@ export function PlanView() {
 
         {billing?.subscription?.status === "past_due" && (
           <div style={{ fontSize: 13, color: "#d97706", marginTop: 12 }}>
-            ⚠ A última cobrança falhou — a AbacatePay vai tentar de novo. Confira
-            seu cartão para não perder o acesso.
+            {t("pastDue")}
           </div>
         )}
       </div>
@@ -203,8 +213,7 @@ export function PlanView() {
 
       {billing?.plan === "admin" && (
         <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: 18 }}>
-          Conta admin — uso ilimitado, sem cobrança. Os cards abaixo são só os
-          planos vendidos publicamente.
+          {t("adminAccount")}
         </div>
       )}
 
@@ -241,7 +250,7 @@ export function PlanView() {
               <div style={{ marginTop: "auto" }}>
                 {isCurrent ? (
                   <div style={{ ...btnGhost, textAlign: "center", cursor: "default", opacity: 0.7 }}>
-                    Plano atual
+                    {t("currentPlan")}
                   </div>
                 ) : isUpgrade ? (
                   <button
@@ -257,7 +266,11 @@ export function PlanView() {
                       cursor: loadingPlan ? "default" : "pointer",
                     }}
                   >
-                    {loadingPlan === card.id ? "Abrindo checkout..." : `Assinar ${card.name}`}
+                    {loadingPlan === card.id
+                      ? t("openingCheckout")
+                      : locale === "en"
+                        ? t("contactCta")
+                        : t("subscribeTo", { name: card.name })}
                   </button>
                 ) : (
                   <div style={{ ...btnGhost, textAlign: "center", cursor: "default", opacity: 0.7 }}>
@@ -271,8 +284,7 @@ export function PlanView() {
       </div>
 
       <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 18 }}>
-        Pagamento processado pela AbacatePay. Cartão renova automaticamente todo
-        mês; no PIX você recebe a cobrança da renovação a cada ciclo.
+        {t("paymentFootnote")}
       </div>
     </div>
   );
