@@ -608,3 +608,36 @@ def test_review_render_invalid_json_returns_none(monkeypatch):
         lambda p, s, d, targets, w: [(t, "Zm9v") for t in targets],
     )
     assert ai_director.review_render("clip.mp4", _shots()) is None
+
+
+# ---- style_from_description: estilo de edição por texto ----
+
+
+def test_style_from_description_happy_path(monkeypatch):
+    calls: list = []
+    client = _recording_client(
+        '{"name": "PB rápido", "intensity": "intense", "transition": "flash", '
+        '"color": "bw", "vignette": false, "grain": true, "beat_pulse": 0.5, '
+        '"drop_fx": "flash", "captions": {"hook": true, "teaser_text": "", '
+        '"handle": "@dj", "position": "center", "look": "outline", "size": "l", '
+        '"color": "#ffffff", "uppercase": true}}',
+        calls,
+    )
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    out = ai_director.style_from_description("cortes rápidos em preto e branco")
+    assert out["name"] == "PB rápido"
+    assert out["style"]["color"] == "bw" and out["style"]["captions"]["handle"] == "@dj"
+    prompt = calls[0]["messages"][0]["content"][0]["text"]
+    assert "cortes rápidos em preto e branco" in prompt
+
+
+def test_style_from_description_empty_or_no_client(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: None)
+    assert ai_director.style_from_description("qualquer coisa") is None
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("{}"))
+    assert ai_director.style_from_description("   ") is None
+
+
+def test_style_from_description_invalid_json(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("não sei"))
+    assert ai_director.style_from_description("algo") is None

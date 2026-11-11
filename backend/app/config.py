@@ -210,6 +210,17 @@ class Settings(BaseSettings):
     beat_punch_anticip_frac: float = 0.7
     beat_punch_anticip_zoom_frac: float = 0.3
 
+    # ---- Estilo de edição (efeitos / transições / legendas) ----
+    # Liga o 2º passe que aplica `projects.edit_style` sobre o clipe pronto.
+    # False = ignora o estilo (clipes saem como antes).
+    edit_style_enabled: bool = True
+    # Fonte (.ttf/.otf) das legendas queimadas. Vazio = procura uma sans
+    # pesada do sistema (a imagem Docker instala a DejaVu Sans Bold).
+    caption_font_path: str = ""
+    # Modelo que transforma a descrição em texto do usuário num estilo de
+    # edição (chamada única e curta por estilo criado).
+    ai_style_model: str = "claude-sonnet-5-5"
+
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
     # barata cobre TODOS os candidatos (nenhum fica de fora só por causa do

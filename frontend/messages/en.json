@@ -112,15 +112,39 @@
   },
   "studio": {
     "header": {
-      "tabs": { "generator": "Generator", "editor": "Editor", "saved": "Saved clips" },
+      "tabs": {
+        "generator": "Generator",
+        "editor": "Editor",
+        "saved": "Saved clips"
+      },
       "newSet": "＋ New set",
-      "menu": { "profile": "Profile", "plan": "Plan/Usage", "logout": "Log out" }
+      "menu": {
+        "profile": "Profile",
+        "plan": "Plan/Usage",
+        "logout": "Log out"
+      }
     },
     "plan": {
       "cards": {
-        "free": { "name": "Free trial", "priceNote": "to try it out", "f1": "1 hour of set in total", "f2": "10 clips per set", "f3": "9:16 vertical videos" },
-        "pro": { "name": "Pro", "f1": "Up to 5 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
-        "premium": { "name": "Premium", "f1": "Up to 12 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
+        "free": {
+          "name": "Free trial",
+          "priceNote": "to try it out",
+          "f1": "1 hour of set in total",
+          "f2": "10 clips per set",
+          "f3": "9:16 vertical videos"
+        },
+        "pro": {
+          "name": "Pro",
+          "f1": "Up to 5 hours of sets per month",
+          "f2": "Up to 30 clips per set",
+          "f3": "Re-cut down to the exact minute"
+        },
+        "premium": {
+          "name": "Premium",
+          "f1": "Up to 12 hours of sets per month",
+          "f2": "Up to 30 clips per set",
+          "f3": "Re-cut down to the exact minute"
+        },
         "paidPriceNote": "/mo · card"
       },
       "errors": {
@@ -211,15 +235,30 @@
         "namePlaceholder": "Set name",
         "styleLabel": "Cut style",
         "style": {
-          "basic": { "title": "Static cut", "desc": "Fixed center framing. Faster processing." },
-          "dynamic": { "title": "Dynamic cut", "desc": "Zooms on the DJ and the crowd, cut to the beat. Takes longer." }
+          "basic": {
+            "title": "Static cut",
+            "desc": "Fixed center framing. Faster processing."
+          },
+          "dynamic": {
+            "title": "Dynamic cut",
+            "desc": "Zooms on the DJ and the crowd, cut to the beat. Takes longer."
+          }
         },
         "intensityLabel": "Intensity",
         "intensityAria": "Dynamic cut intensity",
         "intensity": {
-          "subtle": { "title": "Subtle", "desc": "Few shot changes, discreet zooms." },
-          "medium": { "title": "Medium", "desc": "Balance between rhythm and naturalness." },
-          "intense": { "title": "Intense", "desc": "Lots of dj/crowd switching, strong beat zooms." }
+          "subtle": {
+            "title": "Subtle",
+            "desc": "Few shot changes, discreet zooms."
+          },
+          "medium": {
+            "title": "Medium",
+            "desc": "Balance between rhythm and naturalness."
+          },
+          "intense": {
+            "title": "Intense",
+            "desc": "Lots of dj/crowd switching, strong beat zooms."
+          }
         },
         "numCutsLabel": "Number of clips",
         "planAllows": "Your plan allows up to {max} clips per set.",
@@ -227,12 +266,78 @@
         "processing": "Processing...",
         "generate": "Generate clips",
         "uploadHint": "This can take a bit depending on the video size and your connection.",
-        "tryAgain": "Try again"
+        "tryAgain": "Try again",
+        "look": {
+          "label": "Effects and captions",
+          "none": {
+            "title": "No effects",
+            "desc": "Just the cut — no color, transitions or captions."
+          },
+          "teaserDefault": "wait for the drop",
+          "presets": {
+            "hype": {
+              "title": "Hype",
+              "desc": "Flash on cuts, beat pulse, camera shake on the drop and big yellow captions."
+            },
+            "aftermovie": {
+              "title": "Aftermovie",
+              "desc": "Cinematic color, film grain, soft cuts and a subtle caption at the bottom."
+            },
+            "neon": {
+              "title": "Neon glitch",
+              "desc": "Club colors, RGB glitch on cuts and on the drop."
+            },
+            "clean": {
+              "title": "Clean with caption",
+              "desc": "Vivid colors and the clip's hook in a box, no effects."
+            }
+          },
+          "deleteAria": "Delete the style {name}",
+          "summary": {
+            "transition": {
+              "flash": "flash on cuts",
+              "dip": "dip to black",
+              "glitch": "glitch on cuts"
+            },
+            "color": {
+              "vivid": "vivid colors",
+              "cinematic": "cinematic color",
+              "warm": "warm tones",
+              "cold": "cold tones",
+              "neon": "neon",
+              "bw": "black and white"
+            },
+            "drop": {
+              "flash": "flash on the drop",
+              "glitch": "glitch on the drop",
+              "shake": "shake on the drop"
+            },
+            "beat": "beat pulse",
+            "captions": "captions",
+            "plain": "No effects"
+          },
+          "create": {
+            "open": "+ Create my own style with AI",
+            "hint": "Describe in your own words how you want the edit. The AI sets color, transitions, effects and captions and saves it as your style.",
+            "placeholder": "E.g. fast cuts, black and white with grain, a flash on the drop and big white captions in the center with my @djname",
+            "submit": "Create style",
+            "working": "Creating...",
+            "cancel": "Cancel",
+            "errorAi": "The AI isn't available right now. Try again in a moment.",
+            "errorLimit": "You've reached the saved styles limit. Delete one to create another.",
+            "errorGeneric": "Couldn't create the style. Try again."
+          }
+        }
       }
     },
     "profile": {
       "title": "Profile",
-      "planLabels": { "free": "Free trial", "pro": "Pro", "premium": "Premium", "admin": "Admin" },
+      "planLabels": {
+        "free": "Free trial",
+        "pro": "Pro",
+        "premium": "Premium",
+        "admin": "Admin"
+      },
       "errors": {
         "saveFailed": "failed to save",
         "unexpected": "Unexpected error",

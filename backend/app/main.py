@@ -9,7 +9,13 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
 from .config import settings
 from .pipeline import process_project, recut_cut
-from .schemas import ProcessRequest, ProjectCreated, RecutRequest
+from . import ai_director
+from .schemas import (
+    ProcessRequest,
+    ProjectCreated,
+    RecutRequest,
+    StyleFromTextRequest,
+)
 
 app = FastAPI(title="DjViral Worker", description="Gera cortes virais de sets de DJ")
 
@@ -41,6 +47,7 @@ def process(
         body.cut_style,
         body.ai_tier,
         body.cut_intensity,
+        body.edit_style,
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
 
@@ -69,3 +76,22 @@ def recut(
         recut_cut, body.project_id, body.cut_id, body.inicio, body.fim, keyframes
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
+
+
+@app.post("/styles/generate")
+def generate_style(
+    body: StyleFromTextRequest,
+    x_worker_secret: str = Header(default=""),
+) -> dict:
+    """Estilo de edição escrito pela IA a partir da descrição do usuário.
+
+    Síncrono (uma chamada curta à IA): devolve ``{"name", "style"}`` pronto
+    para o frontend salvar. 503 quando a IA está indisponível ou não devolveu
+    um estilo válido — o frontend mostra o erro e o usuário monta à mão.
+    """
+    if not settings.worker_secret or x_worker_secret != settings.worker_secret:
+        raise HTTPException(status_code=401, detail="Segredo inválido")
+    result = ai_director.style_from_description(body.description)
+    if result is None:
+        raise HTTPException(status_code=503, detail="IA indisponível")
+    return result

@@ -267,6 +267,42 @@ YouTube quando necessário.
    persistidos em `cuts.crop_keyframes` (o editor reabre com eles; `[]` limpa
    a direção manual).
 
+### Estilo de edição (efeitos, transições, legendas)
+
+O corte (seco/dinâmico/keyframes) decide ONDE a câmera olha; o **estilo de
+edição** decide a FINALIZAÇÃO. É um JSON pequeno (`backend/app/style.py::
+EditStyle`, espelhado em `frontend/lib/editStyles.ts`) guardado como CÓPIA em
+`projects.edit_style` (NULL = sem estilo):
+
+- `intensity` (opcional; vence o `cut_intensity` do projeto), `transition`
+  (`cut`/`flash`/`dip`/`glitch` — em cada troca de shot do corte dinâmico),
+  `color` (`vivid`/`cinematic`/`warm`/`cold`/`neon`/`bw`), `vignette`, `grain`,
+  `beat_pulse` (0-1, pulso de brilho na batida), `drop_fx`
+  (`flash`/`glitch`/`shake`) e `captions` (`hook` = título do corte nos
+  primeiros segundos, `teaser_text` antes do drop, `handle` fixo, mais
+  posição/visual/tamanho/cor/maiúsculas).
+- **Render:** `pipeline._apply_edit_style` roda um **2º passe** do FFmpeg
+  (`clipper.apply_style`) sobre o clipe 9:16 JÁ pronto — vale para qualquer
+  caminho de render (seco, dinâmico, keyframed, re-corte) e, se falhar, o clipe
+  sem estilo é mantido. `style.build_video_filters` monta só filtros que NÃO
+  mudam duração nem áudio (as "transições" são pulsos de brilho/RGB em cima dos
+  cortes existentes, não `xfade`); o áudio é copiado. As legendas são PNGs
+  transparentes desenhados com Pillow (`captions.py`; fonte DejaVu instalada no
+  Dockerfile ou `CAPTION_FONT_PATH`) e sobrepostos com `overlay` — emojis são
+  removidos do texto queimado. O hook só aparece quando há título de IA (o
+  fallback `Drop N · BPM` não vira legenda). No re-corte não há drop conhecido:
+  efeitos de drop e teaser ficam de fora.
+- **Origem do estilo:** (1) presets do produto (`STYLE_PRESETS` no frontend:
+  Hype, Aftermovie, Neon glitch, Limpo com legenda); (2) estilos do usuário na
+  tabela `edit_styles`, criados por **descrição em texto**: `POST /api/styles
+  {description}` → worker `POST /styles/generate` →
+  `ai_director.style_from_description` (modelo `AI_STYLE_MODEL`, saída
+  estruturada com os enums do editor) → salvo com nome sugerido pela IA.
+  `GET /api/styles` lista, `DELETE /api/styles/{id}` apaga (até 20 por usuário).
+- **UI:** `app/_studio/StylePicker.tsx` no formulário do Gerador ("Efeitos e
+  legendas"); o JSON escolhido vai em `POST /api/projects {edit_style}` e o
+  `/process` o repassa ao worker.
+
 ### Frontend / UI (`frontend/app/`)
 
 A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
@@ -421,7 +457,11 @@ ganchos detalhados em [`design.md`](design.md).
   `AI_DIRECTOR_CONCURRENCY` (default 3), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
   `AI_DIRECTOR_FRAME_WIDTH`, `AI_DIRECTOR_BUDGET_SECONDS`,
   `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`, `AI_REVIEW_ENABLED` (revisão do
-  clipe pronto + re-render de conserto), `AI_REVIEW_FRAME_WIDTH`.
+  clipe pronto + re-render de conserto), `AI_REVIEW_FRAME_WIDTH`. Estilo de
+  edição: `EDIT_STYLE_ENABLED` (false ignora `projects.edit_style`),
+  `CAPTION_FONT_PATH` (fonte das legendas; vazio = DejaVu Sans Bold do
+  container), `AI_STYLE_MODEL` (default `claude-sonnet-5-5`, gera o estilo a
+  partir da descrição do usuário).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
@@ -556,7 +596,17 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   (nº de trocas de shot, força dos zooms, beat-punch); só relevante no
   `dynamic`. Projetos antigos herdam `medium` (= comportamento anterior)
 - max_cuts — quantidade de cortes pedida (NULL = máximo do plano)
+- edit_style — cópia do estilo de edição escolhido (JSON `EditStyle`: cor,
+  transições, efeitos, legendas); NULL = sem estilo
 - date_create
+
+### EditStyle (estilo de edição personalizado do usuário)
+- id
+- user_id
+- name
+- description — texto do usuário que a IA traduziu no estilo (NULL = manual)
+- style — JSON `EditStyle`
+- created_at
 
 ### Source (vídeo original)
 - id

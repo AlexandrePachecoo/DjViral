@@ -26,6 +26,16 @@ class ProcessRequest(BaseModel):
     #            corte dinâmico, modelo Sonnet no top-K). Planos pagos.
     # Qualquer nível degrada para a heurística local sem ANTHROPIC_API_KEY.
     ai_tier: str = "off"
+    # Estilo de edição do projeto (cor, transições, efeitos de batida/drop,
+    # legendas) — o JSON de `projects.edit_style`, saneado no worker por
+    # `style.coerce_style`. None = sem estilo (clipe sai como antes).
+    edit_style: dict | None = None
+
+
+class StyleFromTextRequest(BaseModel):
+    """Pede à IA um estilo de edição a partir de uma descrição em texto."""
+
+    description: str
 
 
 class ProjectCreated(BaseModel):

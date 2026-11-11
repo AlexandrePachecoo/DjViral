@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { sanitizeEditStyle } from "@/lib/editStyles";
 import { getPlanUsage, planOf } from "@/lib/plans";
 
 // Dispara o worker (Railway) para processar o projeto. O vídeo já foi enviado
@@ -72,6 +73,15 @@ export async function POST(
   // — sem chave, qualquer tier degrada sozinho para a heurística local.
   const aiTier = user.plan === "free" ? "lite" : "full";
 
+  // Estilo de edição do projeto (efeitos/transições/legendas). Lido à parte:
+  // se o banco ainda não tem a coluna, o select falha e seguimos sem estilo.
+  const { data: styleRow } = await supabaseAdmin
+    .from("projects")
+    .select("edit_style")
+    .eq("id", params.id)
+    .maybeSingle();
+  const editStyle = sanitizeEditStyle(styleRow?.edit_style);
+
   const res = await fetch(`${workerUrl}/process`, {
     method: "POST",
     headers: {
@@ -85,6 +95,7 @@ export async function POST(
       cut_style: project.cut_style ?? "basic",
       cut_intensity: project.cut_intensity ?? "medium",
       ai_tier: aiTier,
+      edit_style: editStyle,
     }),
   });
 

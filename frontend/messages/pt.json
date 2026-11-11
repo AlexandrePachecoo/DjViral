@@ -112,15 +112,39 @@
   },
   "studio": {
     "header": {
-      "tabs": { "generator": "Gerador", "editor": "Edição", "saved": "Cortes salvos" },
+      "tabs": {
+        "generator": "Gerador",
+        "editor": "Edição",
+        "saved": "Cortes salvos"
+      },
       "newSet": "＋ Novo set",
-      "menu": { "profile": "Perfil", "plan": "Planos/Uso", "logout": "Sair da conta" }
+      "menu": {
+        "profile": "Perfil",
+        "plan": "Planos/Uso",
+        "logout": "Sair da conta"
+      }
     },
     "plan": {
       "cards": {
-        "free": { "name": "Teste grátis", "priceNote": "para experimentar", "f1": "1 hora de set no total", "f2": "10 cortes por set", "f3": "Vídeos verticais 9:16" },
-        "pro": { "name": "Pro", "f1": "Até 5 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
-        "premium": { "name": "Premium", "f1": "Até 12 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
+        "free": {
+          "name": "Teste grátis",
+          "priceNote": "para experimentar",
+          "f1": "1 hora de set no total",
+          "f2": "10 cortes por set",
+          "f3": "Vídeos verticais 9:16"
+        },
+        "pro": {
+          "name": "Pro",
+          "f1": "Até 5 horas de set por mês",
+          "f2": "Até 30 cortes por set",
+          "f3": "Re-corte no minuto exato"
+        },
+        "premium": {
+          "name": "Premium",
+          "f1": "Até 12 horas de set por mês",
+          "f2": "Até 30 cortes por set",
+          "f3": "Re-corte no minuto exato"
+        },
         "paidPriceNote": "/mês · PIX ou cartão"
       },
       "errors": {
@@ -211,15 +235,30 @@
         "namePlaceholder": "Nome do set",
         "styleLabel": "Estilo de corte",
         "style": {
-          "basic": { "title": "Corte seco", "desc": "Enquadramento fixo no centro. Processamento mais rápido." },
-          "dynamic": { "title": "Corte dinâmico", "desc": "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais." }
+          "basic": {
+            "title": "Corte seco",
+            "desc": "Enquadramento fixo no centro. Processamento mais rápido."
+          },
+          "dynamic": {
+            "title": "Corte dinâmico",
+            "desc": "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais."
+          }
         },
         "intensityLabel": "Intensidade",
         "intensityAria": "Intensidade do corte dinâmico",
         "intensity": {
-          "subtle": { "title": "Sutil", "desc": "Poucas trocas de shot, zooms discretos." },
-          "medium": { "title": "Médio", "desc": "Equilíbrio entre ritmo e naturalidade." },
-          "intense": { "title": "Intenso", "desc": "Muita troca dj/público, zooms fortes na batida." }
+          "subtle": {
+            "title": "Sutil",
+            "desc": "Poucas trocas de shot, zooms discretos."
+          },
+          "medium": {
+            "title": "Médio",
+            "desc": "Equilíbrio entre ritmo e naturalidade."
+          },
+          "intense": {
+            "title": "Intenso",
+            "desc": "Muita troca dj/público, zooms fortes na batida."
+          }
         },
         "numCutsLabel": "Quantidade de cortes",
         "planAllows": "Seu plano permite até {max} cortes por set.",
@@ -227,12 +266,78 @@
         "processing": "Processando...",
         "generate": "Gerar cortes",
         "uploadHint": "Isso pode demorar um pouco, dependendo do tamanho do vídeo e da sua conexão.",
-        "tryAgain": "Tentar de novo"
+        "tryAgain": "Tentar de novo",
+        "look": {
+          "label": "Efeitos e legendas",
+          "none": {
+            "title": "Sem efeitos",
+            "desc": "Só o corte, sem cor, transições ou legendas."
+          },
+          "teaserDefault": "espera o drop",
+          "presets": {
+            "hype": {
+              "title": "Hype",
+              "desc": "Clarão nas trocas, pulso na batida, tremor no drop e legenda amarela grande."
+            },
+            "aftermovie": {
+              "title": "Aftermovie",
+              "desc": "Cor de cinema, granulado, cortes suaves e legenda discreta embaixo."
+            },
+            "neon": {
+              "title": "Neon glitch",
+              "desc": "Cores de balada, glitch RGB nas trocas e no drop."
+            },
+            "clean": {
+              "title": "Limpo com legenda",
+              "desc": "Cores vivas e o gancho do corte numa caixa, sem efeitos."
+            }
+          },
+          "deleteAria": "Apagar o estilo {name}",
+          "summary": {
+            "transition": {
+              "flash": "clarão nas trocas",
+              "dip": "pisca pro preto",
+              "glitch": "glitch nas trocas"
+            },
+            "color": {
+              "vivid": "cores vivas",
+              "cinematic": "cor de cinema",
+              "warm": "tons quentes",
+              "cold": "tons frios",
+              "neon": "neon",
+              "bw": "preto e branco"
+            },
+            "drop": {
+              "flash": "clarão no drop",
+              "glitch": "glitch no drop",
+              "shake": "tremor no drop"
+            },
+            "beat": "pulso na batida",
+            "captions": "legendas",
+            "plain": "Sem efeitos"
+          },
+          "create": {
+            "open": "+ Criar meu estilo com IA",
+            "hint": "Descreva com suas palavras como você quer a edição. A IA configura cor, transições, efeitos e legendas e salva como um estilo seu.",
+            "placeholder": "Ex.: cortes rápidos, preto e branco com granulado, clarão no drop e legenda branca grande no centro com o meu @djfulano",
+            "submit": "Criar estilo",
+            "working": "Criando...",
+            "cancel": "Cancelar",
+            "errorAi": "A IA não está disponível agora. Tente de novo em instantes.",
+            "errorLimit": "Você atingiu o limite de estilos salvos. Apague um para criar outro.",
+            "errorGeneric": "Não foi possível criar o estilo. Tente de novo."
+          }
+        }
       }
     },
     "profile": {
       "title": "Perfil",
-      "planLabels": { "free": "Teste grátis", "pro": "Pro", "premium": "Premium", "admin": "Admin" },
+      "planLabels": {
+        "free": "Teste grátis",
+        "pro": "Pro",
+        "premium": "Premium",
+        "admin": "Admin"
+      },
       "errors": {
         "saveFailed": "falha ao salvar",
         "unexpected": "Erro inesperado",

@@ -154,3 +154,21 @@ create table if not exists webhook_events (
     event       text not null,             -- ex.: subscription.completed
     received_at timestamptz not null default now()
 );
+
+-- Migração: estilo de edição (efeitos, transições, legendas). `projects.edit_style`
+-- guarda uma CÓPIA do estilo escolhido na criação do set (JSON de
+-- backend/app/style.py::EditStyle; NULL = sem estilo). `edit_styles` são os
+-- estilos personalizados do usuário (montados à mão ou escritos pela IA a
+-- partir de uma descrição em texto, guardada em `description`).
+alter table projects add column if not exists edit_style jsonb;
+
+create table if not exists edit_styles (
+    id          uuid primary key default gen_random_uuid(),
+    user_id     uuid not null references users (id) on delete cascade,
+    name        text not null,
+    description text,
+    style       jsonb not null,
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists idx_edit_styles_user on edit_styles (user_id);
