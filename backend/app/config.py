@@ -223,7 +223,15 @@ class Settings(BaseSettings):
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
     # roda no top-K; Sonnet dá enquadramento e roteiro de câmera bem melhores
     # que Haiku pelo custo adicional (poucas chamadas por job).
-    ai_director_model: str = "claude-sonnet-5"
+    ai_director_model: str = "claude-sonnet-5-5"
+    # Esforço de raciocínio da direção/revisão (low|medium|high|xhigh|max). É
+    # o passo que exige julgamento espacial (boxes, roteiro); "medium" equilibra
+    # qualidade × latência. Vazio = não envia o parâmetro (modelos antigos que
+    # não aceitam `effort`).
+    ai_director_effort: str = "medium"
+    # Quantas direções profundas rodam em paralelo (as chamadas são I/O; a
+    # amostragem de frames é um FFmpeg leve por chamada). 1 = sequencial.
+    ai_director_concurrency: int = 3
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
     ai_director_max_calls: int = 20
@@ -237,7 +245,14 @@ class Settings(BaseSettings):
     # restantes ficam só com o score ajustado da triagem.
     ai_director_budget_seconds: int = 180
     # Timeout (s) de cada chamada individual à API.
-    ai_director_timeout: float = 30.0
+    ai_director_timeout: float = 60.0
+    # REVISÃO do render (tier 'full', corte dinâmico): depois de renderizar, a
+    # IA olha 1 frame por shot do clipe PRONTO e reprova enquadramentos que
+    # falharam (alvo fora do quadro, pessoa cortada); os shots reprovados viram
+    # wide e o clipe é re-renderizado UMA vez. False desliga.
+    ai_review_enabled: bool = True
+    # Largura (px) dos frames 9:16 enviados à revisão.
+    ai_review_frame_width: int = 360
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
     # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
     # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
@@ -245,7 +260,11 @@ class Settings(BaseSettings):
 
     # Modelo da TRIAGEM (barata, cobre todos os candidatos) — fica em Haiku
     # mesmo com a direção profunda em Sonnet, pra o custo por janela ficar baixo.
-    ai_triage_model: str = "claude-haiku-4-5"
+    ai_triage_model: str = "claude-haiku-5-5"
+    # Esforço da triagem/títulos — tarefa de classificação simples: "low".
+    # Vazio = não envia (obrigatório se voltar para claude-haiku-4-5, que
+    # rejeita o parâmetro `effort`).
+    ai_triage_effort: str = "low"
     # Quantos candidatos por chamada de triagem (1 chamada avalia várias janelas
     # de uma vez — é o que torna cobrir TODOS os candidatos barato).
     ai_triage_group_size: int = 6

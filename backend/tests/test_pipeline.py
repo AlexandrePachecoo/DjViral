@@ -179,3 +179,50 @@ def test_generate_titles_lite_tier_calls_title_group(monkeypatch):
     cands = [(peak, None, None, 0.9)]
     out = pipeline._generate_titles("video.mp4", cands, "lite")
     assert out == {id(peak): "hook 🔥"}
+
+
+# ---- revisão do render (tier full) ----
+
+
+def _review_env(monkeypatch, tmp_path, bad, rerender_ok=True):
+    from app.dynamic import Shot
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"original")
+    shots = [
+        Shot(0.0, 5.0, "wide", (608, 1080, 0, 0)),
+        Shot(5.0, 10.0, "dj", (304, 540, 10, 10)),
+    ]
+    rendered: list = []
+
+    def _fake_tiered(video_path, start, out_path, plan, *a, **k):
+        rendered.append(plan)
+        if rerender_ok:
+            with open(out_path, "wb") as fh:
+                fh.write(b"fixed")
+        return rerender_ok
+
+    monkeypatch.setattr(ai_director, "review_render", lambda p, s: bad)
+    monkeypatch.setattr(pipeline, "_cut_dynamic_tiered", _fake_tiered)
+    peak = Peak(start_sec=100.0, score=0.5)
+    dims = {"width": 1920, "height": 1080, "fps": 30.0}
+    pipeline._review_and_fix("v.mp4", peak, str(clip), shots, dims)
+    return clip, rendered
+
+
+def test_review_and_fix_rerenders_bad_shots_as_wide(monkeypatch, tmp_path):
+    clip, rendered = _review_env(monkeypatch, tmp_path, bad={1})
+    assert clip.read_bytes() == b"fixed"
+    assert [s.kind for s in rendered[0]] == ["wide"]  # dj virou wide e fundiu
+    assert not (tmp_path / "clip.mp4.fix.mp4").exists()
+
+
+def test_review_and_fix_keeps_original_when_all_ok(monkeypatch, tmp_path):
+    for verdict in (set(), None):
+        clip, rendered = _review_env(monkeypatch, tmp_path, bad=verdict)
+        assert clip.read_bytes() == b"original" and rendered == []
+
+
+def test_review_and_fix_keeps_original_when_rerender_fails(monkeypatch, tmp_path):
+    clip, rendered = _review_env(monkeypatch, tmp_path, bad={1}, rerender_ok=False)
+    assert clip.read_bytes() == b"original" and len(rendered) == 1

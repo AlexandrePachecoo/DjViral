@@ -874,3 +874,45 @@ def build_shot_plan(
         )
 
     return shots
+
+
+def widen_shots(
+    shots: list[Shot], bad: set[int], src_w: int, src_h: int
+) -> list[Shot]:
+    """Conserto pós-revisão: troca os shots de índice em ``bad`` por wide.
+
+    Usado quando a revisão do render (``ai_director.review_render``) reprova
+    um enquadramento fechado (alvo fora do quadro, pessoa cortada): o shot
+    vira um wide estático — o enquadramento seguro, que mostra a cena inteira
+    na altura — mantendo os MESMOS tempos (os cortes continuam no beat). O
+    crop wide é o que o plano já usa (ancorado no protagonista) quando existe;
+    senão, o wide central. Wides vizinhos resultantes são fundidos num shot só.
+    Devolve uma lista nova (não muta ``shots``).
+    """
+    wide_crop = next(
+        (sh.crop for sh in shots if sh.kind == "wide"),
+        crop_for_box(None, src_w, src_h),
+    )
+    out: list[Shot] = []
+    for i, sh in enumerate(shots):
+        if i in bad:
+            sh = Shot(t0=sh.t0, t1=sh.t1, kind="wide", crop=wide_crop)
+        prev = out[-1] if out else None
+        if (
+            prev is not None
+            and prev.kind == "wide"
+            and sh.kind == "wide"
+            and prev.crop == sh.crop
+            and prev.path is None
+            and sh.path is None
+            and prev.zoom_keys is None
+            and sh.zoom_keys is None
+        ):
+            # Funde: um wide contínuo (drift do primeiro) em vez de um "corte"
+            # invisível entre dois enquadramentos idênticos.
+            out[-1] = Shot(
+                t0=prev.t0, t1=sh.t1, kind="wide", crop=prev.crop, drift=prev.drift
+            )
+        else:
+            out.append(sh)
+    return out

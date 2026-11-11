@@ -187,6 +187,7 @@ def _reset_client():
     # Zera o cache do cliente entre testes.
     ai_director._client = None
     ai_director._client_failed = False
+    ai_director._no_output_config.clear()
     yield
     ai_director._client = None
     ai_director._client_failed = False
@@ -480,3 +481,130 @@ def test_usage_accumulates_and_resets():
 
     ai_director.reset_usage()
     assert ai_director.get_usage() == {"usd": 0.0, "calls": 0}
+
+
+# ---- saída estruturada / _request_text ----
+
+
+def _recording_client(text: str, calls: list, fail_first: Exception | None = None):
+    """Cliente fake que grava os kwargs de cada create (e pode falhar na 1ª)."""
+    block = types.SimpleNamespace(type="text", text=text)
+    message = types.SimpleNamespace(content=[block], stop_reason="end_turn")
+
+    def _create(**kw):
+        calls.append(kw)
+        if fail_first is not None and len(calls) == 1:
+            raise fail_first
+        return message
+
+    return types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+
+
+def test_request_sends_schema_and_effort(monkeypatch):
+    calls: list = []
+    client = _recording_client('{"windows": []}', calls)
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [(1.0, "Zm9v")])
+    monkeypatch.setattr(ai_director.settings, "ai_triage_effort", "low")
+    ai_director.triage_group("v.mp4", [(0, 0.0, 60.0)])
+    oc = calls[0]["output_config"]
+    assert oc["effort"] == "low"
+    assert oc["format"]["type"] == "json_schema"
+    assert oc["format"]["schema"]["required"] == ["windows"]
+
+
+def test_request_omits_effort_when_blank(monkeypatch):
+    calls: list = []
+    client = _recording_client('{"windows": []}', calls)
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [(1.0, "Zm9v")])
+    monkeypatch.setattr(ai_director.settings, "ai_triage_effort", "")
+    ai_director.triage_group("v.mp4", [(0, 0.0, 60.0)])
+    assert "effort" not in calls[0]["output_config"]
+
+
+def test_request_retries_without_output_config_on_400(monkeypatch):
+    class _BadRequest(Exception):
+        status_code = 400
+
+    calls: list = []
+    client = _recording_client(
+        '[{"window": 0, "hype": 0.7, "worthy": true}]', calls, fail_first=_BadRequest()
+    )
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [(1.0, "Zm9v")])
+    out = ai_director.triage_group("v.mp4", [(0, 0.0, 60.0)])
+    assert len(calls) == 2 and "output_config" not in calls[1]
+    assert out[0].hype == pytest.approx(0.7)  # array puro do fallback ainda parseia
+
+
+def test_triage_group_accepts_object_wrapper(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '{"windows": [{"window": 3, "hype": 0.9, "worthy": false}]}'
+    ))
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [(1.0, "Zm9v")])
+    out = ai_director.triage_group("v.mp4", [(3, 0.0, 60.0)])
+    assert out[3].hype == pytest.approx(0.9) and out[3].worthy is False
+
+
+def test_refusal_returns_none(monkeypatch):
+    message = types.SimpleNamespace(content=[], stop_reason="refusal")
+    client = types.SimpleNamespace(
+        messages=types.SimpleNamespace(create=lambda **kw: message)
+    )
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director, "_sample_frames", lambda *a, **k: [(1.0, "Zm9v")])
+    assert ai_director.direct("v.mp4", 0.0, 60.0) is None
+
+
+# ---- review_render: revisão do clipe pronto ----
+
+
+def _shots():
+    S = types.SimpleNamespace
+    return [
+        S(t0=0.0, t1=5.0, kind="wide"),
+        S(t0=5.0, t1=10.0, kind="dj"),
+        S(t0=10.0, t1=15.0, kind="dancer"),
+    ]
+
+
+def test_review_render_flags_bad_shots(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
+        '{"shots": [{"shot": 1, "ok": true, "problem": ""}, '
+        '{"shot": 2, "ok": false, "problem": "quadro vazio"}, '
+        '{"shot": 0, "ok": false, "problem": "wide nao e revisado"}]}'
+    ))
+    seen: dict = {}
+
+    def _fake_at(path, start, duration, targets, width):
+        seen["targets"] = targets
+        return [(t, "Zm9v") for t in targets]
+
+    monkeypatch.setattr(ai_director, "_sample_frames_at", _fake_at)
+    bad = ai_director.review_render("clip.mp4", _shots())
+    assert seen["targets"] == [7.5, 12.5]  # só os shots fechados, no meio
+    assert bad == {2}  # shot 0 (wide) não é revisável → ignorado
+
+
+def test_review_render_none_without_closed_shots(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("{}"))
+    shots = [types.SimpleNamespace(t0=0.0, t1=5.0, kind="wide")]
+    assert ai_director.review_render("clip.mp4", shots) is None
+
+
+def test_review_render_none_when_frames_missing(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("{}"))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames_at", lambda *a, **k: [(7.5, "Zm9v")]
+    )
+    assert ai_director.review_render("clip.mp4", _shots()) is None
+
+
+def test_review_render_invalid_json_returns_none(monkeypatch):
+    monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client("oi"))
+    monkeypatch.setattr(
+        ai_director, "_sample_frames_at",
+        lambda p, s, d, targets, w: [(t, "Zm9v") for t in targets],
+    )
+    assert ai_director.review_render("clip.mp4", _shots()) is None

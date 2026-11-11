@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 from . import ai_director, analyzer, clipper, dynamic, visual, youtube
 from .analyzer import Peak
@@ -200,6 +202,10 @@ def _process_project(
         titles = _generate_titles(video_path, candidates, ai_tier)
 
         src_dims = probe_video(video_path) if cut_style == "dynamic" else None
+        # Revisão do render pela IA: só no tier 'full' (mesmo nível da direção
+        # profunda) e só faz sentido no corte dinâmico.
+        _, deep_on = _ai_flags(ai_tier)
+        review = deep_on and settings.ai_review_enabled
 
         for idx, (peak, wv, ai, final_score) in enumerate(candidates):
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -207,7 +213,7 @@ def _process_project(
             try:
                 _render_clip(
                     video_path, peak, wv, cut_style, clip_path, src_dims, bpm,
-                    ai, cut_intensity,
+                    ai, cut_intensity, review,
                 )
 
                 dest_name = f"{project_id}/clipe_{idx + 1}_{int(peak.start_sec)}s.mp4"
@@ -238,6 +244,12 @@ def _process_project(
         client.table("projects").update({"status": "done"}).eq(
             "id", project_id
         ).execute()
+        if ai_tier != "off":
+            usage = ai_director.get_usage()
+            logger.info(
+                "Projeto %s: custo total estimado de IA ~$%.4f (%d chamadas)",
+                project_id, usage["usd"], usage["calls"],
+            )
         logger.info("Projeto %s concluído", project_id)
 
     except Exception:  # noqa: BLE001 - queremos registrar qualquer falha
@@ -428,20 +440,46 @@ def _score_candidates(
     ai_map: dict[int, "ai_director.AIDirection"] = {}
     if deep_on:
         ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
-        calls = 0
         ordered = sorted(scored, key=lambda it: adjusted_map[id(it[0])], reverse=True)
-        for peak, wv, _base in ordered:
-            if calls >= settings.ai_director_max_calls or time.monotonic() >= ai_deadline:
-                break
-            calls += 1
-            ai = ai_director.direct(
-                video_path,
-                max(0.0, peak.start_sec - settings.pre_roll),
-                float(settings.clip_duration),
-                wv,
-            )
-            if ai is not None:
-                ai_map[id(peak)] = ai
+        top = ordered[: max(0, settings.ai_director_max_calls)]
+        calls = len(top)
+        # As chamadas são I/O (rede) — rodam em paralelo num pool pequeno para
+        # caber mais direções no mesmo budget de tempo. Estourou o budget, as
+        # que ainda não começaram são canceladas e as em andamento ignoradas
+        # (essas janelas ficam só com o score ajustado da triagem).
+        pool = ThreadPoolExecutor(
+            max_workers=max(1, settings.ai_director_concurrency)
+        )
+        try:
+            futures = {
+                pool.submit(
+                    ai_director.direct,
+                    video_path,
+                    max(0.0, peak.start_sec - settings.pre_roll),
+                    float(settings.clip_duration),
+                    wv,
+                ): peak
+                for peak, wv, _base in top
+            }
+            try:
+                for fut in as_completed(
+                    futures, timeout=max(0.0, ai_deadline - time.monotonic())
+                ):
+                    try:
+                        ai = fut.result()
+                    except Exception:  # noqa: BLE001 - direção nunca é fatal
+                        logger.exception("Direção de IA falhou numa janela")
+                        continue
+                    if ai is not None:
+                        ai_map[id(futures[fut])] = ai
+            except FuturesTimeout:
+                logger.warning(
+                    "Budget da direção de IA (%ss) estourado — janelas "
+                    "restantes ficam só com o score ajustado",
+                    settings.ai_director_budget_seconds,
+                )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         usage = ai_director.get_usage()
         logger.info(
             "Diretor de IA: %d chamadas de direção, %d direções aproveitadas, "
@@ -516,6 +554,53 @@ def _cut_dynamic_tiered(
     return False
 
 
+def _review_and_fix(
+    video_path: str,
+    peak: Peak,
+    clip_path: str,
+    shots: list[dynamic.Shot],
+    src_dims: dict,
+) -> None:
+    """Revisão do clipe dinâmico PRONTO pela IA + um re-render de conserto.
+
+    O shot plan é montado sem ver o resultado; aqui a IA "assiste" o clipe
+    (1 frame por shot fechado) e aponta os enquadramentos que falharam. Esses
+    shots viram wide (``dynamic.widen_shots``) e o clipe é re-renderizado UMA
+    vez num arquivo à parte, que só substitui o original se o render der
+    certo — qualquer falha (revisão ou re-render) mantém o clipe original.
+    """
+    try:
+        bad = ai_director.review_render(clip_path, shots)
+        if not bad:
+            return
+        label = f"clipe {peak.start_sec:.1f}s (pós-revisão)"
+        logger.info(
+            "%s: revisão reprovou %d/%d shots — re-renderizando com wide",
+            label, len(bad), len(shots),
+        )
+        fixed = dynamic.widen_shots(
+            shots, bad, src_dims["width"], src_dims["height"]
+        )
+        fixed_path = clip_path + ".fix.mp4"
+        try:
+            if _cut_dynamic_tiered(
+                video_path,
+                peak.start_sec,
+                fixed_path,
+                fixed,
+                settings.clip_duration,
+                settings.pre_roll,
+                src_dims["fps"],
+                label=label,
+            ):
+                os.replace(fixed_path, clip_path)
+        finally:
+            if os.path.exists(fixed_path):
+                os.remove(fixed_path)
+    except Exception:  # noqa: BLE001 - a revisão nunca derruba/perde o clipe
+        logger.exception("Revisão do clipe %.1fs falhou", peak.start_sec)
+
+
 def _render_clip(
     video_path: str,
     peak: Peak,
@@ -526,6 +611,7 @@ def _render_clip(
     bpm: int,
     ai: "ai_director.AIDirection | None" = None,
     cut_intensity: str = "medium",
+    review: bool = False,
 ) -> None:
     """Renderiza um clipe no estilo pedido, com fallback para o corte seco.
 
@@ -535,7 +621,8 @@ def _render_clip(
     quando disponível) dirige o enquadramento no shot plan — inclusive com os
     boxes de enquadramento dela quando o YOLO não achou ninguém — e pode marcar
     a cena como ``worthy=False`` (força corte seco). Qualquer erro do render
-    dinâmico cai para o corte seco — o clipe nunca é perdido.
+    dinâmico cai para o corte seco — o clipe nunca é perdido. ``review``
+    liga a revisão do clipe pronto pela IA (ver :func:`_review_and_fix`).
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
@@ -579,6 +666,8 @@ def _render_clip(
                 src_dims["fps"],
                 label=f"clipe {peak.start_sec:.1f}s",
             ):
+                if review:
+                    _review_and_fix(video_path, peak, clip_path, shots, src_dims)
                 return
 
     clipper.cut(

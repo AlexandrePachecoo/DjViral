@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 
 from . import visual
@@ -58,8 +59,11 @@ JPEG_QUALITY = 80
 # estimado por job — nenhuma cobrança real depende disso. Modelo fora da
 # tabela cai no preço do Sonnet (estimativa conservadora, não subestima).
 _PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.0, 5.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-4-8": (5.0, 25.0),
 }
 _DEFAULT_PRICE = (3.0, 15.0)
@@ -67,6 +71,92 @@ _DEFAULT_PRICE = (3.0, 15.0)
 # Acumulador de custo/chamadas da IA no job corrente (resetado pelo pipeline
 # no início de cada `_score_candidates`). Só para observabilidade nos logs.
 _usage = {"usd": 0.0, "calls": 0}
+# A direção profunda roda em paralelo (threads) — o acumulador precisa de lock.
+_usage_lock = threading.Lock()
+
+# Teto de tokens de saída por chamada. Os modelos atuais PENSAM antes de
+# responder (thinking adaptativo, ligado por padrão) e o raciocínio conta em
+# max_tokens — um teto apertado (os 512/1024 antigos) truncava o JSON no meio.
+# Modelos que recusaram `output_config` (HTTP 400) neste processo — ex.: um
+# modelo antigo configurado por env que não aceita `effort`.
+_no_output_config: set[str] = set()
+
+_MAX_TOKENS_TRIAGE = 4000
+_MAX_TOKENS_DIRECT = 6000
+_MAX_TOKENS_REVIEW = 4000
+
+# Schemas JSON das respostas (structured outputs, `output_config.format`): a
+# API GARANTE um JSON válido nesse formato, em vez de dependermos de o modelo
+# obedecer ao "responda só JSON" do prompt. Os limites numéricos (0-1, nº de
+# itens) continuam sendo saneados nos `_coerce*` — o schema só fixa a forma.
+_NULLABLE_BOX = {
+    "anyOf": [{"type": "array", "items": {"type": "number"}}, {"type": "null"}]
+}
+_DIRECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "hype": {"type": "number"},
+        "subject": {"type": "string", "enum": ["dj", "crowd", "wide"]},
+        "moments": {"type": "array", "items": {"type": "number"}},
+        "worthy": {"type": "boolean"},
+        "dj_box": _NULLABLE_BOX,
+        "crowd_box": _NULLABLE_BOX,
+        "dancer_box": _NULLABLE_BOX,
+        "story": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "t": {"type": "number"},
+                    "subject": {
+                        "type": "string",
+                        "enum": ["dj", "crowd", "dancer", "wide"],
+                    },
+                },
+                "required": ["t", "subject"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "hype", "subject", "moments", "worthy",
+        "dj_box", "crowd_box", "dancer_box", "story",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _list_schema(key: str, item_props: dict) -> dict:
+    """Schema ``{key: [ {item_props...}, ... ]}`` (a raiz precisa ser objeto)."""
+    return {
+        "type": "object",
+        "properties": {
+            key: {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": item_props,
+                    "required": list(item_props),
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": [key],
+        "additionalProperties": False,
+    }
+
+
+_TRIAGE_SCHEMA = _list_schema(
+    "windows",
+    {"window": {"type": "integer"}, "hype": {"type": "number"}, "worthy": {"type": "boolean"}},
+)
+_TITLE_SCHEMA = _list_schema(
+    "titles", {"window": {"type": "integer"}, "title": {"type": "string"}}
+)
+_REVIEW_SCHEMA = _list_schema(
+    "shots",
+    {"shot": {"type": "integer"}, "ok": {"type": "boolean"}, "problem": {"type": "string"}},
+)
 
 
 @dataclass
@@ -121,16 +211,17 @@ _TRIAGE_PROMPT = (
     "(balada/festival). Cada frame vem rotulado \"Janela {{id}}, t={{t}}s\" "
     "(t relativo ao início DAQUELA janela).\n\n"
     "Para CADA janela, avalie rapidamente o potencial de corte viral (TikTok/"
-    "Reels) e responda APENAS com um ARRAY JSON (sem texto ao redor, sem "
-    "markdown), um objeto por janela, com exatamente estas chaves:\n"
+    "Reels) e responda APENAS com um objeto JSON {{\"windows\": [...]}} "
+    "(sem texto ao redor, sem markdown), um item por janela, com exatamente "
+    "estas chaves:\n"
     '- "window": o id da janela (inteiro, use o mesmo número do rótulo).\n'
     '- "hype": número de 0.0 a 1.0 = energia/vibe do PÚBLICO (mãos pra cima, '
     "pulos, aglomeração, delírio = alto; pista vazia ou parada = baixo).\n"
     '- "worthy": true se a cena tem movimento/energia que justifique virar '
     "corte; false se é estática/vazia demais.\n"
     "Responda para TODAS as janelas listadas, uma entrada cada.\n"
-    'Exemplo: [{{"window": 0, "hype": 0.8, "worthy": true}}, '
-    '{{"window": 1, "hype": 0.15, "worthy": false}}]'
+    'Exemplo: {{"windows": [{{"window": 0, "hype": 0.8, "worthy": true}}, '
+    '{{"window": 1, "hype": 0.15, "worthy": false}}]}}'
 )
 
 
@@ -186,13 +277,39 @@ _TITLE_PROMPT = (
     "\"ninguém esperava esse b2b\", \"esse momento deu arrepio\").\n"
     "Regras do título: no máximo ~60 caracteres; 0 a 2 emojis; SEM hashtags; "
     "SEM aspas ao redor; nada genérico como \"Drop 1\" ou só o BPM.\n\n"
-    "Responda APENAS com um ARRAY JSON (sem texto ao redor, sem markdown), um "
-    "objeto por corte, com exatamente estas chaves:\n"
+    "Responda APENAS com um objeto JSON {{\"titles\": [...]}} (sem texto ao "
+    "redor, sem markdown), um item por corte, com exatamente estas chaves:\n"
     '- "window": o id do corte (inteiro, o mesmo número do rótulo).\n'
     '- "title": o título/legenda (string).\n'
     "Responda para TODOS os cortes listados, uma entrada cada.\n"
-    'Exemplo: [{{"window": 0, "title": "quando o beat dropou 🔥"}}, '
-    '{{"window": 1, "title": "a pista inteira cantou junto"}}]'
+    'Exemplo: {{"titles": [{{"window": 0, "title": "quando o beat dropou 🔥"}}, '
+    '{{"window": 1, "title": "a pista inteira cantou junto"}}]}}'
+)
+
+
+_REVIEW_PROMPT = (
+    "Estas imagens são frames de um CORTE VERTICAL (9:16) JÁ RENDERIZADO de um "
+    "set de DJ, pronto para TikTok/Reels. O corte alterna enquadramentos "
+    '("shots"); cada frame vem rotulado com o número do shot, o instante e o '
+    "ALVO que a câmera deveria estar mostrando naquele shot: \"dj\" (o artista/"
+    'cabine), "dancer" (uma pessoa dançando em destaque) ou "crowd" (a massa '
+    "do público).\n\n"
+    "Você é o revisor de edição: para CADA shot, confira se o enquadramento "
+    "FUNCIONOU — o alvo está visível e razoavelmente centrado no quadro? "
+    "Reprove (ok=false) só defeitos claros que um editor humano refaria: o alvo "
+    "não aparece (quadro em parede, teto, equipamento, escuro, vazio), a pessoa "
+    "está cortada de um jeito ruim (só um ombro/braço na borda, cabeça fora) ou "
+    "o zoom está tão fechado que não dá para entender a cena. Enquadramento "
+    "apenas mediano, pouca luz ou borrão de movimento NÃO são motivo para "
+    "reprovar.\n\n"
+    'Responda APENAS com um objeto JSON {{"shots": [...]}} (sem texto ao redor, '
+    "sem markdown), um item por shot listado, com exatamente estas chaves:\n"
+    '- "shot": o número do shot (inteiro, o mesmo do rótulo).\n'
+    '- "ok": true se o enquadramento funciona; false se deve ser refeito.\n'
+    '- "problem": motivo curto quando ok=false (ex.: "alvo fora do quadro"); '
+    'string vazia quando ok=true.\n'
+    'Exemplo: {{"shots": [{{"shot": 1, "ok": true, "problem": ""}}, '
+    '{{"shot": 3, "ok": false, "problem": "quadro vazio, DJ fora"}}]}}'
 )
 
 
@@ -246,16 +363,34 @@ def _sample_frames(
     (i+0.5)/n da duração, evitando as bordas. ``width`` (px) escala o custo de
     tokens da chamada — a triagem usa frames bem menores que a direção profunda.
     """
-    if cv2 is None:
-        return []
     n = max(1, n)
-    frame_width = width or settings.ai_director_frame_width
     targets = [duration * (i + 0.5) / n for i in range(n)]
+    return _sample_frames_at(
+        video_path, start_sec, duration, targets,
+        width or settings.ai_director_frame_width,
+    )
+
+
+def _sample_frames_at(
+    video_path: str,
+    start_sec: float,
+    duration: float,
+    targets: list[float],
+    width: int,
+) -> list[tuple[float, str]]:
+    """Amostra o 1º frame em/depois de cada instante de ``targets`` (crescente).
+
+    ``targets`` são segundos relativos a ``start_sec``. Devolve
+    ``[(t_rel, jpeg_b64)]`` na mesma ordem, um por alvo (alvos além do fim do
+    vídeo ficam de fora). Nunca levanta exceção (falha → lista vazia).
+    """
+    if cv2 is None or not targets:
+        return []
     frames: list[tuple[float, str]] = []
     ti = 0
     try:
         for t, frame in visual.iter_frames(
-            video_path, start_sec, duration, fps=2.0, width=frame_width
+            video_path, start_sec, duration, fps=2.0, width=width
         ):
             if ti >= len(targets):
                 break
@@ -266,7 +401,9 @@ def _sample_frames(
                 if ok:
                     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
                     frames.append((round(float(t), 2), b64))
-                ti += 1
+                # Alvos colados (< 1 passo de amostragem) usam o mesmo frame.
+                while ti < len(targets) and t + 1e-6 >= targets[ti]:
+                    ti += 1
     except Exception:  # noqa: BLE001 - amostragem nunca derruba o job (ex.: ffmpeg)
         logger.exception("Falha ao amostrar keyframes (%.1fs)", start_sec)
         return []
@@ -354,8 +491,94 @@ def _track_usage(model: str, resp) -> None:
     in_price, out_price = _PRICING_USD_PER_MTOK.get(model, _DEFAULT_PRICE)
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    _usage["usd"] += (input_tokens * in_price + output_tokens * out_price) / 1_000_000
-    _usage["calls"] += 1
+    with _usage_lock:
+        _usage["usd"] += (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+        _usage["calls"] += 1
+
+
+def _image_block(b64: str) -> dict:
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+    }
+
+
+def _request_text(
+    model: str,
+    effort: str,
+    content: list[dict],
+    schema: dict,
+    max_tokens: int,
+    what: str,
+) -> str | None:
+    """Uma chamada à API → texto da resposta (JSON), ou ``None`` em falha.
+
+    Pede saída estruturada (``output_config.format`` com ``schema``) e, quando
+    configurado, o nível de esforço (``effort``; string vazia = não envia —
+    necessário para modelos antigos que rejeitam o parâmetro). Se a API/SDK
+    recusar o ``output_config`` (HTTP 400 ou SDK antigo), refaz UMA vez sem
+    ele e conta com o "responda só JSON" do prompt + parser tolerante. Recusa
+    do modelo (``stop_reason == "refusal"``) e qualquer exceção viram ``None``
+    — a IA nunca é fatal para o job.
+    """
+    client = _get_client()
+    if client is None:
+        return None
+    kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": content}],
+    }
+    output_config: dict = {"format": {"type": "json_schema", "schema": schema}}
+    if effort:
+        output_config["effort"] = effort
+    try:
+        try:
+            if model in _no_output_config:
+                resp = client.messages.create(**kwargs)
+            else:
+                resp = client.messages.create(**kwargs, output_config=output_config)
+        except Exception as exc:  # noqa: BLE001
+            unsupported = isinstance(exc, TypeError) or getattr(
+                exc, "status_code", None
+            ) == 400
+            if not unsupported or model in _no_output_config:
+                raise
+            # Lembra por processo: as próximas chamadas a esse modelo já vão
+            # sem output_config (não paga a tentativa recusada de novo).
+            _no_output_config.add(model)
+            logger.warning(
+                "%s: API recusou output_config (%s) — repetindo sem saída "
+                "estruturada", what, exc,
+            )
+            resp = client.messages.create(**kwargs)
+    except Exception:  # noqa: BLE001 - a IA nunca é fatal para o job
+        logger.exception("%s: chamada à IA falhou", what)
+        return None
+
+    _track_usage(model, resp)
+    stop_reason = getattr(resp, "stop_reason", None)
+    if stop_reason == "refusal":
+        logger.warning("%s: o modelo recusou a requisição", what)
+        return None
+    if stop_reason == "max_tokens":
+        logger.warning("%s: resposta truncada em max_tokens=%d", what, max_tokens)
+    return "".join(
+        block.text
+        for block in getattr(resp, "content", None) or []
+        if getattr(block, "type", None) == "text"
+    )
+
+
+def _parse_items(text: str | None, key: str) -> list | None:
+    """Lista de itens da resposta: ``{key: [...]}`` (formato atual) ou um array
+    JSON puro (formato antigo / fallback sem saída estruturada)."""
+    if not text:
+        return None
+    obj = _parse_json(text)
+    if isinstance(obj, dict) and isinstance(obj.get(key), list):
+        return obj[key]
+    return _parse_json_array(text)
 
 
 def _coerce_box(value) -> Box | None:
@@ -483,8 +706,7 @@ def direct(
     para dar contexto ao prompt. Qualquer falha (sem cliente, sem frames,
     timeout, resposta inválida) devolve ``None`` — o chamador cai na heurística.
     """
-    client = _get_client()
-    if client is None:
+    if _get_client() is None:
         return None
 
     frames = _sample_frames(video_path, start_sec, duration, settings.ai_director_frames)
@@ -494,12 +716,7 @@ def direct(
     content: list[dict] = []
     for t, b64 in frames:
         content.append({"type": "text", "text": f"Frame em t={t:.1f}s:"})
-        content.append(
-            {
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
-            }
-        )
+        content.append(_image_block(b64))
     content.append(
         {
             "type": "text",
@@ -507,22 +724,16 @@ def direct(
         }
     )
 
-    try:
-        resp = client.messages.create(
-            model=settings.ai_director_model,
-            max_tokens=512,
-            messages=[{"role": "user", "content": content}],
-        )
-        _track_usage(settings.ai_director_model, resp)
-        text = "".join(
-            block.text for block in resp.content if getattr(block, "type", None) == "text"
-        )
-    except Exception:  # noqa: BLE001 - a IA nunca é fatal para o job
-        logger.exception("Diretor de IA falhou na janela %.1fs", start_sec)
-        return None
-
-    out = _parse_json(text)
-    if out is None:
+    text = _request_text(
+        settings.ai_director_model,
+        settings.ai_director_effort,
+        content,
+        _DIRECT_SCHEMA,
+        _MAX_TOKENS_DIRECT,
+        f"Diretor de IA (janela {start_sec:.1f}s)",
+    )
+    out = _parse_json(text) if text else None
+    if not isinstance(out, dict):
         logger.warning("Diretor de IA: resposta sem JSON válido (janela %.1fs)", start_sec)
         return None
     return _coerce(out, duration)
@@ -545,8 +756,7 @@ def triage_group(
     aquele ``window`` id) ficam de fora e o chamador trata como "sem triagem"
     (mantém só o score local). Nunca levanta exceção.
     """
-    client = _get_client()
-    if client is None or not windows:
+    if _get_client() is None or not windows:
         return {}
 
     content: list[dict] = []
@@ -564,35 +774,24 @@ def triage_group(
         valid_keys.add(key)
         for t, b64 in frames:
             content.append({"type": "text", "text": f"Janela {key}, frame t={t:.1f}s:"})
-            content.append(
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
-                }
-            )
+            content.append(_image_block(b64))
     if not valid_keys:
         return {}
     content.append(
         {"type": "text", "text": _TRIAGE_PROMPT.format(n=len(windows))}
     )
 
-    try:
-        resp = client.messages.create(
-            model=settings.ai_triage_model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": content}],
-        )
-        _track_usage(settings.ai_triage_model, resp)
-        text = "".join(
-            block.text for block in resp.content if getattr(block, "type", None) == "text"
-        )
-    except Exception:  # noqa: BLE001 - a triagem nunca é fatal para o job
-        logger.exception("Triagem de IA falhou (%d janelas)", len(windows))
-        return {}
-
-    items = _parse_json_array(text)
+    text = _request_text(
+        settings.ai_triage_model,
+        settings.ai_triage_effort,
+        content,
+        _TRIAGE_SCHEMA,
+        _MAX_TOKENS_TRIAGE,
+        f"Triagem de IA ({len(windows)} janelas)",
+    )
+    items = _parse_items(text, "windows")
     if items is None:
-        logger.warning("Triagem de IA: resposta sem array JSON válido")
+        logger.warning("Triagem de IA: resposta sem JSON válido")
         return {}
 
     out: dict[int, Triage] = {}
@@ -632,8 +831,7 @@ def title_group(
     aquele ``window`` id, título vazio) ficam de fora e o chamador usa o
     título heurístico. Como o resto do módulo, nunca levanta exceção.
     """
-    client = _get_client()
-    if client is None or not cuts:
+    if _get_client() is None or not cuts:
         return {}
 
     content: list[dict] = []
@@ -651,33 +849,22 @@ def title_group(
         valid_keys.add(key)
         for t, b64 in frames:
             content.append({"type": "text", "text": f"Corte {key}, frame t={t:.1f}s:"})
-            content.append(
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
-                }
-            )
+            content.append(_image_block(b64))
     if not valid_keys:
         return {}
     content.append({"type": "text", "text": _TITLE_PROMPT.format(n=len(cuts))})
 
-    try:
-        resp = client.messages.create(
-            model=settings.ai_triage_model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": content}],
-        )
-        _track_usage(settings.ai_triage_model, resp)
-        text = "".join(
-            block.text for block in resp.content if getattr(block, "type", None) == "text"
-        )
-    except Exception:  # noqa: BLE001 - os títulos nunca são fatais para o job
-        logger.exception("Geração de títulos de IA falhou (%d cortes)", len(cuts))
-        return {}
-
-    items = _parse_json_array(text)
+    text = _request_text(
+        settings.ai_triage_model,
+        settings.ai_triage_effort,
+        content,
+        _TITLE_SCHEMA,
+        _MAX_TOKENS_TRIAGE,
+        f"Títulos de IA ({len(cuts)} cortes)",
+    )
+    items = _parse_items(text, "titles")
     if items is None:
-        logger.warning("Títulos de IA: resposta sem array JSON válido")
+        logger.warning("Títulos de IA: resposta sem JSON válido")
         return {}
 
     out: dict[int, str] = {}
@@ -694,3 +881,85 @@ def title_group(
         if title:
             out[key] = title
     return out
+
+
+# Sujeitos de shot que a revisão confere: os enquadramentos "fechados" numa
+# pessoa/grupo. wide/center não têm um alvo que possa "sumir" do quadro.
+REVIEWABLE_KINDS = {"dj", "dancer", "crowd"}
+
+
+def review_render(clip_path: str, shots: list) -> set[int] | None:
+    """REVISÃO do clipe já renderizado: quais shots ficaram mal enquadrados?
+
+    É o passo "assistir o resultado e corrigir" de um editor: o shot plan é
+    montado às cegas (boxes do YOLO/da IA sobre a FONTE), e só olhando o vídeo
+    final dá para saber se um zoom caiu numa parede, cortou a pessoa pela
+    metade ou ficou fechado demais. Amostra 1 frame no meio de cada shot
+    "fechado" (:data:`REVIEWABLE_KINDS`) do clipe 9:16 pronto e pergunta ao
+    modelo de direção se o alvo daquele shot está de fato no quadro.
+
+    ``shots`` é o shot plan usado no render (objetos com ``t0``/``t1``/``kind``,
+    tempos relativos ao início do clipe). Devolve o conjunto de ÍNDICES (em
+    ``shots``) reprovados — vazio = tudo certo — ou ``None`` quando a revisão
+    não rodou (sem cliente, nada a revisar, falha de amostragem/API). O
+    chamador decide o conserto (ver ``dynamic.widen_shots``). Nunca levanta
+    exceção.
+    """
+    if _get_client() is None or not shots:
+        return None
+    targets = [
+        (i, 0.5 * (float(sh.t0) + float(sh.t1)))
+        for i, sh in enumerate(shots)
+        if sh.kind in REVIEWABLE_KINDS
+    ]
+    if not targets:
+        return None
+    duration = max(float(sh.t1) for sh in shots)
+    frames = _sample_frames_at(
+        clip_path, 0.0, duration, [t for _i, t in targets],
+        settings.ai_review_frame_width,
+    )
+    if len(frames) != len(targets):
+        # Sem um frame por shot não dá para casar frame ↔ shot com segurança.
+        return None
+
+    content: list[dict] = []
+    for (idx, _t), (t, b64) in zip(targets, frames):
+        content.append(
+            {
+                "type": "text",
+                "text": f"Shot {idx}, t={t:.1f}s, alvo: {shots[idx].kind}",
+            }
+        )
+        content.append(_image_block(b64))
+    content.append({"type": "text", "text": _REVIEW_PROMPT.format()})
+
+    text = _request_text(
+        settings.ai_director_model,
+        settings.ai_director_effort,
+        content,
+        _REVIEW_SCHEMA,
+        _MAX_TOKENS_REVIEW,
+        f"Revisão de IA ({len(targets)} shots)",
+    )
+    items = _parse_items(text, "shots")
+    if items is None:
+        logger.warning("Revisão de IA: resposta sem JSON válido")
+        return None
+
+    valid = {idx for idx, _t in targets}
+    bad: set[int] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(item.get("shot"))
+        except (TypeError, ValueError):
+            continue
+        if idx in valid and item.get("ok") is False:
+            bad.add(idx)
+            logger.info(
+                "Revisão de IA: shot %d (%s) reprovado — %s",
+                idx, shots[idx].kind, str(item.get("problem") or "")[:120],
+            )
+    return bad

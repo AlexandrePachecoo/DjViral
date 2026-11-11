@@ -119,6 +119,13 @@ YouTube quando necessário.
    `lite` (só a triagem barata + títulos virais, plano **free**) ou `full`
    (triagem + direção profunda, planos **pagos**). Com `ai_tier != off` **e**
    `ANTHROPIC_API_KEY` presente:
+   Toda chamada passa por `ai_director._request_text`: **saída estruturada**
+   (`output_config.format` com JSON schema — a API garante o JSON; os
+   `_coerce*` continuam saneando os valores), `effort` configurável por
+   estágio (`AI_TRIAGE_EFFORT` / `AI_DIRECTOR_EFFORT`; vazio = não envia) e
+   `max_tokens` folgado (os modelos atuais PENSAM antes de responder e o
+   raciocínio conta no teto). Se a API recusar o `output_config` (modelo
+   antigo configurado por env), refaz sem ele e cai no parser tolerante.
    - **Triagem** (`triage_group`, barata, modelo `AI_TRIAGE_MODEL` default
      Haiku; roda em `lite` e `full`) roda em LOTES (`AI_TRIAGE_GROUP_SIZE`
      janelas por chamada, 1-2 keyframes pequenos cada) cobrindo **TODOS** os
@@ -136,7 +143,8 @@ YouTube quando necessário.
    - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
      `AI_DIRECTOR_MODEL` default
      **Sonnet**) roda só nas TOP-K janelas pelo score já AJUSTADO (teto
-     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio): amostra
+     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio; as chamadas rodam em
+     paralelo num pool de `AI_DIRECTOR_CONCURRENCY` threads): amostra
      `AI_DIRECTOR_FRAMES` keyframes (`AI_DIRECTOR_FRAME_WIDTH`px, reaproveita
      `visual.iter_frames`), encoda em JPEG e pergunta ao modelo a **vibe do
      público** (`hype`), o **protagonista** (`subject`: dj/crowd/wide), os
@@ -147,6 +155,14 @@ YouTube quando necessário.
      `[cx, cy, w, h]` em frações 0-1 do frame; saneados em `_coerce_box`). O
      hype profundo refina o score final (`(1-w_hype)*adjusted + w_hype*hype`,
      `SCORE_HYPE_WEIGHT`) e a direção alimenta o corte dinâmico (passo 4).
+   - **Revisão do render** (`review_render`, só no `ai_tier=full` + corte
+     dinâmico, `AI_REVIEW_ENABLED`) — o passo "assistir e corrigir": depois de
+     renderizar, a IA vê 1 frame do meio de cada shot FECHADO (dj/dancer/crowd)
+     do clipe 9:16 PRONTO e reprova enquadramentos que falharam (alvo fora do
+     quadro, pessoa cortada, zoom ilegível). `pipeline._review_and_fix` troca
+     os reprovados por wide (`dynamic.widen_shots`, mesmos tempos, wides
+     vizinhos fundidos) e re-renderiza UMA vez num arquivo à parte, que só
+     substitui o original se der certo. Não roda no re-corte (`/recut`).
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
    job) — é a primeira dependência de API de IA do projeto; como o YOLO,
    **nunca derruba um job**: sem chave, sem o pacote `anthropic`, timeout ou
@@ -395,13 +411,17 @@ ganchos detalhados em [`design.md`](design.md).
   `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
   `AI_TRIAGE_MODEL` (default
-  `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
+  `claude-haiku-5-5`, cobre TODOS os candidatos em lotes),
+  `AI_TRIAGE_EFFORT` (default `low`; deixe vazio se usar um modelo que não
+  aceita `effort`, ex. `claude-haiku-4-5`),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
   `AI_TRIAGE_FRAME_WIDTH`, `AI_TRIAGE_BUDGET_SECONDS`, `SCORE_HYPE_LITE_WEIGHT`,
-  `AI_DIRECTOR_MODEL` (default `claude-sonnet-5`, só no top-K pelo score
-  ajustado), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
+  `AI_DIRECTOR_MODEL` (default `claude-sonnet-5-5`, só no top-K pelo score
+  ajustado), `AI_DIRECTOR_EFFORT` (default `medium`),
+  `AI_DIRECTOR_CONCURRENCY` (default 3), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
   `AI_DIRECTOR_FRAME_WIDTH`, `AI_DIRECTOR_BUDGET_SECONDS`,
-  `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`.
+  `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`, `AI_REVIEW_ENABLED` (revisão do
+  clipe pronto + re-render de conserto), `AI_REVIEW_FRAME_WIDTH`.
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),

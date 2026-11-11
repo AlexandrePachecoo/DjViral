@@ -747,3 +747,34 @@ def test_beat_punch_disabled_in_subtle():
         peak_at=30.0, intensity="subtle",
     )
     assert all(s.zoom_keys is None for s in shots)
+
+
+# ---- widen_shots: conserto pós-revisão do render ----
+
+
+def test_widen_shots_replaces_bad_and_merges_wides():
+    from app.dynamic import Shot, widen_shots
+
+    wide = (608, 1080, 100, 0)
+    shots = [
+        Shot(0.0, 4.0, "wide", wide, drift=0.04),
+        Shot(4.0, 8.0, "dj", (304, 540, 200, 100), drift=0.06,
+             path=[(0.0, 200, 100), (4.0, 260, 100)]),
+        Shot(8.0, 12.0, "dancer", (304, 540, 900, 300)),
+        Shot(12.0, 16.0, "dj", (304, 540, 220, 100)),
+    ]
+    out = widen_shots(shots, {1, 2}, 1920, 1080)
+    # wide + dj(→wide) + dancer(→wide) fundem num wide só; o último dj fica.
+    assert [(s.t0, s.t1, s.kind) for s in out] == [
+        (0.0, 12.0, "wide"), (12.0, 16.0, "dj"),
+    ]
+    assert out[0].crop == wide and out[0].path is None
+    assert shots[1].kind == "dj"  # não muta a entrada
+
+
+def test_widen_shots_without_existing_wide_uses_central():
+    from app.dynamic import Shot, crop_for_box, widen_shots
+
+    shots = [Shot(0.0, 5.0, "dj", (304, 540, 200, 100))]
+    out = widen_shots(shots, {0}, 1920, 1080)
+    assert out[0].kind == "wide" and out[0].crop == crop_for_box(None, 1920, 1080)
