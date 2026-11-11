@@ -53,6 +53,15 @@ Tema escuro: `--dj-bg #08080d`, `--dj-panel #15151f`, e a paleta neon
 `--dj-purple #a855f7`, `--dj-magenta #d946ef`, `--dj-pink #ec4899`,
 `--dj-cyan #22d3ee`.
 
+### Seções da landing (`app/page.tsx`)
+
+Ordem: nav em pílula sticky (vidro) → hero (badge, H1, CTAs, selos de confiança
++ gerador) → plataformas + números do produto → antes/depois → recursos (grid
+de 6 cards) → como funciona → preços → FAQ (`<details>`, sem JS) → CTA final →
+rodapé com colunas. Os números e textos de prova são **fatos do produto**
+(3h, 30 cortes, 9:16, 1h grátis) — não inventar contagem de usuários nem
+depoimentos.
+
 ## Animações
 
 Definidas em `globals.css` (escopo global, referenciadas por inline styles do
@@ -76,11 +85,12 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 
 | Largura | O que acontece |
 | ------- | -------------- |
-| `≤ 900px` | Landing: hero, "como funciona" e preços viram 1 coluna; paddings menores. |
+| `≤ 900px` | Landing: hero, "como funciona" e preços viram 1 coluna; recursos e números viram 2 colunas; paddings menores. |
+| `≤ 760px` | Landing: links de texto do nav (pílula sticky) somem, sobra o CTA. |
 | `≤ 820px` | Editor do estúdio colapsa pra 1 coluna (`.dj-editor-grid`). |
 | `≤ 720px` | Header do estúdio quebra: logo + ações na 1ª linha, abas roláveis na 2ª (`.dj-header*`); padding do `main` reduz. |
 | `≤ 640px` | Estúdio: card do set e linhas da lista quebram; barra de score full-width; tabela de salvos rola na horizontal (`.dj-table-scroll`); busca full-width. |
-| `≤ 560px` | Landing: links do nav somem (sobra o CTA); botões do hero empilham. Editor: topo quebra. |
+| `≤ 560px` | Landing: recursos em 1 coluna; botões do hero empilham. Editor: topo quebra. |
 | `≤ 420px` | Header do estúdio esconde o nome do usuário (mantém o avatar); cards de estilo de corte empilham (`.dj-style-grid`). |
 
 ### Ganchos responsivos (classes `dj-*`)
