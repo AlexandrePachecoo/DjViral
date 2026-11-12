@@ -106,26 +106,21 @@ alter table cuts add column if not exists score_hype double precision;
 -- antigos). NULL em cortes antigos ou quando o BPM não pôde ser estimado.
 alter table cuts add column if not exists bpm integer;
 
--- Migração: direção manual de câmera do editor de cortes. Array JSON de
--- keyframes `{t, cx, cy, zoom}` (t em segundos relativos ao início do corte;
--- cx/cy = centro da janela 9:16 em frações 0-1 do frame da fonte; zoom >= 1)
--- definidos pelo usuário ao arrastar a janela TikTok no editor. NULL = sem
--- direção manual (render automático); o worker regrava a cada re-corte que
--- envia keyframes ([] = usuário limpou a direção manual).
+-- Legado: direção manual de câmera do editor de cortes (keyframes
+-- `{t, cx, cy, zoom}`). O editor foi removido; a coluna não é mais lida nem
+-- escrita e fica só para não perder o que já foi salvo.
 alter table cuts add column if not exists crop_keyframes jsonb;
 
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)
 -- ---------------------------------------------------------------------------
 
--- Assinaturas dos planos pagos ('pro' | 'premium'). O provedor depende do
--- locale: AbacatePay (BRL, PIX ou cartão) no Brasil, Stripe (USD, cartão) no
--- internacional — gravado em `provider`. Uma linha é criada com status
--- 'pending' quando o usuário abre o checkout; os webhooks de cada provedor
--- (AbacatePay: subscription.completed / renewed / payment_failed / cancelled;
--- Stripe: checkout.session.completed / invoice.paid / invoice.payment_failed /
--- customer.subscription.deleted) atualizam o status e o período vigente, e
--- espelham o plano em `users.plan`.
+-- Assinaturas dos planos pagos ('pro' | 'premium'), cobradas pela AbacatePay
+-- (BRL, PIX ou cartão). Uma linha é criada com status 'pending' quando o
+-- usuário abre o checkout; o webhook (subscription.completed / renewed /
+-- payment_failed / cancelled) atualiza o status e o período vigente, e espelha
+-- o plano em `users.plan`. `provider` = 'stripe' só existe em linhas antigas,
+-- da época da cobrança internacional (integração removida).
 create table if not exists subscriptions (
     id                       uuid primary key default gen_random_uuid(),
     user_id                  uuid not null references users (id) on delete cascade,
