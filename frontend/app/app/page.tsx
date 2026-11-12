@@ -5,12 +5,10 @@ import { useTranslations } from "next-intl";
 import { Header } from "./_studio/Header";
 import { GeneratorView } from "./_studio/GeneratorView";
 import { SavedView } from "./_studio/SavedView";
-import { EditorView } from "./_studio/EditorView";
 import { PlanView } from "./_studio/PlanView";
 import { ProfileView } from "./_studio/ProfileView";
 import { theme, font } from "./_studio/theme";
 import { type ApiCut, toStudioCut } from "./_studio/cut";
-import type { Cut } from "./_studio/data";
 import type { SavedFolder, Tab } from "./_studio/types";
 
 // Shape de uma pasta como devolvida por GET /api/cuts/saved.
@@ -32,14 +30,6 @@ export default function Studio() {
 
   // Cortes salvos, agrupados por set.
   const [savedFolders, setSavedFolders] = useState<SavedFolder[]>([]);
-
-  // Corte aberto na aba Edição (via botão "Editar" de um card ou pelo picker
-  // da própria aba). null = a aba mostra o seletor de cortes.
-  const [editing, setEditing] = useState<{
-    projectId: string;
-    setName: string;
-    cut: Cut;
-  } | null>(null);
 
   // Score é sempre visível no protótipo.
   const showScore = true;
@@ -97,11 +87,6 @@ export default function Studio() {
     setTab("gerador");
   }
 
-  function handleEdit(projectId: string, setName: string, cut: Cut) {
-    setEditing({ projectId, setName, cut });
-    setTab("edicao");
-  }
-
   async function handleDeleteCut(projectId: string, cutId: string) {
     const res = await fetch(`/api/projects/${projectId}/cuts/${cutId}`, { method: "DELETE" });
     if (!res.ok) return false;
@@ -145,38 +130,21 @@ export default function Studio() {
         }}
       >
         {/* O Gerador fica MONTADO (só escondido) fora da aba: trocar para a
-            Edição/Cortes salvos e voltar não perde os cortes recém-gerados
+            aba Cortes salvos e voltar não perde os cortes recém-gerados
             nem interrompe o polling de um set em processamento. */}
         <div style={{ display: tab === "gerador" ? "block" : "none" }}>
           <GeneratorView
             key={generatorKey}
             onSaved={loadSaved}
             onUpgrade={() => setTab("plano")}
-            onEdit={handleEdit}
           />
         </div>
-        {tab === "edicao" &&
-          (editing ? (
-            <EditorView
-              cut={editing.cut}
-              setName={editing.setName}
-              projectId={editing.projectId}
-              onBack={() => setEditing(null)}
-              onSaved={(updated) => {
-                setEditing((e) => (e ? { ...e, cut: updated } : e));
-                loadSaved();
-              }}
-            />
-          ) : (
-            <EditPicker folders={savedFolders} onEdit={handleEdit} />
-          ))}
         {tab === "salvos" && (
           <SavedView
             folders={savedFolders}
             showScore={showScore}
             onDeleteCut={handleDeleteCut}
             onDeleteFolder={handleDeleteFolder}
-            onEdit={handleEdit}
           />
         )}
         {tab === "plano" && <PlanView />}
@@ -188,125 +156,6 @@ export default function Studio() {
           />
         )}
       </main>
-    </div>
-  );
-}
-
-// Seletor da aba Edição quando nenhum corte está aberto: lista os cortes
-// salvos para escolher qual editar (os recém-gerados têm o botão "Editar"
-// direto no card do Gerador).
-function EditPicker({
-  folders,
-  onEdit,
-}: {
-  folders: SavedFolder[];
-  onEdit: (projectId: string, setName: string, cut: Cut) => void;
-}) {
-  const t = useTranslations("studio.editPicker");
-  const hasCuts = folders.some((f) => f.cuts.length > 0);
-  if (!hasCuts) {
-    return (
-      <div style={{ animation: "dj-fadeUp .4s ease" }} data-anim>
-        <div
-          style={{
-            padding: "48px 24px",
-            textAlign: "center",
-            borderRadius: 14,
-            background: theme.surface,
-            border: `1px solid ${theme.border}`,
-            color: theme.textMuted,
-            fontSize: 14,
-          }}
-        >
-          {t("empty")}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      style={{ animation: "dj-fadeUp .4s ease", display: "flex", flexDirection: "column", gap: 28 }}
-      data-anim
-    >
-      <div>
-        <div style={{ font: `500 24px ${font.display}`, letterSpacing: "-.01em" }}>
-          {t("title")}
-        </div>
-        <div style={{ color: theme.textMuted, fontSize: 13, marginTop: 4 }}>{t("subtitle")}</div>
-      </div>
-      {folders.map((folder) => (
-        <section key={folder.projectId}>
-          <div style={{ font: `500 16px ${font.display}`, marginBottom: 12 }}>
-            📁 {folder.setName}
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
-              gap: 16,
-            }}
-          >
-            {folder.cuts.map((cut) => (
-              <div
-                key={cut.id}
-                onClick={() => onEdit(folder.projectId, folder.setName, cut)}
-                style={{
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: 12,
-                  overflow: "hidden",
-                  background: theme.surface,
-                  cursor: "pointer",
-                }}
-              >
-                <video
-                  src={cut.url}
-                  muted
-                  playsInline
-                  preload="metadata"
-                  style={{
-                    width: "100%",
-                    height: 200,
-                    objectFit: "cover",
-                    display: "block",
-                    background: "#000",
-                    pointerEvents: "none",
-                  }}
-                />
-                <div style={{ padding: 12 }}>
-                  <div
-                    style={{
-                      font: `500 13px ${font.display}`,
-                      marginBottom: 4,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {cut.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 10 }}>
-                    {cut.dur} · {t("inSet")} · {cut.moment}
-                  </div>
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: 8,
-                      borderRadius: 8,
-                      fontSize: 12,
-                      color: theme.accent,
-                      background: theme.accentSoft,
-                      border: `1px solid ${theme.accentBorder}`,
-                    }}
-                  >
-                    {t("edit")}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
     </div>
   );
 }

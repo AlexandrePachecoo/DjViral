@@ -197,7 +197,6 @@
     "header": {
       "tabs": {
         "generator": "Generator",
-        "editor": "Editor",
         "saved": "Saved clips"
       },
       "newSet": "＋ New set",
@@ -279,8 +278,7 @@
         "shared": "🔗 Shared",
         "share": "🔗 Share",
         "deleteSet": "🗑 Delete set",
-        "inSet": "in set",
-        "edit": "✎ Edit"
+        "inSet": "in set"
       }
     },
     "generator": {
@@ -310,7 +308,6 @@
       "savedCheck": "Saved ✓",
       "selected": "Selected",
       "select": "Select",
-      "edit": "✎ Edit",
       "download": "Download",
       "form": {
         "title": "New set",
@@ -402,69 +399,6 @@
         "saving": "Saving...",
         "changePassword": "Change password"
       }
-    },
-    "editor": {
-      "back": "Back",
-      "errors": {
-        "codecUnsupported": "the browser can't play this file's format/codec (e.g. iPhone HEVC/MOV or MKV)",
-        "networkFailure": "network failure while downloading the original video from storage",
-        "sourceLoadFailed": "the original video couldn't be loaded",
-        "code": "code",
-        "recutFailed": "The re-cut failed. Try again.",
-        "recutSlow": "The re-cut is taking a while. Try again shortly.",
-        "titleEmpty": "The title can't be empty.",
-        "nothingToSave": "Nothing to save.",
-        "renameFailed": "Failed to rename",
-        "recutRequestFailed": "Failed to re-cut",
-        "saveFailed": "Error saving"
-      },
-      "status": {
-        "regenerating": "Regenerating the clip's video...",
-        "saving": "Saving..."
-      },
-      "cutNamePlaceholder": "Clip name",
-      "cutTitleAria": "Clip title",
-      "editorFallbackName": "Editor",
-      "exporting": "Exporting...",
-      "saveCut": "Save clip",
-      "loadingSet": "Loading the original set...",
-      "sourceUnavailable": {
-        "withError": "Couldn't play this set's original video: {reason}. The preview below shows the already-generated clip; you can still adjust start/end and the title — manual zoom needs the original video.",
-        "noSource": "This set's original video isn't available for preview (YouTube set or removed file). You can adjust start/end on the timeline — manual zoom needs the original video."
-      },
-      "loadingVideo": "Loading the set's video...",
-      "regeneratingVideo": "Regenerating the video with the new edit...",
-      "pause": "Pause",
-      "play": "Play",
-      "startHere": "⇤ Start here",
-      "endHere": "End here ⇥",
-      "removeKeyframe": "Remove keyframe",
-      "addKeyframe": "Add keyframe",
-      "panel": {
-        "framing": "Framing",
-        "zoom": "Zoom",
-        "cameraZoomAria": "Camera zoom",
-        "framingHint": "Drag the video in the preview (or scroll) to frame it. Each adjustment becomes a ◆ keyframe at the current point.",
-        "keyframes": "Keyframes",
-        "noKeyframes": "No keyframes yet — the camera stays centered.",
-        "clearKeyframes": "Clear all keyframes",
-        "trim": "Trim",
-        "start": "Start",
-        "end": "End",
-        "duration": "Duration: {dur}s (min. {min}s · max. {max}s)"
-      },
-      "timeline": {
-        "fitToClip": "Fit to clip",
-        "fullWindow": "Full window",
-        "hint": "drag the purple handles to shorten or extend the clip — you can go beyond what the AI picked (the white line below marks the original choice). To keep the editor light, the timeline loads ~1 min before and after the clip; extending the clip moves the window along."
-      }
-    },
-    "editPicker": {
-      "empty": "No clips to edit yet. Generate a set in the Generator or save clips — they'll show up here to adjust timing, zoom and keyframes.",
-      "title": "Choose a clip to edit",
-      "subtitle": "adjust start/end on the timeline, drag the TikTok window and create zoom keyframes",
-      "inSet": "in set",
-      "edit": "✎ Edit"
     }
   },
   "publicShare": {

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { theme, font, scoreColor, btnPrimary } from "./theme";
 import { type Cut } from "./data";
 import { type ApiCut, toStudioCut, downloadUrl } from "./cut";
+import { uploadSource, type UploadTarget } from "./upload";
 
 // Fases do fluxo do Gerador: formulário de upload → envio → processamento →
 // cortes prontos (seleção/salvar) ou erro.
@@ -24,8 +25,6 @@ type Props = {
   onSaved: () => void;
   // Abre a aba "Plano" quando o usuário estoura a cota e quer fazer upgrade.
   onUpgrade: () => void;
-  // Abre um corte na aba Edição (timeline + zoom manual).
-  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 };
 
 // Duração do vídeo (em segundos) lida dos metadados no navegador, para o
@@ -48,42 +47,7 @@ function readVideoDuration(file: File): Promise<number | null> {
   });
 }
 
-// Faz o PUT do vídeo na signed URL com progresso real. `fetch` não expõe
-// progresso de upload, então usamos XMLHttpRequest (`upload.onprogress`) para
-// alimentar a barra. Mantém a mesma URL e o mesmo header de hoje.
-function uploadWithProgress(
-  url: string,
-  file: File,
-  onProgress: (percent: number) => void,
-  t: (key: string, values?: Record<string, string | number>) => string
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", url);
-    xhr.setRequestHeader("content-type", file.type || "video/mp4");
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100));
-      }
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        const detail = xhr.responseText;
-        reject(
-          new Error(
-            t("errors.uploadFailedStatus", { status: xhr.status }) + (detail ? `: ${detail}` : "")
-          )
-        );
-      }
-    };
-    xhr.onerror = () => reject(new Error(t("errors.uploadFailedNetwork")));
-    xhr.send(file);
-  });
-}
-
-export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
+export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const t = useTranslations("studio.generator");
   const [phase, setPhase] = useState<Phase>("form");
   const [name, setName] = useState("");
@@ -179,13 +143,18 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
         if (data.code === "plan_limit") setLimitHit(true);
         throw new Error(data.error);
       }
-      const { project_id, signedUrl } = await createRes.json();
+      const { project_id, ...uploadTarget } = await createRes.json();
       setProjectId(project_id);
 
-      // 2. Upload direto pro Supabase Storage (não passa pela Vercel), com
-      // progresso real via XMLHttpRequest (alimenta a barra na UI).
+      // 2. Upload direto pro Supabase Storage (não passa pela Vercel), em
+      // pedaços e resumável: uma queda de conexão continua de onde parou
+      // (ver ./upload.ts). O progresso alimenta a barra na UI.
       setMessage(t("status.uploadingVideo"));
-      await uploadWithProgress(signedUrl, file, setUploadProgress, t);
+      await uploadSource(uploadTarget as UploadTarget, file, setUploadProgress, {
+        status: (status, detail) =>
+          t("errors.uploadFailedStatus", { status }) + (detail ? `: ${detail}` : ""),
+        network: t("errors.uploadFailedNetwork"),
+      });
       setUploadProgress(100);
 
       // 3. Dispara o worker.
@@ -439,7 +408,7 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
                 <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
                   {c.dur} · {t("inSet")} · {c.moment}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
                   {c.saved ? (
                     <div style={{ ...ghostBtn, textAlign: "center", opacity: 0.6, cursor: "default" }}>{t("savedCheck")}</div>
                   ) : (
@@ -457,12 +426,6 @@ export function GeneratorView({ onSaved, onUpgrade, onEdit }: Props) {
                       {isSelected ? t("selected") : t("select")}
                     </div>
                   )}
-                  <div
-                    onClick={() => projectId && onEdit(projectId, name, c)}
-                    style={{ ...ghostBtn, textAlign: "center", cursor: "pointer" }}
-                  >
-                    {t("edit")}
-                  </div>
                   <a href={downloadUrl(c)} target="_blank" rel="noopener" style={{ ...ghostBtn, textAlign: "center", textDecoration: "none" }}>
                     {t("download")}
                   </a>

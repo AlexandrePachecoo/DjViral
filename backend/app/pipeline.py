@@ -72,9 +72,9 @@ def probe_video(path: str) -> dict:
     return info
 
 # Limita quantos jobs pesados (download de GB + análise + FFmpeg) rodam ao
-# mesmo tempo. Sem isso, dois POST /process simultâneos dobram o pico de
-# memória e derrubam o container na Railway. Jobs excedentes ficam na fila
-# (bloqueiam a thread de background até chegar a vez).
+# mesmo tempo neste processo. Com a fila durável (jobs.py) o limite já vem do
+# nº de threads consumidoras; o semáforo continua valendo para o modo antigo
+# (BackgroundTasks, quando a fila está indisponível) e cobre os dois juntos.
 _job_slots = threading.BoundedSemaphore(settings.max_concurrent_jobs)
 
 
@@ -115,8 +115,9 @@ def process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
-) -> None:
-    """Pipeline completo, rodado em background.
+    retry: bool = False,
+) -> bool:
+    """Pipeline completo, rodado em background. Devolve ``True`` em sucesso.
 
     Baixa o vídeo original (Supabase Storage ou YouTube, conforme a linha
     ``source`` do projeto), analisa o áudio, corta os top picos em clipes,
@@ -135,12 +136,33 @@ def process_project(
     planos pagos). Qualquer nível degrada para a heurística local sem chave.
     ``cut_intensity`` ('subtle'|'medium'|'intense') controla a agressividade do
     corte dinâmico (nº de trocas, força dos zooms, beat-punch); só relevante
-    quando ``cut_style='dynamic'``.
+    quando ``cut_style='dynamic'``. ``retry`` indica que o job está sendo
+    RETOMADO depois de um worker morrer no meio: os cortes parciais da
+    tentativa anterior são apagados antes, para não duplicar.
     """
     with _job_slots:
-        _process_project(
-            project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity
+        return _process_project(
+            project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity,
+            retry,
         )
+
+
+def run_job(job: dict) -> bool:
+    """Handler da fila (:mod:`app.jobs`): executa um job ``process``.
+
+    Os parâmetros do processamento viajam no ``payload`` da linha ``jobs``
+    (gravado pelo ``POST /process``). ``attempts`` > 1 = o job foi retomado.
+    """
+    payload = job.get("payload") or {}
+    return process_project(
+        job["project_id"],
+        payload.get("limit_seconds"),
+        payload.get("max_cuts"),
+        payload.get("cut_style") or "basic",
+        payload.get("ai_tier") or "off",
+        payload.get("cut_intensity") or "medium",
+        retry=int(job.get("attempts") or 1) > 1,
+    )
 
 
 def _process_project(
@@ -150,10 +172,17 @@ def _process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
-) -> None:
+    retry: bool = False,
+) -> bool:
     client = get_client()
     video_path: str | None = None
     try:
+        if retry:
+            # Tentativa anterior morreu no meio: descarta o que ela já tinha
+            # gravado (os arquivos de clipe são sobrescritos pelo upsert).
+            client.table("cuts").delete().eq("project_id", project_id).execute()
+            logger.info("Projeto %s: retomando job interrompido", project_id)
+
         video_path = _fetch_source(client, project_id, limit_seconds)
         logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
 
@@ -239,12 +268,14 @@ def _process_project(
             "id", project_id
         ).execute()
         logger.info("Projeto %s concluído", project_id)
+        return True
 
     except Exception:  # noqa: BLE001 - queremos registrar qualquer falha
         logger.exception("Falha ao processar projeto %s", project_id)
         client.table("projects").update({"status": "error"}).eq(
             "id", project_id
         ).execute()
+        return False
     finally:
         if video_path and os.path.exists(video_path):
             os.remove(video_path)
@@ -589,210 +620,3 @@ def _render_clip(
         pre_roll=settings.pre_roll,
     )
 
-
-def recut_cut(
-    project_id: str,
-    cut_id: str,
-    inicio: float,
-    fim: float,
-    keyframes: list[dict] | None = None,
-) -> None:
-    """Re-corta um clipe existente com novo início/fim, regenerando o vídeo.
-
-    Baixa o vídeo original do projeto, corta o novo trecho com FFmpeg, sobe um
-    arquivo com nome novo (a URL pública muda, evitando cache do clipe antigo) e
-    atualiza a linha ``cuts`` com os novos valores e ``status='ready'``. Em caso
-    de falha, marca o corte como ``error``.
-
-    O início aqui é absoluto (segundos no set), então usamos ``pre_roll=0`` — o
-    usuário já escolheu exatamente onde o corte começa.
-
-    ``keyframes`` (``{t, cx, cy, zoom}``, do editor visual) dirigem a câmera à
-    MÃO: quando presentes, o render usa ``clipper.cut_keyframed`` (pan+zoom do
-    usuário) em vez do plano automático. ``None`` mantém o comportamento
-    antigo — o estilo do projeto (``projects.cut_style``) é respeitado e num
-    projeto dinâmico o re-corte re-roda a análise visual só na janela nova e
-    regenera os zooms. Lista vazia = usuário limpou a direção manual (corte
-    seco central).
-    """
-    with _job_slots:
-        _recut_cut(project_id, cut_id, inicio, fim, keyframes)
-
-
-def _recut_style(client, project_id: str) -> str:
-    """Estilo de corte do projeto ('basic' se a coluna não existir/estiver vazia)."""
-    try:
-        proj = (
-            client.table("projects")
-            .select("cut_style")
-            .eq("id", project_id)
-            .limit(1)
-            .execute()
-        )
-        if proj.data and proj.data[0].get("cut_style") == "dynamic":
-            return "dynamic"
-    except Exception:  # noqa: BLE001 - sem estilo → seco (comportamento antigo)
-        logger.exception("Falha ao ler cut_style do projeto %s", project_id)
-    return "basic"
-
-
-def _recut_intensity(client, project_id: str) -> str:
-    """Nível de intensidade do projeto ('medium' se a coluna faltar/estiver vazia)."""
-    try:
-        proj = (
-            client.table("projects")
-            .select("cut_intensity")
-            .eq("id", project_id)
-            .limit(1)
-            .execute()
-        )
-        if proj.data:
-            level = proj.data[0].get("cut_intensity")
-            if level in ("subtle", "medium", "intense"):
-                return level
-    except Exception:  # noqa: BLE001 - sem coluna → medium (defaults atuais)
-        logger.exception("Falha ao ler cut_intensity do projeto %s", project_id)
-    return "medium"
-
-
-def _recut_cut(
-    project_id: str,
-    cut_id: str,
-    inicio: float,
-    fim: float,
-    keyframes: list[dict] | None = None,
-) -> None:
-    client = get_client()
-    video_path: str | None = None
-    clip_path: str | None = None
-    duration = max(1, round(fim - inicio))
-    try:
-        cut_style = _recut_style(client, project_id)
-        cut_intensity = _recut_intensity(client, project_id)
-        video_path = _fetch_source(client, project_id)
-
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            clip_path = tmp.name
-
-        rendered = False
-        if keyframes:
-            # Direção manual do editor: pan+zoom do usuário, com fallback em
-            # 2 níveis (com zoom animado → só pan estático) antes do seco.
-            src_dims = probe_video(video_path)
-            if src_dims["width"] and src_dims["height"]:
-                for force_static in (False, True):
-                    try:
-                        clipper.cut_keyframed(
-                            video_path,
-                            inicio,
-                            clip_path,
-                            keyframes,
-                            src_dims["width"],
-                            src_dims["height"],
-                            float(duration),
-                            src_dims["fps"],
-                            force_static=force_static,
-                        )
-                        rendered = True
-                        break
-                    except Exception:  # noqa: BLE001 - tenta o nível mais leve
-                        logger.exception(
-                            "Recorte %s: render keyframed falhou (static=%s)",
-                            cut_id,
-                            force_static,
-                        )
-        elif cut_style == "dynamic" and keyframes is None:
-            # keyframes == [] (usuário limpou a direção manual) pula o plano
-            # automático e cai direto no corte seco central.
-            shots = None
-            src_dims = None
-            try:
-                src_dims = probe_video(video_path)
-                if src_dims["width"] and src_dims["height"]:
-                    net = visual.load_model() if settings.visual_enabled else None
-                    net_face = visual.load_face_model()
-                    wv = visual.analyze_window(
-                        video_path,
-                        inicio,
-                        float(duration),
-                        net=net,
-                        detect_every=settings.visual_detect_every,
-                        fps=settings.visual_fps,
-                        net_face=net_face,
-                    )
-                    beats = visual.get_beat_times(video_path, inicio, float(duration))
-                    # peak_at=None: o usuário escolheu o trecho à mão, não há
-                    # um drop conhecido para forçar o punch-in.
-                    shots = dynamic.build_shot_plan(
-                        wv,
-                        beats,
-                        float(duration),
-                        src_dims["width"],
-                        src_dims["height"],
-                        peak_at=None,
-                        intensity=cut_intensity,
-                    )
-            except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
-                logger.exception(
-                    "Falha ao montar o shot plan do re-corte dinâmico (%s)", cut_id
-                )
-                shots = None
-
-            if shots and src_dims:
-                rendered = _cut_dynamic_tiered(
-                    video_path,
-                    inicio,
-                    clip_path,
-                    shots,
-                    duration,
-                    0,
-                    src_dims["fps"],
-                    label=f"recorte {cut_id}",
-                )
-
-        if not rendered:
-            clipper.cut(
-                input_file=video_path,
-                start_sec=inicio,
-                output_path=clip_path,
-                duration=duration,
-                pre_roll=0,
-            )
-
-        dest_name = f"{project_id}/recut_{cut_id}_{int(time.time())}.mp4"
-        url = upload_clip(clip_path, dest_name)
-
-        row = {
-            "inicio": inicio,
-            "fim": fim,
-            "duracao": duration,
-            "url": url,
-            "status": "ready",
-        }
-        if keyframes is not None:
-            # Persiste a direção manual para o editor reabrir com os mesmos
-            # keyframes ([] limpa). Coluna de migração recente: se o banco
-            # ainda não a tem, o PostgREST rejeita — regravamos sem ela em vez
-            # de perder o re-corte.
-            row["crop_keyframes"] = keyframes
-        try:
-            client.table("cuts").update(row).eq("id", cut_id).execute()
-        except Exception:  # noqa: BLE001 - coluna ausente não perde o recorte
-            if "crop_keyframes" not in row:
-                raise
-            logger.warning(
-                "Update do recorte %s falhou; tentando sem crop_keyframes "
-                "(migração ausente?)",
-                cut_id,
-            )
-            row.pop("crop_keyframes")
-            client.table("cuts").update(row).eq("id", cut_id).execute()
-        logger.info("Corte %s re-cortado (%.1f–%.1fs)", cut_id, inicio, fim)
-
-    except Exception:  # noqa: BLE001 - queremos registrar qualquer falha
-        logger.exception("Falha ao re-cortar o corte %s", cut_id)
-        client.table("cuts").update({"status": "error"}).eq("id", cut_id).execute()
-    finally:
-        for path in (video_path, clip_path):
-            if path and os.path.exists(path):
-                os.remove(path)

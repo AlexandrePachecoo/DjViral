@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { Logo } from "./Logo";
 import { theme, font, btnPrimary } from "./theme";
-import { localeUrl } from "@/i18n/config";
 import type { Tab } from "./types";
 
 type Props = {
@@ -16,17 +15,10 @@ type Props = {
 
 export function Header({ tab, onTab, userName, onNewSet }: Props) {
   const t = useTranslations("studio.header");
-  const locale = useLocale();
-  const otherLocale = locale === "pt" ? "en" : "pt";
-  const langHref =
-    typeof window !== "undefined"
-      ? `${localeUrl[otherLocale]}${window.location.pathname}${window.location.search}`
-      : localeUrl[otherLocale];
   // Abas do menu central. Perfil e Planos/Uso agora vivem no menu do usuário
   // (dropdown no avatar), não aqui.
   const TABS: { key: Tab; label: string }[] = [
     { key: "gerador", label: t("tabs.generator") },
-    { key: "edicao", label: t("tabs.editor") },
     { key: "salvos", label: t("tabs.saved") },
   ];
   const initial = (userName || "DJ").trim().charAt(0).toUpperCase() || "M";
@@ -228,25 +220,6 @@ export function Header({ tab, onTab, userName, onNewSet }: Props) {
               >
                 {t("menu.plan")}
               </div>
-
-              <div style={{ height: 1, background: theme.border, margin: "6px 0" }} />
-
-              <a
-                role="menuitem"
-                className="dj-usermenu-item"
-                href={langHref}
-                style={{
-                  display: "block",
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  fontSize: 14,
-                  color: theme.textSecondary,
-                  textDecoration: "none",
-                }}
-              >
-                {otherLocale === "en" ? "English" : "Português"}
-              </a>
 
               <div style={{ height: 1, background: theme.border, margin: "6px 0" }} />
 
