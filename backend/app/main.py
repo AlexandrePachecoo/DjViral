@@ -8,8 +8,8 @@ direto ao Supabase Storage; aqui apenas baixamos e processamos.
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
 from .config import settings
-from .pipeline import process_project, recut_cut
-from .schemas import ProcessRequest, ProjectCreated, RecutRequest
+from .pipeline import process_project
+from .schemas import ProcessRequest, ProjectCreated
 
 app = FastAPI(title="DjViral Worker", description="Gera cortes virais de sets de DJ")
 
@@ -44,28 +44,3 @@ def process(
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
 
-
-@app.post("/recut", response_model=ProjectCreated, status_code=202)
-def recut(
-    body: RecutRequest,
-    background_tasks: BackgroundTasks,
-    x_worker_secret: str = Header(default=""),
-) -> ProjectCreated:
-    """Re-corta um clipe existente com novo início/fim, regenerando o vídeo.
-
-    Mesmo esquema de segurança do ``/process``: exige ``X-Worker-Secret`` e
-    processa em background (re-encode FFmpeg). A Vercel já marcou o corte como
-    ``processing`` no banco antes de chamar aqui.
-    """
-    if not settings.worker_secret or x_worker_secret != settings.worker_secret:
-        raise HTTPException(status_code=401, detail="Segredo inválido")
-
-    keyframes = (
-        [kf.model_dump() for kf in body.keyframes]
-        if body.keyframes is not None
-        else None
-    )
-    background_tasks.add_task(
-        recut_cut, body.project_id, body.cut_id, body.inicio, body.fim, keyframes
-    )
-    return ProjectCreated(project_id=body.project_id, status="processing")

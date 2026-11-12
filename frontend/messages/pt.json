@@ -197,7 +197,6 @@
     "header": {
       "tabs": {
         "generator": "Gerador",
-        "editor": "Edição",
         "saved": "Cortes salvos"
       },
       "newSet": "＋ Novo set",
@@ -279,8 +278,7 @@
         "shared": "🔗 Compartilhado",
         "share": "🔗 Compartilhar",
         "deleteSet": "🗑 Apagar set",
-        "inSet": "no set",
-        "edit": "✎ Editar"
+        "inSet": "no set"
       }
     },
     "generator": {
@@ -310,7 +308,6 @@
       "savedCheck": "Salvo ✓",
       "selected": "Selecionado",
       "select": "Selecionar",
-      "edit": "✎ Editar",
       "download": "Baixar",
       "form": {
         "title": "Novo set",
@@ -402,69 +399,6 @@
         "saving": "Salvando...",
         "changePassword": "Alterar senha"
       }
-    },
-    "editor": {
-      "back": "Voltar",
-      "errors": {
-        "codecUnsupported": "o navegador não consegue reproduzir o formato/codec do arquivo original (ex.: HEVC/MOV de iPhone ou MKV)",
-        "networkFailure": "falha de rede ao baixar o vídeo original do armazenamento",
-        "sourceLoadFailed": "o vídeo original não pôde ser carregado",
-        "code": "código",
-        "recutFailed": "O re-corte falhou. Tente de novo.",
-        "recutSlow": "O re-corte está demorando. Tente novamente em instantes.",
-        "titleEmpty": "O título não pode ficar vazio.",
-        "nothingToSave": "Nada para salvar.",
-        "renameFailed": "Falha ao renomear",
-        "recutRequestFailed": "Falha ao re-cortar",
-        "saveFailed": "Erro ao salvar"
-      },
-      "status": {
-        "regenerating": "Regenerando o vídeo do corte...",
-        "saving": "Salvando..."
-      },
-      "cutNamePlaceholder": "Nome do corte",
-      "cutTitleAria": "Título do corte",
-      "editorFallbackName": "Editor",
-      "exporting": "Exportando...",
-      "saveCut": "Salvar corte",
-      "loadingSet": "Carregando o set original...",
-      "sourceUnavailable": {
-        "withError": "Não deu para tocar o vídeo original deste set: {reason}. O preview abaixo mostra o corte já gerado; dá para ajustar o início/fim e o título — o zoom manual precisa do vídeo original.",
-        "noSource": "O vídeo original deste set não está disponível para pré-visualização (set do YouTube ou arquivo removido). Dá para ajustar o início/fim na timeline — o zoom manual precisa do vídeo original."
-      },
-      "loadingVideo": "Carregando o vídeo do set...",
-      "regeneratingVideo": "Regenerando o vídeo com a nova edição...",
-      "pause": "Pausar",
-      "play": "Tocar",
-      "startHere": "⇤ Início aqui",
-      "endHere": "Fim aqui ⇥",
-      "removeKeyframe": "Remover keyframe",
-      "addKeyframe": "Adicionar keyframe",
-      "panel": {
-        "framing": "Enquadramento",
-        "zoom": "Zoom",
-        "cameraZoomAria": "Zoom da câmera",
-        "framingHint": "Arraste o vídeo no preview (ou role o scroll) para enquadrar. Cada ajuste vira um keyframe ◆ no ponto atual.",
-        "keyframes": "Keyframes",
-        "noKeyframes": "Nenhum keyframe ainda — a câmera fica parada no centro.",
-        "clearKeyframes": "Limpar todos os keyframes",
-        "trim": "Trecho",
-        "start": "Início",
-        "end": "Fim",
-        "duration": "Duração: {dur}s (mín. {min}s · máx. {max}s)"
-      },
-      "timeline": {
-        "fitToClip": "Ajustar ao corte",
-        "fullWindow": "Janela toda",
-        "hint": "arraste as alças roxas para encurtar ou estender o corte — pode ir além do trecho que a IA escolheu (a linha branca embaixo marca a escolha original). Para o editor ficar leve, a timeline carrega ~1 min antes e depois do corte; ao estender o corte, a janela acompanha."
-      }
-    },
-    "editPicker": {
-      "empty": "Nenhum corte para editar ainda. Gere um set no Gerador ou salve cortes — eles aparecem aqui para ajustar tempo, zoom e keyframes.",
-      "title": "Escolha um corte para editar",
-      "subtitle": "ajuste início/fim na timeline, arraste a janela do TikTok e crie keyframes de zoom",
-      "inSet": "no set",
-      "edit": "✎ Editar"
     }
   },
   "publicShare": {

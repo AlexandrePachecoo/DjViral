@@ -1,6 +1,5 @@
-import { getLocale, getTranslations } from "next-intl/server";
+import { getTranslations } from "next-intl/server";
 import styles from "./page.module.css";
-import LangSwitch from "../_landing/LangSwitch";
 
 // Deterministic waveform bars (layered sines) so the equalizers read like a
 // real audio waveform instead of random noise. `h` = base height, `d` = delay.
@@ -45,12 +44,9 @@ function Logo({ className }: { className: string }) {
 }
 
 const TRIAL_HREF = "/login";
-const CONTACT_HREF = "mailto:contato@djviral.com.br";
 
 export default async function Landing() {
   const t = await getTranslations("escura");
-  const locale = await getLocale();
-  const paidCtaHref = locale === "en" ? CONTACT_HREF : TRIAL_HREF;
 
   return (
     <div className={styles.page}>
@@ -74,7 +70,6 @@ export default async function Landing() {
             <a className={styles.navCta} href={TRIAL_HREF}>
               {t("nav.tryFree")}
             </a>
-            <LangSwitch className={`${styles.navLink} ${styles.navLinksText}`} />
           </div>
         </nav>
 
@@ -239,8 +234,8 @@ export default async function Landing() {
                 <span>✓ {t("pricing.pro.feature3")}</span>
                 <span>✓ {t("pricing.pro.feature4")}</span>
               </div>
-              <a className={styles.planCtaFill} href={paidCtaHref}>
-                {locale === "en" ? t("pricing.contactCta") : t("pricing.pro.cta")}
+              <a className={styles.planCtaFill} href={TRIAL_HREF}>
+                {t("pricing.pro.cta")}
               </a>
             </div>
             <div className={styles.plan}>
@@ -255,8 +250,8 @@ export default async function Landing() {
                 <span>✓ {t("pricing.premium.feature3")}</span>
                 <span>✓ {t("pricing.premium.feature4")}</span>
               </div>
-              <a className={styles.planCtaGhost} href={paidCtaHref}>
-                {locale === "en" ? t("pricing.contactCta") : t("pricing.premium.cta")}
+              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+                {t("pricing.premium.cta")}
               </a>
             </div>
           </div>
