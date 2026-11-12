@@ -154,3 +154,85 @@ create table if not exists webhook_events (
     event       text not null,             -- ex.: subscription.completed
     received_at timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Fila de jobs do worker
+-- ---------------------------------------------------------------------------
+
+-- Migração: fila durável de processamento. `POST /process` do worker insere
+-- uma linha `queued`; as threads consumidoras pegam a mais antiga com
+-- `claim_job` e batem `heartbeat_at` enquanto rodam. Um job cujo worker morreu
+-- (heartbeat velho) volta sozinho para a fila. Sem esta migração o worker cai
+-- no modo antigo (BackgroundTasks em memória, que perde o job num redeploy).
+create table if not exists jobs (
+    id           uuid primary key default gen_random_uuid(),
+    project_id   uuid not null references projects (id) on delete cascade,
+    kind         text not null default 'process',
+    payload      jsonb not null default '{}'::jsonb,  -- limites do plano, estilo, ai_tier
+    status       text not null default 'queued',      -- queued | running | done | error
+    attempts     integer not null default 0,
+    worker_id    text,          -- processo que pegou o job (diagnóstico)
+    error        text,
+    created_at   timestamptz not null default now(),
+    started_at   timestamptz,
+    heartbeat_at timestamptz,
+    finished_at  timestamptz
+);
+
+-- A fila só é lida/escrita pelo worker (service role, que ignora RLS). Com RLS
+-- ligado e sem policy, as chaves públicas do projeto não enxergam a tabela.
+alter table jobs enable row level security;
+
+create index if not exists idx_jobs_queue on jobs (status, created_at);
+create index if not exists idx_jobs_project on jobs (project_id);
+
+-- Pega o próximo job, de forma atômica (FOR UPDATE SKIP LOCKED: dois workers
+-- nunca pegam o mesmo). Candidatos: os `queued` e os `running` com heartbeat
+-- mais velho que `p_stale_seconds` (worker morreu no meio). Antes, os
+-- abandonados que já gastaram `p_max_attempts` tentativas viram `error`, e o
+-- projeto junto — senão ele ficaria em `processing` para sempre.
+create or replace function claim_job(
+    p_worker text,
+    p_stale_seconds integer default 180,
+    p_max_attempts integer default 3
+) returns setof jobs
+language plpgsql
+as $$
+declare
+    v_cutoff timestamptz := now() - make_interval(secs => p_stale_seconds);
+begin
+    with dead as (
+        update jobs
+           set status = 'error',
+               error = 'worker interrompido ' || attempts || 'x durante o processamento',
+               finished_at = now()
+         where status = 'running'
+           and heartbeat_at < v_cutoff
+           and attempts >= p_max_attempts
+        returning project_id
+    )
+    update projects
+       set status = 'error'
+     where id in (select project_id from dead)
+       and status = 'processing';
+
+    return query
+    update jobs
+       set status = 'running',
+           worker_id = p_worker,
+           attempts = attempts + 1,
+           started_at = now(),
+           heartbeat_at = now(),
+           error = null
+     where id = (
+        select id
+          from jobs
+         where status = 'queued'
+            or (status = 'running' and heartbeat_at < v_cutoff)
+         order by created_at
+         limit 1
+           for update skip locked
+     )
+    returning *;
+end;
+$$;

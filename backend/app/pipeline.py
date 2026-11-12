@@ -72,9 +72,9 @@ def probe_video(path: str) -> dict:
     return info
 
 # Limita quantos jobs pesados (download de GB + análise + FFmpeg) rodam ao
-# mesmo tempo. Sem isso, dois POST /process simultâneos dobram o pico de
-# memória e derrubam o container na Railway. Jobs excedentes ficam na fila
-# (bloqueiam a thread de background até chegar a vez).
+# mesmo tempo neste processo. Com a fila durável (jobs.py) o limite já vem do
+# nº de threads consumidoras; o semáforo continua valendo para o modo antigo
+# (BackgroundTasks, quando a fila está indisponível) e cobre os dois juntos.
 _job_slots = threading.BoundedSemaphore(settings.max_concurrent_jobs)
 
 
@@ -115,8 +115,9 @@ def process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
-) -> None:
-    """Pipeline completo, rodado em background.
+    retry: bool = False,
+) -> bool:
+    """Pipeline completo, rodado em background. Devolve ``True`` em sucesso.
 
     Baixa o vídeo original (Supabase Storage ou YouTube, conforme a linha
     ``source`` do projeto), analisa o áudio, corta os top picos em clipes,
@@ -135,12 +136,33 @@ def process_project(
     planos pagos). Qualquer nível degrada para a heurística local sem chave.
     ``cut_intensity`` ('subtle'|'medium'|'intense') controla a agressividade do
     corte dinâmico (nº de trocas, força dos zooms, beat-punch); só relevante
-    quando ``cut_style='dynamic'``.
+    quando ``cut_style='dynamic'``. ``retry`` indica que o job está sendo
+    RETOMADO depois de um worker morrer no meio: os cortes parciais da
+    tentativa anterior são apagados antes, para não duplicar.
     """
     with _job_slots:
-        _process_project(
-            project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity
+        return _process_project(
+            project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity,
+            retry,
         )
+
+
+def run_job(job: dict) -> bool:
+    """Handler da fila (:mod:`app.jobs`): executa um job ``process``.
+
+    Os parâmetros do processamento viajam no ``payload`` da linha ``jobs``
+    (gravado pelo ``POST /process``). ``attempts`` > 1 = o job foi retomado.
+    """
+    payload = job.get("payload") or {}
+    return process_project(
+        job["project_id"],
+        payload.get("limit_seconds"),
+        payload.get("max_cuts"),
+        payload.get("cut_style") or "basic",
+        payload.get("ai_tier") or "off",
+        payload.get("cut_intensity") or "medium",
+        retry=int(job.get("attempts") or 1) > 1,
+    )
 
 
 def _process_project(
@@ -150,10 +172,17 @@ def _process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
-) -> None:
+    retry: bool = False,
+) -> bool:
     client = get_client()
     video_path: str | None = None
     try:
+        if retry:
+            # Tentativa anterior morreu no meio: descarta o que ela já tinha
+            # gravado (os arquivos de clipe são sobrescritos pelo upsert).
+            client.table("cuts").delete().eq("project_id", project_id).execute()
+            logger.info("Projeto %s: retomando job interrompido", project_id)
+
         video_path = _fetch_source(client, project_id, limit_seconds)
         logger.info("Projeto %s: vídeo baixado para %s", project_id, video_path)
 
@@ -239,12 +268,14 @@ def _process_project(
             "id", project_id
         ).execute()
         logger.info("Projeto %s concluído", project_id)
+        return True
 
     except Exception:  # noqa: BLE001 - queremos registrar qualquer falha
         logger.exception("Falha ao processar projeto %s", project_id)
         client.table("projects").update({"status": "error"}).eq(
             "id", project_id
         ).execute()
+        return False
     finally:
         if video_path and os.path.exists(video_path):
             os.remove(video_path)

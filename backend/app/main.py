@@ -4,14 +4,37 @@ Este serviço roda fora da Vercel (ex.: Railway), onde há FFmpeg, memória e te
 suficientes. A Vercel (orquestração) dispara o processamento via POST /process,
 autenticando com o header X-Worker-Secret. O vídeo já foi enviado pelo navegador
 direto ao Supabase Storage; aqui apenas baixamos e processamos.
+
+O processamento em si não roda no request: o ``/process`` enfileira um job na
+tabela ``jobs`` e as threads consumidoras (ver :mod:`app.jobs`) o executam.
 """
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
+from . import jobs
 from .config import settings
-from .pipeline import process_project
+from .pipeline import process_project, run_job
 from .schemas import ProcessRequest, ProjectCreated
 
-app = FastAPI(title="DjViral Worker", description="Gera cortes virais de sets de DJ")
+logging.basicConfig(level=logging.INFO)
+# O cliente HTTP loga cada request em INFO — o polling da fila viraria ruído.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    jobs.start_workers(run_job)
+    yield
+    jobs.stop_workers()
+
+
+app = FastAPI(
+    title="DjViral Worker",
+    description="Gera cortes virais de sets de DJ",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
@@ -28,10 +51,16 @@ def process(
     """Dispara o processamento de um projeto cujo vídeo já está no Storage.
 
     Exige o header ``X-Worker-Secret`` (segredo compartilhado com a Vercel).
-    Responde 202 imediatamente e processa em background.
+    Responde 202 imediatamente: o job vai para a fila durável e é executado
+    por uma thread consumidora. Se a fila estiver indisponível (migração
+    ``jobs`` não aplicada), cai no ``BackgroundTasks`` em memória de antes.
     """
     if not settings.worker_secret or x_worker_secret != settings.worker_secret:
         raise HTTPException(status_code=401, detail="Segredo inválido")
+
+    payload = body.model_dump(exclude={"project_id"})
+    if settings.job_queue_enabled and jobs.enqueue(body.project_id, payload):
+        return ProjectCreated(project_id=body.project_id, status="processing")
 
     background_tasks.add_task(
         process_project,
@@ -43,4 +72,3 @@ def process(
         body.cut_intensity,
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
-
