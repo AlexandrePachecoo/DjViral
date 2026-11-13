@@ -1,11 +1,16 @@
 """Wrapper sobre o FFmpeg para cortar clipes de vídeo em torno de um pico."""
-import math
 import os
 import re
+import shutil
 import subprocess
+import tempfile
+from typing import TYPE_CHECKING
 
 from .config import settings
 from .dynamic import Shot
+
+if TYPE_CHECKING:
+    from .style import EditStyle, StyleContext
 
 # Linhas de progresso do FFmpeg (uma por frame/flush, separadas por \r, não
 # \n) — não são erro, só spam. Filtradas antes de compor a mensagem de falha
@@ -304,3 +309,71 @@ def cut_dynamic(
 
     return output_path
 
+
+def apply_style(
+    input_path: str,
+    output_path: str,
+    style: "EditStyle",
+    ctx: "StyleContext",
+    title: str | None = None,
+) -> bool:
+    """2º passe: aplica o estilo de edição sobre um clipe 9:16 já renderizado.
+
+    Cor, transições, efeitos de batida/drop (``style.build_video_filters``) e
+    legendas (PNGs do ``captions.render`` sobrepostos com ``overlay`` no
+    intervalo de cada uma). O áudio é copiado sem re-encode e a duração não
+    muda. Devolve ``False`` (sem tocar em ``output_path``) quando o estilo não
+    produz nada a aplicar; levanta ``RuntimeError`` se o FFmpeg falhar — o
+    chamador mantém o clipe sem estilo.
+    """
+    from . import captions as captions_mod
+    from . import style as style_mod
+
+    filters = style_mod.build_video_filters(style, ctx)
+    wanted = style_mod.build_captions(style, ctx, title)
+
+    tmp_dir = tempfile.mkdtemp(prefix="djviral_caps_")
+    try:
+        overlays: list[tuple[str, "style_mod.Caption"]] = []
+        for i, cap in enumerate(wanted):
+            png = os.path.join(tmp_dir, f"cap{i}.png")
+            if captions_mod.render(cap, style.captions, png):
+                overlays.append((png, cap))
+        if not filters and not overlays:
+            return False
+
+        cmd = ["ffmpeg", "-y", "-i", input_path]
+        for png, _cap in overlays:
+            cmd += ["-i", png]
+        label = "[0:v]"
+        parts: list[str] = []
+        if filters:
+            parts.append(f"{label}{','.join(filters)}[fx]")
+            label = "[fx]"
+        for i, (_png, cap) in enumerate(overlays):
+            out = f"[c{i}]"
+            parts.append(
+                f"{label}[{i + 1}:v]overlay=0:0"
+                f":enable='between(t,{cap.t0:.3f},{cap.t1:.3f})'{out}"
+            )
+            label = out
+        filter_complex = ";".join(parts)
+        cmd += [
+            "-threads", str(settings.ffmpeg_threads),
+            "-filter_complex", filter_complex,
+            "-map", label,
+            "-map", "0:a?",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+        try:
+            _run_ffmpeg(cmd, output_path, ctx.duration, "FFmpeg falhou no estilo de edição")
+        except RuntimeError as exc:
+            raise RuntimeError(f"{exc}\nfiltergraph: {filter_complex}") from exc
+        return True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

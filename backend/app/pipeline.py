@@ -6,8 +6,11 @@ import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 from . import ai_director, analyzer, clipper, dynamic, visual, youtube
+from . import style as style_mod
 from .analyzer import Peak
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
@@ -115,6 +118,7 @@ def process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
+    edit_style: dict | None = None,
     retry: bool = False,
 ) -> bool:
     """Pipeline completo, rodado em background. Devolve ``True`` em sucesso.
@@ -136,14 +140,17 @@ def process_project(
     planos pagos). Qualquer nível degrada para a heurística local sem chave.
     ``cut_intensity`` ('subtle'|'medium'|'intense') controla a agressividade do
     corte dinâmico (nº de trocas, força dos zooms, beat-punch); só relevante
-    quando ``cut_style='dynamic'``. ``retry`` indica que o job está sendo
-    RETOMADO depois de um worker morrer no meio: os cortes parciais da
-    tentativa anterior são apagados antes, para não duplicar.
+    quando ``cut_style='dynamic'``. ``edit_style`` é o estilo de edição do
+    projeto (JSON de :class:`app.style.EditStyle`: cor, transições, efeitos,
+    legendas), aplicado sobre cada clipe pronto; ``None`` = sem estilo.
+    ``retry`` indica que o job está sendo RETOMADO depois de um worker morrer
+    no meio: os cortes parciais da tentativa anterior são apagados antes, para
+    não duplicar.
     """
     with _job_slots:
         return _process_project(
             project_id, limit_seconds, max_cuts, cut_style, ai_tier, cut_intensity,
-            retry,
+            edit_style, retry,
         )
 
 
@@ -161,6 +168,7 @@ def run_job(job: dict) -> bool:
         payload.get("cut_style") or "basic",
         payload.get("ai_tier") or "off",
         payload.get("cut_intensity") or "medium",
+        payload.get("edit_style"),
         retry=int(job.get("attempts") or 1) > 1,
     )
 
@@ -172,6 +180,7 @@ def _process_project(
     cut_style: str = "basic",
     ai_tier: str = "off",
     cut_intensity: str = "medium",
+    edit_style: dict | None = None,
     retry: bool = False,
 ) -> bool:
     client = get_client()
@@ -229,14 +238,39 @@ def _process_project(
         titles = _generate_titles(video_path, candidates, ai_tier)
 
         src_dims = probe_video(video_path) if cut_style == "dynamic" else None
+        # Revisão do render pela IA: só no tier 'full' (mesmo nível da direção
+        # profunda) e só faz sentido no corte dinâmico.
+        _, deep_on = _ai_flags(ai_tier)
+        review = deep_on and settings.ai_review_enabled
+        # Estilo de edição (efeitos/transições/legendas): saneado uma vez; a
+        # intensidade de câmera do estilo, quando definida, vence a do projeto.
+        style = style_mod.coerce_style(edit_style)
+        if style is not None and style.intensity:
+            cut_intensity = style.intensity
 
         for idx, (peak, wv, ai, final_score) in enumerate(candidates):
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 clip_path = tmp.name
             try:
-                _render_clip(
+                shots, beats = _render_clip(
                     video_path, peak, wv, cut_style, clip_path, src_dims, bpm,
-                    ai, cut_intensity,
+                    ai, cut_intensity, review,
+                )
+                clip_start = max(0.0, peak.start_sec - settings.pre_roll)
+                _apply_edit_style(
+                    video_path,
+                    clip_path,
+                    style,
+                    clip_start,
+                    float(settings.clip_duration),
+                    shots=shots,
+                    beats=beats,
+                    drop=peak.start_sec - clip_start,
+                    bpm=bpm,
+                    # Só um título de verdade (IA) vira legenda — o fallback
+                    # "Drop N · BPM" não é um gancho.
+                    title=titles.get(id(peak)),
+                    label=f"clipe {peak.start_sec:.1f}s",
                 )
 
                 dest_name = f"{project_id}/clipe_{idx + 1}_{int(peak.start_sec)}s.mp4"
@@ -267,6 +301,12 @@ def _process_project(
         client.table("projects").update({"status": "done"}).eq(
             "id", project_id
         ).execute()
+        if ai_tier != "off":
+            usage = ai_director.get_usage()
+            logger.info(
+                "Projeto %s: custo total estimado de IA ~$%.4f (%d chamadas)",
+                project_id, usage["usd"], usage["calls"],
+            )
         logger.info("Projeto %s concluído", project_id)
         return True
 
@@ -459,20 +499,46 @@ def _score_candidates(
     ai_map: dict[int, "ai_director.AIDirection"] = {}
     if deep_on:
         ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
-        calls = 0
         ordered = sorted(scored, key=lambda it: adjusted_map[id(it[0])], reverse=True)
-        for peak, wv, _base in ordered:
-            if calls >= settings.ai_director_max_calls or time.monotonic() >= ai_deadline:
-                break
-            calls += 1
-            ai = ai_director.direct(
-                video_path,
-                max(0.0, peak.start_sec - settings.pre_roll),
-                float(settings.clip_duration),
-                wv,
-            )
-            if ai is not None:
-                ai_map[id(peak)] = ai
+        top = ordered[: max(0, settings.ai_director_max_calls)]
+        calls = len(top)
+        # As chamadas são I/O (rede) — rodam em paralelo num pool pequeno para
+        # caber mais direções no mesmo budget de tempo. Estourou o budget, as
+        # que ainda não começaram são canceladas e as em andamento ignoradas
+        # (essas janelas ficam só com o score ajustado da triagem).
+        pool = ThreadPoolExecutor(
+            max_workers=max(1, settings.ai_director_concurrency)
+        )
+        try:
+            futures = {
+                pool.submit(
+                    ai_director.direct,
+                    video_path,
+                    max(0.0, peak.start_sec - settings.pre_roll),
+                    float(settings.clip_duration),
+                    wv,
+                ): peak
+                for peak, wv, _base in top
+            }
+            try:
+                for fut in as_completed(
+                    futures, timeout=max(0.0, ai_deadline - time.monotonic())
+                ):
+                    try:
+                        ai = fut.result()
+                    except Exception:  # noqa: BLE001 - direção nunca é fatal
+                        logger.exception("Direção de IA falhou numa janela")
+                        continue
+                    if ai is not None:
+                        ai_map[id(futures[fut])] = ai
+            except FuturesTimeout:
+                logger.warning(
+                    "Budget da direção de IA (%ss) estourado — janelas "
+                    "restantes ficam só com o score ajustado",
+                    settings.ai_director_budget_seconds,
+                )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         usage = ai_director.get_usage()
         logger.info(
             "Diretor de IA: %d chamadas de direção, %d direções aproveitadas, "
@@ -547,6 +613,108 @@ def _cut_dynamic_tiered(
     return False
 
 
+def _review_and_fix(
+    video_path: str,
+    peak: Peak,
+    clip_path: str,
+    shots: list[dynamic.Shot],
+    src_dims: dict,
+) -> list[dynamic.Shot]:
+    """Revisão do clipe dinâmico PRONTO pela IA + um re-render de conserto.
+
+    O shot plan é montado sem ver o resultado; aqui a IA "assiste" o clipe
+    (1 frame por shot fechado) e aponta os enquadramentos que falharam. Esses
+    shots viram wide (``dynamic.widen_shots``) e o clipe é re-renderizado UMA
+    vez num arquivo à parte, que só substitui o original se o render der
+    certo — qualquer falha (revisão ou re-render) mantém o clipe original.
+    Devolve o shot plan que de fato está no arquivo final.
+    """
+    try:
+        bad = ai_director.review_render(clip_path, shots)
+        if not bad:
+            return shots
+        label = f"clipe {peak.start_sec:.1f}s (pós-revisão)"
+        logger.info(
+            "%s: revisão reprovou %d/%d shots — re-renderizando com wide",
+            label, len(bad), len(shots),
+        )
+        fixed = dynamic.widen_shots(
+            shots, bad, src_dims["width"], src_dims["height"]
+        )
+        fixed_path = clip_path + ".fix.mp4"
+        try:
+            if _cut_dynamic_tiered(
+                video_path,
+                peak.start_sec,
+                fixed_path,
+                fixed,
+                settings.clip_duration,
+                settings.pre_roll,
+                src_dims["fps"],
+                label=label,
+            ):
+                os.replace(fixed_path, clip_path)
+                return fixed
+        finally:
+            if os.path.exists(fixed_path):
+                os.remove(fixed_path)
+    except Exception:  # noqa: BLE001 - a revisão nunca derruba/perde o clipe
+        logger.exception("Revisão do clipe %.1fs falhou", peak.start_sec)
+    return shots
+
+
+def _apply_edit_style(
+    video_path: str,
+    clip_path: str,
+    style: "style_mod.EditStyle | None",
+    start: float,
+    duration: float,
+    shots: list[dynamic.Shot] | None = None,
+    beats: list[float] | None = None,
+    drop: float | None = None,
+    bpm: int = 0,
+    title: str | None = None,
+    label: str = "clipe",
+) -> None:
+    """Aplica o estilo de edição do projeto sobre o clipe pronto (2º passe).
+
+    ``shots`` (corte dinâmico) dá os instantes de troca para as transições;
+    ``drop`` o instante do pico; ``beats``/``bpm`` a grade de batidas (se o
+    estilo pulsa na batida e não há ``beats``, detecta agora). O resultado vai
+    para um arquivo à parte que só substitui o clipe se o FFmpeg der certo —
+    qualquer falha mantém o clipe sem estilo (nunca perde o corte).
+    """
+    if style is None or not settings.edit_style_enabled or style.is_noop():
+        return
+    styled_path = clip_path + ".style.mp4"
+    try:
+        if not beats and style.beat_pulse > 0:
+            try:
+                beats = visual.get_beat_times(video_path, start, duration, bpm)
+            except Exception:  # noqa: BLE001 - sem beats → grade pelo BPM
+                logger.exception("%s: falha ao detectar beats para o estilo", label)
+        period, phase = 0.0, 0.0
+        if beats and len(beats) >= 3:
+            gaps = sorted(b - a for a, b in zip(beats, beats[1:]))
+            period, phase = gaps[len(gaps) // 2], beats[0]
+        elif bpm > 0:
+            period = 60.0 / bpm
+        ctx = style_mod.StyleContext(
+            duration=duration,
+            cuts=[sh.t0 for sh in shots[1:]] if shots else [],
+            drop=drop,
+            beat_period=period,
+            beat_phase=phase,
+        )
+        if clipper.apply_style(clip_path, styled_path, style, ctx, title):
+            os.replace(styled_path, clip_path)
+    except Exception:  # noqa: BLE001 - o estilo nunca derruba/perde o clipe
+        logger.exception("%s: estilo de edição falhou — mantendo sem estilo", label)
+    finally:
+        if os.path.exists(styled_path):
+            os.remove(styled_path)
+
+
 def _render_clip(
     video_path: str,
     peak: Peak,
@@ -557,7 +725,8 @@ def _render_clip(
     bpm: int,
     ai: "ai_director.AIDirection | None" = None,
     cut_intensity: str = "medium",
-) -> None:
+    review: bool = False,
+) -> tuple[list[dynamic.Shot] | None, list[float] | None]:
     """Renderiza um clipe no estilo pedido, com fallback para o corte seco.
 
     O corte dinâmico exige as dimensões da fonte e vale a pena quando há
@@ -566,7 +735,12 @@ def _render_clip(
     quando disponível) dirige o enquadramento no shot plan — inclusive com os
     boxes de enquadramento dela quando o YOLO não achou ninguém — e pode marcar
     a cena como ``worthy=False`` (força corte seco). Qualquer erro do render
-    dinâmico cai para o corte seco — o clipe nunca é perdido.
+    dinâmico cai para o corte seco — o clipe nunca é perdido. ``review``
+    liga a revisão do clipe pronto pela IA (ver :func:`_review_and_fix`).
+
+    Devolve ``(shots, beats)`` do render dinâmico que ficou no arquivo — ou
+    ``(None, None)`` no corte seco — para o estilo de edição saber onde estão
+    as trocas de shot e as batidas.
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
@@ -582,6 +756,7 @@ def _render_clip(
         ) or (ai is not None and not ai.worthy)
         if not boring:
             shots = None
+            beats = None
             try:
                 beats = visual.get_beat_times(
                     video_path, start, float(settings.clip_duration), bpm
@@ -610,7 +785,11 @@ def _render_clip(
                 src_dims["fps"],
                 label=f"clipe {peak.start_sec:.1f}s",
             ):
-                return
+                if review:
+                    shots = _review_and_fix(
+                        video_path, peak, clip_path, shots, src_dims
+                    )
+                return shots, beats
 
     clipper.cut(
         input_file=video_path,
@@ -619,4 +798,4 @@ def _render_clip(
         duration=settings.clip_duration,
         pre_roll=settings.pre_roll,
     )
-
+    return None, None

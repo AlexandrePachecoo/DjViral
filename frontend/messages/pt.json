@@ -346,7 +346,68 @@
         "processing": "Processando...",
         "generate": "Gerar cortes",
         "uploadHint": "Isso pode demorar um pouco, dependendo do tamanho do vídeo e da sua conexão.",
-        "tryAgain": "Tentar de novo"
+        "tryAgain": "Tentar de novo",
+        "look": {
+          "label": "Efeitos e legendas",
+          "none": {
+            "title": "Sem efeitos",
+            "desc": "Só o corte, sem cor, transições ou legendas."
+          },
+          "teaserDefault": "espera o drop",
+          "presets": {
+            "hype": {
+              "title": "Hype",
+              "desc": "Clarão nas trocas, pulso na batida, tremor no drop e legenda amarela grande."
+            },
+            "aftermovie": {
+              "title": "Aftermovie",
+              "desc": "Cor de cinema, granulado, cortes suaves e legenda discreta embaixo."
+            },
+            "neon": {
+              "title": "Neon glitch",
+              "desc": "Cores de balada, glitch RGB nas trocas e no drop."
+            },
+            "clean": {
+              "title": "Limpo com legenda",
+              "desc": "Cores vivas e o gancho do corte numa caixa, sem efeitos."
+            }
+          },
+          "deleteAria": "Apagar o estilo {name}",
+          "summary": {
+            "transition": {
+              "flash": "clarão nas trocas",
+              "dip": "pisca pro preto",
+              "glitch": "glitch nas trocas"
+            },
+            "color": {
+              "vivid": "cores vivas",
+              "cinematic": "cor de cinema",
+              "warm": "tons quentes",
+              "cold": "tons frios",
+              "neon": "neon",
+              "bw": "preto e branco"
+            },
+            "drop": {
+              "flash": "clarão no drop",
+              "glitch": "glitch no drop",
+              "shake": "tremor no drop"
+            },
+            "beat": "pulso na batida",
+            "captions": "legendas",
+            "plain": "Sem efeitos"
+          },
+          "create": {
+            "open": "+ Criar meu estilo com IA",
+            "hint": "Descreva com suas palavras como você quer a edição. A IA configura cor, transições, efeitos e legendas e salva como um estilo seu.",
+            "placeholder": "Ex.: cortes rápidos, preto e branco com granulado, clarão no drop e legenda branca grande no centro com o meu @djfulano",
+            "submit": "Criar estilo",
+            "working": "Criando...",
+            "cancel": "Cancelar",
+            "errorAi": "A IA não está disponível agora. Tente de novo em instantes.",
+            "errorLimit": "Você atingiu o limite de estilos salvos. Apague um para criar outro.",
+            "errorGeneric": "Não foi possível criar o estilo. Tente de novo."
+          }
+        }
       }
     },
     "profile": {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SOURCES_BUCKET, supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { getPlanUsage, planOf } from "@/lib/plans";
+import { sanitizeEditStyle } from "@/lib/editStyles";
 import { canonicalYoutubeUrl, extractYoutubeId } from "@/lib/youtube";
 
 // Endpoint TUS do Storage para uploads autenticados por signed upload token.
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
     cut_style,
     cut_intensity,
     max_cuts,
+    edit_style,
   } = await req.json();
   if (!name || (!filename && !youtube_url)) {
     return NextResponse.json(
@@ -100,6 +102,11 @@ export async function POST(req: NextRequest) {
     maxCuts = Math.min(max_cuts, planOf(user.plan).maxCutsPerSet);
   }
 
+  // Estilo de edição (efeitos/transições/legendas): opcional. Guardamos uma
+  // CÓPIA saneada no projeto — apagar/editar o estilo depois não muda sets já
+  // criados. null = sem estilo.
+  const editStyle = sanitizeEditStyle(edit_style);
+
   // Valida o link antes de criar qualquer linha no banco.
   const youtubeId = youtube_url ? extractYoutubeId(youtube_url) : null;
   if (youtube_url && !youtubeId) {
@@ -136,18 +143,28 @@ export async function POST(req: NextRequest) {
   }
 
   // 1. Cria o projeto (vinculado ao usuário autenticado)
-  const { data: project, error: projErr } = await supabaseAdmin
+  const baseRow: Record<string, unknown> = {
+    name,
+    status: "processing",
+    user_id: user.id,
+    cut_style: cutStyle,
+    cut_intensity: cutIntensity,
+    max_cuts: maxCuts,
+  };
+  let { data: project, error: projErr } = await supabaseAdmin
     .from("projects")
-    .insert({
-      name,
-      status: "processing",
-      user_id: user.id,
-      cut_style: cutStyle,
-      cut_intensity: cutIntensity,
-      max_cuts: maxCuts,
-    })
+    .insert(editStyle ? { ...baseRow, edit_style: editStyle } : baseRow)
     .select("id")
     .single();
+  // Banco sem a migração de `edit_style` (coluna inexistente): cria o projeto
+  // sem estilo em vez de falhar o upload.
+  if (projErr && editStyle && (projErr.code === "42703" || projErr.code === "PGRST204")) {
+    ({ data: project, error: projErr } = await supabaseAdmin
+      .from("projects")
+      .insert(baseRow)
+      .select("id")
+      .single());
+  }
   if (projErr || !project) {
     return NextResponse.json(
       { error: projErr?.message ?? "falha ao criar projeto" },

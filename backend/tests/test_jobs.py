@@ -4,6 +4,7 @@ A função SQL `claim_job` (atomicidade, heartbeat velho, limite de tentativas)
 é exercitada à parte contra um Postgres real; aqui fica a lógica Python em
 volta dela: enfileirar, executar, finalizar e degradar sem a fila.
 """
+import json
 import threading
 
 import pytest
@@ -171,8 +172,23 @@ def test_run_job_maps_payload_and_flags_retry(monkeypatch):
                     "ai_tier": "lite", "cut_intensity": "intense"},
     })
     assert ok is True
-    assert captured["args"] == (3600, 10, "dynamic", "lite", "intense")
+    # Job sem `edit_style` (enfileirado antes do estilo existir) → sem estilo.
+    assert captured["args"] == (3600, 10, "dynamic", "lite", "intense", None)
     assert captured["kwargs"] == {"retry": True}
+
+
+def test_run_job_passes_edit_style_from_payload(monkeypatch):
+    captured = {}
+
+    def fake_process(project_id, *args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+        return True
+
+    monkeypatch.setattr(pipeline, "process_project", fake_process)
+    style = {"color": "neon", "transition": "glitch", "captions": {"hook": True}}
+    pipeline.run_job({"project_id": "p1", "attempts": 1, "payload": {"edit_style": style}})
+    assert captured["args"] == (None, None, "basic", "off", "medium", style)
+    assert captured["kwargs"] == {"retry": False}
 
 
 def test_process_endpoint_enqueues_and_falls_back_to_background(monkeypatch):
@@ -182,15 +198,19 @@ def test_process_endpoint_enqueues_and_falls_back_to_background(monkeypatch):
     ran, queued = [], []
     monkeypatch.setattr(main, "process_project", lambda *a: ran.append(a))
     client = TestClient(main.app)
-    body = {"project_id": "p1", "max_cuts": 5, "cut_style": "dynamic"}
+    style = {"color": "warm", "captions": {"handle": "@dj"}}
+    body = {"project_id": "p1", "max_cuts": 5, "cut_style": "dynamic", "edit_style": style}
 
     assert client.post("/process", json=body).status_code == 401
 
     monkeypatch.setattr(main.jobs, "enqueue", lambda pid, payload: queued.append((pid, payload)) or True)
     assert client.post("/process", json=body, headers={"x-worker-secret": "s3"}).status_code == 202
     assert queued[0][0] == "p1" and queued[0][1]["max_cuts"] == 5
+    # O estilo de edição viaja no payload do job (JSON serializável).
+    assert queued[0][1]["edit_style"] == style
+    json.dumps(queued[0][1])
     assert "project_id" not in queued[0][1] and ran == []
 
     monkeypatch.setattr(main.jobs, "enqueue", lambda pid, payload: False)
     assert client.post("/process", json=body, headers={"x-worker-secret": "s3"}).status_code == 202
-    assert ran and ran[0][0] == "p1"
+    assert ran and ran[0][0] == "p1" and ran[0][-1] == style

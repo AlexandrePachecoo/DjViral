@@ -161,6 +161,13 @@ novo (`backend/app/jobs.py`):
    `lite` (só a triagem barata + títulos virais, plano **free**) ou `full`
    (triagem + direção profunda, planos **pagos**). Com `ai_tier != off` **e**
    `ANTHROPIC_API_KEY` presente:
+   Toda chamada passa por `ai_director._request_text`: **saída estruturada**
+   (`output_config.format` com JSON schema — a API garante o JSON; os
+   `_coerce*` continuam saneando os valores), `effort` configurável por
+   estágio (`AI_TRIAGE_EFFORT` / `AI_DIRECTOR_EFFORT`; vazio = não envia) e
+   `max_tokens` folgado (os modelos atuais PENSAM antes de responder e o
+   raciocínio conta no teto). Se a API recusar o `output_config` (modelo
+   antigo configurado por env), refaz sem ele e cai no parser tolerante.
    - **Triagem** (`triage_group`, barata, modelo `AI_TRIAGE_MODEL` default
      Haiku; roda em `lite` e `full`) roda em LOTES (`AI_TRIAGE_GROUP_SIZE`
      janelas por chamada, 1-2 keyframes pequenos cada) cobrindo **TODOS** os
@@ -178,7 +185,8 @@ novo (`backend/app/jobs.py`):
    - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
      `AI_DIRECTOR_MODEL` default
      **Sonnet**) roda só nas TOP-K janelas pelo score já AJUSTADO (teto
-     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio): amostra
+     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio; as chamadas rodam em
+     paralelo num pool de `AI_DIRECTOR_CONCURRENCY` threads): amostra
      `AI_DIRECTOR_FRAMES` keyframes (`AI_DIRECTOR_FRAME_WIDTH`px, reaproveita
      `visual.iter_frames`), encoda em JPEG e pergunta ao modelo a **vibe do
      público** (`hype`), o **protagonista** (`subject`: dj/crowd/wide), os
@@ -189,6 +197,14 @@ novo (`backend/app/jobs.py`):
      `[cx, cy, w, h]` em frações 0-1 do frame; saneados em `_coerce_box`). O
      hype profundo refina o score final (`(1-w_hype)*adjusted + w_hype*hype`,
      `SCORE_HYPE_WEIGHT`) e a direção alimenta o corte dinâmico (passo 4).
+   - **Revisão do render** (`review_render`, só no `ai_tier=full` + corte
+     dinâmico, `AI_REVIEW_ENABLED`) — o passo "assistir e corrigir": depois de
+     renderizar, a IA vê 1 frame do meio de cada shot FECHADO (dj/dancer/crowd)
+     do clipe 9:16 PRONTO e reprova enquadramentos que falharam (alvo fora do
+     quadro, pessoa cortada, zoom ilegível). `pipeline._review_and_fix` troca
+     os reprovados por wide (`dynamic.widen_shots`, mesmos tempos, wides
+     vizinhos fundidos) e re-renderiza UMA vez num arquivo à parte, que só
+     substitui o original se der certo.
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
    job) — é a primeira dependência de API de IA do projeto; como o YOLO,
    **nunca derruba um job**: sem chave, sem o pacote `anthropic`, timeout ou
@@ -283,6 +299,43 @@ novo (`backend/app/jobs.py`):
    para disco, nunca o arquivo inteiro em RAM). Quantos jobs pesados rodam ao
    mesmo tempo é o nº de threads consumidoras da fila (`MAX_CONCURRENT_JOBS`,
    default 1). `pipeline.run_job` é o handler da fila.
+
+### Estilo de edição (efeitos, transições, legendas)
+
+O corte (seco/dinâmico) decide ONDE a câmera olha; o **estilo de
+edição** decide a FINALIZAÇÃO. É um JSON pequeno (`backend/app/style.py::
+EditStyle`, espelhado em `frontend/lib/editStyles.ts`) guardado como CÓPIA em
+`projects.edit_style` (NULL = sem estilo):
+
+- `intensity` (opcional; vence o `cut_intensity` do projeto), `transition`
+  (`cut`/`flash`/`dip`/`glitch` — em cada troca de shot do corte dinâmico),
+  `color` (`vivid`/`cinematic`/`warm`/`cold`/`neon`/`bw`), `vignette`, `grain`,
+  `beat_pulse` (0-1, pulso de brilho na batida), `drop_fx`
+  (`flash`/`glitch`/`shake`) e `captions` (`hook` = título do corte nos
+  primeiros segundos, `teaser_text` antes do drop, `handle` fixo, mais
+  posição/visual/tamanho/cor/maiúsculas).
+- **Render:** `pipeline._apply_edit_style` roda um **2º passe** do FFmpeg
+  (`clipper.apply_style`) sobre o clipe 9:16 JÁ pronto — vale para os dois
+  estilos de corte (seco e dinâmico) e, se falhar, o clipe
+  sem estilo é mantido. `style.build_video_filters` monta só filtros que NÃO
+  mudam duração nem áudio (as "transições" são pulsos de brilho/RGB em cima dos
+  cortes existentes, não `xfade`); o áudio é copiado. As legendas são PNGs
+  transparentes desenhados com Pillow (`captions.py`; fonte DejaVu instalada no
+  Dockerfile ou `CAPTION_FONT_PATH`) e sobrepostos com `overlay` — emojis são
+  removidos do texto queimado. O hook só aparece quando há título de IA (o
+  fallback `Drop N · BPM` não vira legenda).
+- **Origem do estilo:** (1) presets do produto (`STYLE_PRESETS` no frontend:
+  Hype, Aftermovie, Neon glitch, Limpo com legenda); (2) estilos do usuário na
+  tabela `edit_styles`, criados por **descrição em texto**: `POST /api/styles
+  {description}` → worker `POST /styles/generate` →
+  `ai_director.style_from_description` (modelo `AI_STYLE_MODEL`, saída
+  estruturada com os enums do editor) → salvo com nome sugerido pela IA.
+  `GET /api/styles` lista, `DELETE /api/styles/{id}` apaga (até 20 por usuário).
+- **UI:** `app/_studio/StylePicker.tsx` no formulário do Gerador ("Efeitos e
+  legendas"); o JSON escolhido vai em `POST /api/projects {edit_style}` e o
+  `/process` o repassa ao worker, que o grava no `payload` do job da fila
+  (`jobs.payload.edit_style`) — `pipeline.run_job` o entrega ao
+  `process_project`.
 
 ### Frontend / UI (`frontend/app/`)
 
@@ -389,13 +442,21 @@ ganchos detalhados em [`design.md`](design.md).
   `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
   `AI_TRIAGE_MODEL` (default
-  `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
+  `claude-haiku-5-5`, cobre TODOS os candidatos em lotes),
+  `AI_TRIAGE_EFFORT` (default `low`; deixe vazio se usar um modelo que não
+  aceita `effort`, ex. `claude-haiku-4-5`),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
   `AI_TRIAGE_FRAME_WIDTH`, `AI_TRIAGE_BUDGET_SECONDS`, `SCORE_HYPE_LITE_WEIGHT`,
-  `AI_DIRECTOR_MODEL` (default `claude-sonnet-5`, só no top-K pelo score
-  ajustado), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
+  `AI_DIRECTOR_MODEL` (default `claude-sonnet-5-5`, só no top-K pelo score
+  ajustado), `AI_DIRECTOR_EFFORT` (default `medium`),
+  `AI_DIRECTOR_CONCURRENCY` (default 3), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
   `AI_DIRECTOR_FRAME_WIDTH`, `AI_DIRECTOR_BUDGET_SECONDS`,
-  `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`.
+  `AI_DIRECTOR_TIMEOUT`, `SCORE_HYPE_WEIGHT`, `AI_REVIEW_ENABLED` (revisão do
+  clipe pronto + re-render de conserto), `AI_REVIEW_FRAME_WIDTH`. Estilo de
+  edição: `EDIT_STYLE_ENABLED` (false ignora `projects.edit_style`),
+  `CAPTION_FONT_PATH` (fonte das legendas; vazio = DejaVu Sans Bold do
+  container), `AI_STYLE_MODEL` (default `claude-sonnet-5-5`, gera o estilo a
+  partir da descrição do usuário).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
@@ -521,7 +582,17 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   (nº de trocas de shot, força dos zooms, beat-punch); só relevante no
   `dynamic`. Projetos antigos herdam `medium` (= comportamento anterior)
 - max_cuts — quantidade de cortes pedida (NULL = máximo do plano)
+- edit_style — cópia do estilo de edição escolhido (JSON `EditStyle`: cor,
+  transições, efeitos, legendas); NULL = sem estilo
 - date_create
+
+### EditStyle (estilo de edição personalizado do usuário)
+- id
+- user_id
+- name
+- description — texto do usuário que a IA traduziu no estilo (NULL = manual)
+- style — JSON `EditStyle`
+- created_at
 
 ### Source (vídeo original)
 - id

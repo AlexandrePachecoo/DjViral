@@ -346,7 +346,68 @@
         "processing": "Processing...",
         "generate": "Generate clips",
         "uploadHint": "This can take a bit depending on the video size and your connection.",
-        "tryAgain": "Try again"
+        "tryAgain": "Try again",
+        "look": {
+          "label": "Effects and captions",
+          "none": {
+            "title": "No effects",
+            "desc": "Just the cut — no color, transitions or captions."
+          },
+          "teaserDefault": "wait for the drop",
+          "presets": {
+            "hype": {
+              "title": "Hype",
+              "desc": "Flash on cuts, beat pulse, camera shake on the drop and big yellow captions."
+            },
+            "aftermovie": {
+              "title": "Aftermovie",
+              "desc": "Cinematic color, film grain, soft cuts and a subtle caption at the bottom."
+            },
+            "neon": {
+              "title": "Neon glitch",
+              "desc": "Club colors, RGB glitch on cuts and on the drop."
+            },
+            "clean": {
+              "title": "Clean with caption",
+              "desc": "Vivid colors and the clip's hook in a box, no effects."
+            }
+          },
+          "deleteAria": "Delete the style {name}",
+          "summary": {
+            "transition": {
+              "flash": "flash on cuts",
+              "dip": "dip to black",
+              "glitch": "glitch on cuts"
+            },
+            "color": {
+              "vivid": "vivid colors",
+              "cinematic": "cinematic color",
+              "warm": "warm tones",
+              "cold": "cold tones",
+              "neon": "neon",
+              "bw": "black and white"
+            },
+            "drop": {
+              "flash": "flash on the drop",
+              "glitch": "glitch on the drop",
+              "shake": "shake on the drop"
+            },
+            "beat": "beat pulse",
+            "captions": "captions",
+            "plain": "No effects"
+          },
+          "create": {
+            "open": "+ Create my own style with AI",
+            "hint": "Describe in your own words how you want the edit. The AI sets color, transitions, effects and captions and saves it as your style.",
+            "placeholder": "E.g. fast cuts, black and white with grain, a flash on the drop and big white captions in the center with my @djname",
+            "submit": "Create style",
+            "working": "Creating...",
+            "cancel": "Cancel",
+            "errorAi": "The AI isn't available right now. Try again in a moment.",
+            "errorLimit": "You've reached the saved styles limit. Delete one to create another.",
+            "errorGeneric": "Couldn't create the style. Try again."
+          }
+        }
       }
     },
     "profile": {

@@ -15,8 +15,9 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
 from . import jobs
 from .config import settings
+from . import ai_director
 from .pipeline import process_project, run_job
-from .schemas import ProcessRequest, ProjectCreated
+from .schemas import ProcessRequest, ProjectCreated, StyleFromTextRequest
 
 logging.basicConfig(level=logging.INFO)
 # O cliente HTTP loga cada request em INFO — o polling da fila viraria ruído.
@@ -70,5 +71,25 @@ def process(
         body.cut_style,
         body.ai_tier,
         body.cut_intensity,
+        body.edit_style,
     )
     return ProjectCreated(project_id=body.project_id, status="processing")
+
+
+@app.post("/styles/generate")
+def generate_style(
+    body: StyleFromTextRequest,
+    x_worker_secret: str = Header(default=""),
+) -> dict:
+    """Estilo de edição escrito pela IA a partir da descrição do usuário.
+
+    Síncrono (uma chamada curta à IA): devolve ``{"name", "style"}`` pronto
+    para o frontend salvar. 503 quando a IA está indisponível ou não devolveu
+    um estilo válido — o frontend mostra o erro e o usuário monta à mão.
+    """
+    if not settings.worker_secret or x_worker_secret != settings.worker_secret:
+        raise HTTPException(status_code=401, detail="Segredo inválido")
+    result = ai_director.style_from_description(body.description)
+    if result is None:
+        raise HTTPException(status_code=503, detail="IA indisponível")
+    return result

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import type { EditStyle } from "@/lib/editStyles";
+import { StylePicker } from "./StylePicker";
 import { theme, font, scoreColor, btnPrimary } from "./theme";
 import { type Cut } from "./data";
 import { type ApiCut, toStudioCut, downloadUrl } from "./cut";
@@ -54,6 +56,10 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [cutStyle, setCutStyle] = useState<CutStyle>("basic");
   const [cutIntensity, setCutIntensity] = useState<CutIntensity>("medium");
+  // Estilo de edição (efeitos/transições/legendas): a chave marca o card
+  // selecionado no seletor; o JSON do estilo é o que vai para a API.
+  const [lookKey, setLookKey] = useState("none");
+  const [editStyle, setEditStyle] = useState<EditStyle | null>(null);
   // Quantidade de cortes desejada e o teto do plano (free=10, pagos=30).
   // Começa em 10 (teto do free) e sobe quando o /api/billing responder.
   const [numCuts, setNumCuts] = useState(10);
@@ -136,6 +142,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
           cut_style: cutStyle,
           cut_intensity: cutIntensity,
           max_cuts: numCuts,
+          edit_style: editStyle,
         }),
       });
       if (!createRes.ok) {
@@ -226,6 +233,11 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
           limitHit={limitHit}
           cutStyle={cutStyle}
           cutIntensity={cutIntensity}
+          lookKey={lookKey}
+          onLook={(key, style) => {
+            setLookKey(key);
+            setEditStyle(style);
+          }}
           numCuts={numCuts}
           maxCuts={maxCuts}
           onName={setName}
@@ -459,6 +471,8 @@ function UploadForm({
   limitHit,
   cutStyle,
   cutIntensity,
+  lookKey,
+  onLook,
   numCuts,
   maxCuts,
   onName,
@@ -478,6 +492,8 @@ function UploadForm({
   limitHit: boolean;
   cutStyle: CutStyle;
   cutIntensity: CutIntensity;
+  lookKey: string;
+  onLook: (key: string, style: EditStyle | null) => void;
   numCuts: number;
   maxCuts: number;
   onName: (v: string) => void;
@@ -667,6 +683,9 @@ function UploadForm({
             </div>
           </div>
         )}
+
+        {/* Estilo de edição: efeitos, transições e legendas */}
+        <StylePicker selectedKey={lookKey} busy={busy} onChange={onLook} />
 
         {/* Quantidade de cortes */}
         <div>

@@ -225,6 +225,17 @@ class Settings(BaseSettings):
     beat_punch_anticip_frac: float = 0.7
     beat_punch_anticip_zoom_frac: float = 0.3
 
+    # ---- Estilo de edição (efeitos / transições / legendas) ----
+    # Liga o 2º passe que aplica `projects.edit_style` sobre o clipe pronto.
+    # False = ignora o estilo (clipes saem como antes).
+    edit_style_enabled: bool = True
+    # Fonte (.ttf/.otf) das legendas queimadas. Vazio = procura uma sans
+    # pesada do sistema (a imagem Docker instala a DejaVu Sans Bold).
+    caption_font_path: str = ""
+    # Modelo que transforma a descrição em texto do usuário num estilo de
+    # edição (chamada única e curta por estilo criado).
+    ai_style_model: str = "claude-sonnet-5-5"
+
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
     # barata cobre TODOS os candidatos (nenhum fica de fora só por causa do
@@ -238,7 +249,15 @@ class Settings(BaseSettings):
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
     # roda no top-K; Sonnet dá enquadramento e roteiro de câmera bem melhores
     # que Haiku pelo custo adicional (poucas chamadas por job).
-    ai_director_model: str = "claude-sonnet-5"
+    ai_director_model: str = "claude-sonnet-5-5"
+    # Esforço de raciocínio da direção/revisão (low|medium|high|xhigh|max). É
+    # o passo que exige julgamento espacial (boxes, roteiro); "medium" equilibra
+    # qualidade × latência. Vazio = não envia o parâmetro (modelos antigos que
+    # não aceitam `effort`).
+    ai_director_effort: str = "medium"
+    # Quantas direções profundas rodam em paralelo (as chamadas são I/O; a
+    # amostragem de frames é um FFmpeg leve por chamada). 1 = sequencial.
+    ai_director_concurrency: int = 3
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
     ai_director_max_calls: int = 20
@@ -252,7 +271,14 @@ class Settings(BaseSettings):
     # restantes ficam só com o score ajustado da triagem.
     ai_director_budget_seconds: int = 180
     # Timeout (s) de cada chamada individual à API.
-    ai_director_timeout: float = 30.0
+    ai_director_timeout: float = 60.0
+    # REVISÃO do render (tier 'full', corte dinâmico): depois de renderizar, a
+    # IA olha 1 frame por shot do clipe PRONTO e reprova enquadramentos que
+    # falharam (alvo fora do quadro, pessoa cortada); os shots reprovados viram
+    # wide e o clipe é re-renderizado UMA vez. False desliga.
+    ai_review_enabled: bool = True
+    # Largura (px) dos frames 9:16 enviados à revisão.
+    ai_review_frame_width: int = 360
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
     # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
     # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
@@ -260,7 +286,11 @@ class Settings(BaseSettings):
 
     # Modelo da TRIAGEM (barata, cobre todos os candidatos) — fica em Haiku
     # mesmo com a direção profunda em Sonnet, pra o custo por janela ficar baixo.
-    ai_triage_model: str = "claude-haiku-4-5"
+    ai_triage_model: str = "claude-haiku-5-5"
+    # Esforço da triagem/títulos — tarefa de classificação simples: "low".
+    # Vazio = não envia (obrigatório se voltar para claude-haiku-4-5, que
+    # rejeita o parâmetro `effort`).
+    ai_triage_effort: str = "low"
     # Quantos candidatos por chamada de triagem (1 chamada avalia várias janelas
     # de uma vez — é o que torna cobrir TODOS os candidatos barato).
     ai_triage_group_size: int = 6
