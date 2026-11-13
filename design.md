@@ -53,6 +53,15 @@ Tema escuro: `--dj-bg #08080d`, `--dj-panel #15151f`, e a paleta neon
 `--dj-purple #a855f7`, `--dj-magenta #d946ef`, `--dj-pink #ec4899`,
 `--dj-cyan #22d3ee`.
 
+### Seções da landing (`app/page.tsx`)
+
+Ordem: nav em pílula sticky (vidro) → hero (badge, H1, CTAs, selos de confiança
++ gerador) → plataformas + números do produto → antes/depois → recursos (grid
+de 6 cards) → como funciona → preços → FAQ (`<details>`, sem JS) → CTA final →
+rodapé com colunas. Os números e textos de prova são **fatos do produto**
+(3h, 30 cortes, 9:16, 1h grátis) — não inventar contagem de usuários nem
+depoimentos.
+
 ## Animações
 
 Definidas em `globals.css` (escopo global, referenciadas por inline styles do
@@ -76,11 +85,11 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 
 | Largura | O que acontece |
 | ------- | -------------- |
-| `≤ 900px` | Landing: hero, "como funciona" e preços viram 1 coluna; paddings menores. |
-| `≤ 820px` | Editor do estúdio colapsa pra 1 coluna (`.dj-editor-grid`). |
+| `≤ 900px` | Landing: hero, "como funciona" e preços viram 1 coluna; recursos e números viram 2 colunas; paddings menores. |
+| `≤ 760px` | Landing: links de texto do nav (pílula sticky) somem, sobra o CTA. |
 | `≤ 720px` | Header do estúdio quebra: logo + ações na 1ª linha, abas roláveis na 2ª (`.dj-header*`); padding do `main` reduz. |
 | `≤ 640px` | Estúdio: card do set e linhas da lista quebram; barra de score full-width; tabela de salvos rola na horizontal (`.dj-table-scroll`); busca full-width. |
-| `≤ 560px` | Landing: links do nav somem (sobra o CTA); botões do hero empilham. Editor: topo quebra. |
+| `≤ 560px` | Landing: recursos em 1 coluna; botões do hero empilham. |
 | `≤ 420px` | Header do estúdio esconde o nome do usuário (mantém o avatar); cards de estilo de corte empilham (`.dj-style-grid`). |
 
 ### Ganchos responsivos (classes `dj-*`)
@@ -89,8 +98,6 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 | ------ | ---------------- |
 | `.dj-header` / `.dj-header-nav` / `.dj-header-actions` / `.dj-header-username` | Header em 2 linhas, abas roláveis, nome do usuário oculto. |
 | `.dj-studio-main` | Padding lateral menor. |
-| `.dj-editor-grid` | Preview acima do painel (1 coluna). |
-| `.dj-editor-topbar` | Voltar/título/ações quebram. |
 | `.dj-genset` | Card do set quebra (chip de status desce). |
 | `.dj-list-row` / `.dj-list-score` / `.dj-list-actions` | Linha da lista quebra; score e ações ocupam a largura toda. |
 | `.dj-saved-tools` / `.dj-saved-search` | Ferramentas e busca full-width. |
@@ -123,10 +130,9 @@ a `className` como "gancho". Onde a propriedade também é inline, a regra usa
 - ~~Skeletons enquanto carrega~~ — feito: `StudioStates.tsx` (`.dj-skeleton`) +
   empty state com CTA quando não há set processado.
 - ~~Barra de progresso de upload (em vez de só texto de status)~~ — feito: o
-  upload usa `XMLHttpRequest` (`upload.onprogress`) e o Gerador mostra barra
+  upload resumável (`_studio/upload.ts`) reporta o progresso e o Gerador mostra barra
   com porcentagem + ondas do equalizador (`.dj-eqbar`) durante o envio
   (`GeneratorView.tsx`).
 - Tornar o menu do header um drawer no mobile (hoje as abas rolam).
-- ~~Edição real do corte~~ — feito (título + trim): a aba Edição renomeia e
-  ajusta início/fim, e o worker regenera o vídeo (`POST /recut`). Legendas e
-  publicação ainda são visuais (sem backend).
+- Edição do corte: o editor (aba Edição) foi removido por enquanto; legendas e
+  publicação não existem.

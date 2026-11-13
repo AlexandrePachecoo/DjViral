@@ -27,10 +27,25 @@ class Settings(BaseSettings):
     # a tela. Configurável via OUTPUT_WIDTH / OUTPUT_HEIGHT.
     output_width: int = 1080
     output_height: int = 1920
-    # Jobs pesados (process/recut) simultâneos. 1 = fila serial; suba apenas
-    # se o plano da Railway tiver memória de sobra (cada job usa ~centenas de
-    # MB entre FFmpeg e análise, mais o vídeo em disco).
+    # Jobs pesados simultâneos = nº de threads consumindo a fila. 1 = fila
+    # serial; suba apenas se o plano da Railway tiver memória de sobra (cada job
+    # usa ~centenas de MB entre FFmpeg e análise, mais o vídeo em disco).
     max_concurrent_jobs: int = 1
+    # ---- Fila durável de jobs (jobs.py, tabela `jobs` no Supabase) ----
+    # false = volta ao BackgroundTasks em memória (perde o job num redeploy).
+    job_queue_enabled: bool = True
+    # De quanto em quanto tempo um consumidor ocioso consulta a fila. Um job
+    # enfileirado por ESTE processo acorda o consumidor na hora; o polling só
+    # importa para jobs que voltaram à fila ou vieram de outra réplica.
+    job_poll_seconds: float = 5.0
+    # O job em andamento renova o heartbeat neste intervalo; passado
+    # `job_stale_seconds` sem renovar, o worker é dado como morto e o job volta
+    # para a fila (precisa ser bem maior que o heartbeat).
+    job_heartbeat_seconds: float = 30.0
+    job_stale_seconds: int = 180
+    # Quantas vezes um job interrompido (worker morto) é retomado antes de
+    # virar erro. Erro do próprio set (vídeo inválido, cota) nunca é repetido.
+    job_max_attempts: int = 3
     # Threads que o FFmpeg (x264) usa por corte. O container enxerga todos os
     # núcleos do host (~34 na Railway) e o x264 abre uma thread por núcleo,
     # segurando buffers de frame 1080p em cada uma: ~900 MB por corte, o que

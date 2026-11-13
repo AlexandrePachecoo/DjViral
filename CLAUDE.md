@@ -30,9 +30,9 @@ efêmero, sem FFmpeg nativo, sem worker de longa duração).
   A service role key do Supabase fica só no servidor (env vars), nunca no
   browser.
 - **`backend/` — worker FastAPI na Railway.** Onde rodam librosa + FFmpeg
-  (container com FFmpeg via Dockerfile). Processa em background com
-  `BackgroundTasks` (processo persistente).
-- **Supabase** — Postgres (tabelas `projects`, `sources`, `cuts`) + Storage
+  (container com FFmpeg via Dockerfile). Consome uma **fila durável de jobs**
+  (tabela `jobs`, ver "Fila de jobs" abaixo) em threads do próprio processo.
+- **Supabase** — Postgres (tabelas `projects`, `sources`, `cuts`, `jobs`) + Storage
   (bucket privado `sources` para os vídeos originais, bucket público `clips`
   para os cortes gerados).
 
@@ -45,27 +45,69 @@ Navegador (Vercel UI)
                                        (cut_style: 'basic' seco | 'dynamic' com zooms;
                                         cut_intensity: 'subtle'|'medium'|'intense'
                                         p/ o dinâmico; max_cuts: 1..30, clampado ao plano)
-  2. PUT do vídeo DIRETO no Supabase Storage (signed URL) — não passa pela Vercel
+  2. Upload RESUMÁVEL (TUS) do vídeo DIRETO no Supabase Storage — não passa pela Vercel
   3. POST /api/projects/{id}/process → Vercel chama o worker Railway
                                         max_cuts, cut_style, cut_intensity, ai_tier}
                                         (header X-Worker-Secret; ai_tier:
                                         'off'|'lite'|'full' conforme o plano)
-  4. Worker (background): baixa o mp4 do Supabase → analyzer (áudio) → visual
+  4. Worker (job da fila): baixa o mp4 do Supabase → analyzer (áudio) → visual
                           (re-rank + alvos de zoom) → clipper (seco ou dinâmico)
                           → upload dos clipes → insere cuts → project.status=done
   5. Navegador faz polling em GET /api/projects/{id} até status=done
 ```
 
 **Origem YouTube:** além do upload de arquivo, o usuário pode colar apenas um
-link do YouTube (aba "Link do YouTube" em `/app/novo`). Nesse caso
+link do YouTube (aba "Link do YouTube" do Gerador). Nesse caso
 `POST /api/projects` recebe `{name, youtube_url}` (validado em
 `frontend/lib/youtube.ts`; aceita watch/youtu.be/shorts/music.youtube), grava o
 link canônico em `sources.url` com `source_type='youtube'` e **pula** o upload
 (passos 2). No worker, `pipeline._fetch_source` vê o `source_type` e baixa o
 vídeo com **yt-dlp** (`backend/app/youtube.py`: mp4 até 1080p, duração checada
 contra `MAX_SOURCE_DURATION`, default 3h, antes do download). O restante do
-pipeline (análise, cortes, re-corte) é idêntico; o re-corte re-baixa do
-YouTube quando necessário.
+pipeline (análise, cortes) é idêntico.
+
+### Upload resumável (TUS)
+
+O vídeo vai do navegador direto para o bucket `sources` pelo endpoint
+resumável do Supabase Storage, em pedaços de 6 MB
+(`frontend/app/app/_studio/upload.ts`, com `tus-js-client`). Se a conexão cair,
+o cliente pergunta ao servidor até onde ele recebeu e continua dali — um set
+de vários GB não recomeça do zero.
+
+- `POST /api/projects` devolve, além da `signedUrl`, o `tusEndpoint`
+  (`https://<ref>.storage.supabase.co/storage/v1/upload/resumable/sign` em
+  projeto hospedado), o `token` da signed upload URL, o `bucket` e o
+  `storagePath`. O token vai no header `x-signature` — o navegador continua
+  sem nenhuma chave do Supabase.
+- **Reserva:** se o servidor recusar a CRIAÇÃO do upload resumável (antes de
+  aceitar qualquer pedaço), o cliente cai no PUT único na `signedUrl` (o fluxo
+  antigo). Depois de iniciado, erro é erro.
+- A retomada cobre quedas de conexão durante o envio (esperas de até 2 min
+  entre tentativas); fechar a aba ainda perde o upload, porque cada set cria
+  um projeto/caminho novo.
+
+### Fila de jobs (worker)
+
+O processamento não vive mais na memória do processo (`BackgroundTasks`), onde
+um redeploy ou crash perdia o job e deixava o projeto em `processing` para
+sempre. A fila fica no próprio Postgres do Supabase — sem Redis nem serviço
+novo (`backend/app/jobs.py`):
+
+- `POST /process` insere uma linha `queued` em `jobs` (os parâmetros do
+  processamento vão no `payload`) e responde 202. Um projeto só tem um job
+  vivo por vez.
+- Threads consumidoras (uma por `MAX_CONCURRENT_JOBS`, sobem no `lifespan` do
+  FastAPI) pegam o job mais antigo pela função SQL `claim_job` — um UPDATE com
+  `FOR UPDATE SKIP LOCKED`, então duas réplicas nunca pegam o mesmo job.
+- O job em andamento renova `heartbeat_at` (`JOB_HEARTBEAT_SECONDS`). Se o
+  worker morrer, o heartbeat envelhece (`JOB_STALE_SECONDS`) e o próximo
+  `claim_job` devolve o job à fila; ao retomar, `pipeline` apaga os cortes
+  parciais da tentativa anterior. Depois de `JOB_MAX_ATTEMPTS` interrupções o
+  job vira `error` junto com o projeto.
+- Falha do próprio set (vídeo inválido, cota estourada) NÃO é repetida: o
+  projeto vira `error` como antes.
+- Sem a migração aplicada (tabela/função ausentes) ou com
+  `JOB_QUEUE_ENABLED=false`, o `/process` cai no `BackgroundTasks` de antes.
 
 ### Pipeline de análise (worker)
 
@@ -162,7 +204,7 @@ YouTube quando necessário.
      quadro, pessoa cortada, zoom ilegível). `pipeline._review_and_fix` troca
      os reprovados por wide (`dynamic.widen_shots`, mesmos tempos, wides
      vizinhos fundidos) e re-renderiza UMA vez num arquivo à parte, que só
-     substitui o original se der certo. Não roda no re-corte (`/recut`).
+     substitui o original se der certo.
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
    job) — é a primeira dependência de API de IA do projeto; como o YOLO,
    **nunca derruba um job**: sem chave, sem o pacote `anthropic`, timeout ou
@@ -254,22 +296,13 @@ YouTube quando necessário.
      o corte nunca é perdido por causa do zoom.
 5. `pipeline.py` — orquestra download → analyze → visual/re-rank → cut →
    upload → persiste `cuts`. O download do vídeo é em **streaming** (chunks
-   para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs
-   pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1). O re-corte
-   (`POST /recut`) respeita o `cut_style` do projeto: num projeto dinâmico,
-   re-roda a análise visual só na janela nova e regenera os zooms. Quando o
-   `/recut` traz **`keyframes`** (direção manual do editor visual, ver "Editor
-   de cortes" abaixo), o render usa `clipper.cut_keyframed` no lugar do plano
-   automático: crop 9:16 com pan por expressão (x/y por frame no `crop`) na
-   janela do MENOR zoom + `zoompan` (supersample 2×) por cima com o zoom
-   residual interpolado com easing — pan e zoom do usuário ao mesmo tempo,
-   fallback em 2 níveis (sem zoompan → corte seco). Os keyframes são
-   persistidos em `cuts.crop_keyframes` (o editor reabre com eles; `[]` limpa
-   a direção manual).
+   para disco, nunca o arquivo inteiro em RAM). Quantos jobs pesados rodam ao
+   mesmo tempo é o nº de threads consumidoras da fila (`MAX_CONCURRENT_JOBS`,
+   default 1). `pipeline.run_job` é o handler da fila.
 
 ### Estilo de edição (efeitos, transições, legendas)
 
-O corte (seco/dinâmico/keyframes) decide ONDE a câmera olha; o **estilo de
+O corte (seco/dinâmico) decide ONDE a câmera olha; o **estilo de
 edição** decide a FINALIZAÇÃO. É um JSON pequeno (`backend/app/style.py::
 EditStyle`, espelhado em `frontend/lib/editStyles.ts`) guardado como CÓPIA em
 `projects.edit_style` (NULL = sem estilo):
@@ -282,16 +315,15 @@ EditStyle`, espelhado em `frontend/lib/editStyles.ts`) guardado como CÓPIA em
   primeiros segundos, `teaser_text` antes do drop, `handle` fixo, mais
   posição/visual/tamanho/cor/maiúsculas).
 - **Render:** `pipeline._apply_edit_style` roda um **2º passe** do FFmpeg
-  (`clipper.apply_style`) sobre o clipe 9:16 JÁ pronto — vale para qualquer
-  caminho de render (seco, dinâmico, keyframed, re-corte) e, se falhar, o clipe
+  (`clipper.apply_style`) sobre o clipe 9:16 JÁ pronto — vale para os dois
+  estilos de corte (seco e dinâmico) e, se falhar, o clipe
   sem estilo é mantido. `style.build_video_filters` monta só filtros que NÃO
   mudam duração nem áudio (as "transições" são pulsos de brilho/RGB em cima dos
   cortes existentes, não `xfade`); o áudio é copiado. As legendas são PNGs
   transparentes desenhados com Pillow (`captions.py`; fonte DejaVu instalada no
   Dockerfile ou `CAPTION_FONT_PATH`) e sobrepostos com `overlay` — emojis são
   removidos do texto queimado. O hook só aparece quando há título de IA (o
-  fallback `Drop N · BPM` não vira legenda). No re-corte não há drop conhecido:
-  efeitos de drop e teaser ficam de fora.
+  fallback `Drop N · BPM` não vira legenda).
 - **Origem do estilo:** (1) presets do produto (`STYLE_PRESETS` no frontend:
   Hype, Aftermovie, Neon glitch, Limpo com legenda); (2) estilos do usuário na
   tabela `edit_styles`, criados por **descrição em texto**: `POST /api/styles
@@ -301,7 +333,9 @@ EditStyle`, espelhado em `frontend/lib/editStyles.ts`) guardado como CÓPIA em
   `GET /api/styles` lista, `DELETE /api/styles/{id}` apaga (até 20 por usuário).
 - **UI:** `app/_studio/StylePicker.tsx` no formulário do Gerador ("Efeitos e
   legendas"); o JSON escolhido vai em `POST /api/projects {edit_style}` e o
-  `/process` o repassa ao worker.
+  `/process` o repassa ao worker, que o grava no `payload` do job da fila
+  (`jobs.payload.edit_style`) — `pipeline.run_job` o entrega ao
+  `process_project`.
 
 ### Frontend / UI (`frontend/app/`)
 
@@ -316,63 +350,22 @@ A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
   preços, CTA. Estilizada via CSS Modules.
 - `login/page.tsx` — login/cadastro (`/login`).
 - `app/` — área logada (`/app`), protegida por sessão:
-  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos). O Gerador
+  - `app/page.tsx` — estúdio (Gerador / Cortes salvos). O Gerador
     fica montado (só escondido) fora da aba, para trocar de aba não perder os
     cortes recém-gerados nem o polling de um set em processamento.
-  - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
   - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
 - `s/[token]/page.tsx` — **página pública** de um set compartilhado (`/s/<token>`),
   **fora** de `app/` (não herda o guard de sessão). Ver "Compartilhamento
   público" abaixo.
 
-### Editor de cortes (aba "Edição")
+**Idioma:** o site é servido só em português, em qualquer host. O `next-intl`
+continua sendo a camada de textos (`frontend/messages/pt.json`); o locale é
+fixo em `frontend/i18n/config.ts`. `messages/en.json` ficou no repositório,
+fora do build, para o inglês voltar depois.
 
-Todo card de corte (Gerador e Cortes salvos) tem um botão **Editar** que abre
-o corte na aba "Edição" (`app/_studio/EditorView.tsx`); a aba sem corte aberto
-mostra um seletor dos cortes salvos (`EditPicker` em `app/page.tsx`). O editor
-é um workspace **escuro estilo CapCut** (paleta própria `dk` no componente —
-o resto do estúdio continua claro).
-
-- **Canvas 9:16 central = o resultado final** (modelo CapCut): o usuário
-  arrasta o PRÓPRIO VÍDEO dentro do quadro para reposicionar e dá zoom
-  (slider 1–4× ou scroll no canvas), com grade de terços durante o arrasto e
-  um **minimap** no canto (frame original + retângulo da janela; clicar/
-  arrastar nele move a câmera direto). O editor toca o set original via
-  `GET /api/projects/{id}/source` (signed URL de 1h do bucket privado
-  `sources`; origem YouTube não tem arquivo → `url: null` e o editor degrada
-  para trim-only com aviso). **O editor NÃO carrega o set inteiro:** trabalha
-  numa **janela de ±60 s** em volta do corte (`WINDOW_PAD`) — timeline, zoom
-  da régua e filmstrip ficam confinados a ela e, se o usuário estender o trim,
-  a janela acompanha — e os três `<video>` usam `preload="metadata"` + media
-  fragment `#t=<início do corte>` na URL, então o browser buferiza direto no
-  trecho do corte via range requests (o vídeo oculto do filmstrip usava
-  `preload="auto"`, que baixava o set INTEIRO em background). O canvas mostra
-  "Carregando o vídeo do set..." até o primeiro frame decodar e, se o
-  `<video>` do original falhar (`onError` — ex.: codec que o browser não
-  decodifica, como HEVC/MOV de iPhone ou MKV; o upload aceita `video/*` e o
-  editor toca o arquivo CRU, só os cortes são re-encodados em H.264), o aviso
-  explica o motivo (com o código do `MediaError`) e o editor degrada para o
-  MESMO modo trim-only do YouTube, com o player do corte já gerado no lugar
-  do canvas — antes ficava um quadro preto sem explicação.
-- **Timeline dock inferior** — régua de timecodes (passos "redondos"
-  calculados da janela visível), **filmstrip de miniaturas** do set (geradas
-  no cliente: um `<video>` oculto com `crossOrigin` + canvas → dataURLs; se o
-  CORS/seek falhar a trilha fica lisa), trecho selecionado com **alças de
-  trim** roxas (pode ir **além** do que a IA escolheu; a escolha original
-  fica marcada na trilha), scrub, loop do trecho, "início/fim aqui", zoom da
-  régua (+/−/ajustar/janela toda) e ajuste fino ±0.5s. Duração 3–180 s (rota
-  valida ≤ 600 s).
-- **Keyframes de câmera** — todo ajuste de enquadramento cria/edita um
-  keyframe `{t, cx, cy, zoom}` no playhead (botão ◆ adiciona/remove, estilo
-  CapCut); entre keyframes a câmera interpola com o MESMO smoothstep do
-  worker (o preview bate com o render). Keyframes aparecem como losangos na
-  trilha e numa lista no painel de propriedades (remover/limpar).
-- **Salvar** — título via `PATCH /api/projects/{id}/cuts/{cutId}`; trim e/ou
-  keyframes via `POST .../recut {inicio, fim, keyframes}` (keyframes com `t`
-  relativo ao início; o editor trabalha com `t` absoluto e converte). O worker
-  renderiza com `clipper.cut_keyframed` e grava `cuts.crop_keyframes`; o
-  editor reabre com os keyframes salvos via `GET .../cuts/{cutId}` (tolerante
-  a banco sem a migração, código 42703).
+**Sem editor de cortes:** o usuário não edita mais um corte (trim, keyframes
+de câmera, renomear) — só seleciona, salva, baixa, compartilha ou apaga. O
+editor, as rotas `/recut` e `/source` e o render com keyframes foram removidos.
 
 ### Compartilhamento público de sets
 
@@ -412,7 +405,9 @@ ganchos detalhados em [`design.md`](design.md).
 
 - **Worker (`backend/.env`):** `SUPABASE_URL`, `SUPABASE_KEY` (service role),
   `SUPABASE_BUCKET=clips`, `SOURCES_BUCKET=sources`, `WORKER_SECRET`,
-  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`. Análise de áudio
+  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`. Fila de jobs (opcionais):
+  `MAX_CONCURRENT_JOBS`, `JOB_QUEUE_ENABLED`, `JOB_POLL_SECONDS`,
+  `JOB_HEARTBEAT_SECONDS`, `JOB_STALE_SECONDS`, `JOB_MAX_ATTEMPTS`. Análise de áudio
   (opcionais, default calibrados): `ANALYZER_WEIGHT_RMS/ONSET/CONTRAST`,
   `ANALYZER_MIN_GAP_SECONDS`, `ANALYZER_BASELINE_WINDOW_SECONDS`,
   `ANALYZER_PEAK_PROMINENCE`, `ANALYZER_DEDUP_WINDOW_SECONDS`,
@@ -465,63 +460,51 @@ ganchos detalhados em [`design.md`](design.md).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
-  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento no Brasil),
-  `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (pagamento internacional) e
+  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento) e
   `APP_URL` (opcional, origem pública para as URLs de retorno do checkout).
 
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
 consegue disparar `POST /process` no worker.
 
-## Pagamento / planos (AbacatePay no Brasil, Stripe no internacional)
+## Pagamento / planos (AbacatePay)
 
-Três planos, com cota de **horas de set** e limite de cortes por set. O preço é
-mostrado na moeda do locale (BRL no `pt`, USD no `en`):
+Três planos, com cota de **horas de set** e limite de cortes por set:
 
-| Plano   | Preço BRL   | Preço USD  | Cota                    | Cortes por set |
-|---------|-------------|------------|-------------------------|----------------|
-| free    | R$0         | $0         | 1 hora de set no TOTAL  | 10             |
-| pro     | R$39,90/mês | $9.90/mês  | 5 horas de set por mês  | 30             |
-| premium | R$59,90/mês | $14.90/mês | 12 horas de set por mês | 30             |
+| Plano   | Preço       | Cota                    | Cortes por set |
+|---------|-------------|-------------------------|----------------|
+| free    | R$0         | 1 hora de set no TOTAL  | 10             |
+| pro     | R$39,90/mês | 5 horas de set por mês  | 30             |
+| premium | R$59,90/mês | 12 horas de set por mês | 30             |
 
-**O provedor de cobrança é escolhido pelo locale (host — ver i18n), não pelo
-usuário:** o Brasil (`pt`, `djviral.com.br`) cobra via **AbacatePay** (BRL, PIX
-ou cartão); o internacional (`en`, Vercel) cobra via **Stripe** (USD, cartão).
-Os dois usam checkout de assinatura hospedado com renovação mensal automática, e
-`subscriptions.provider` (`abacatepay | stripe`) registra qual gerou a linha.
-Os valores BRL/USD ficam em `frontend/lib/plans.ts` (`priceCents` /
-`priceCentsUsd`) — trocar o preço é editar só isso.
+A cobrança é sempre pela **AbacatePay** (BRL, PIX ou cartão), com checkout de
+assinatura hospedado e renovação mensal automática. Os valores ficam em
+`frontend/lib/plans.ts` (`priceCents`) — trocar o preço é editar só isso.
 
-- `frontend/lib/plans.ts` — definição dos planos (preço BRL **e** USD) + cálculo
-  de uso do período (soma `sources.duracao` dos projetos não-`error` do usuário;
-  janela = mês da assinatura para pagos, desde sempre no free). Helpers
-  `providerForLocale(locale)` e `priceLabel(plan, locale)`.
+O Stripe (cobrança internacional em USD) foi removido junto com o inglês. A
+coluna `subscriptions.provider` continua existindo; linhas antigas com
+`provider='stripe'` não são mais atendidas por webhook e o cancelamento pelo
+app as recusa (HTTP 409) em vez de rebaixar só no banco — precisam ser
+canceladas no painel do Stripe.
+
+- `frontend/lib/plans.ts` — definição dos planos + cálculo de uso do período
+  (soma `sources.duracao` dos projetos não-`error` do usuário; janela = mês da
+  assinatura para pagos, desde sempre no free). Helper `priceLabel(plan)`.
 - `frontend/lib/abacatepay.ts` — cliente da AbacatePay (produtos com
   `cycle=MONTHLY` criados sob demanda com `externalId` fixo
   `djviral-{plano}-monthly`, checkout de assinatura, verificação HMAC dos
   webhooks).
-- `frontend/lib/stripe.ts` — cliente do Stripe (REST form-encoded, sem SDK):
-  Price recorrente USD criado sob demanda com o mesmo `lookup_key`
-  `djviral-{plano}-monthly`, Checkout Session em modo `subscription`,
-  verificação da assinatura `Stripe-Signature` (HMAC-SHA256 do
-  `${timestamp}.${body}` com `STRIPE_WEBHOOK_SECRET`, janela anti-replay).
 - `frontend/lib/billing.ts` — `cancelProviderSubscription(provider, id)`
-  despacha o cancelamento para o provedor certo (usado no cancel + upgrade).
-- `POST /api/billing/checkout {plan}` — resolve o locale pelo host, cria o
-  checkout no provedor correspondente e a linha `subscriptions` (status
-  `pending`, com `provider`); devolve a URL de pagamento.
+  cancela na AbacatePay (usado no cancel + upgrade); falha para `stripe`.
+- `POST /api/billing/checkout {plan}` — cria o checkout na AbacatePay e a
+  linha `subscriptions` (status `pending`); devolve a URL de pagamento.
 - `GET /api/billing` — plano atual + uso (alimenta a aba "Plano" do estúdio).
 - `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook da AbacatePay
   (assinatura HMAC no header `X-Webhook-Signature` + secret na query;
   idempotência via tabela `webhook_events`). `subscription.completed`/`renewed`
   ativam o plano e o período; `payment_failed` marca `past_due`; `cancelled`
   rebaixa para `free`.
-- `POST /api/webhooks/stripe` — webhook do Stripe (assinatura `Stripe-Signature`;
-  mesma tabela `webhook_events` para idempotência).
-  `checkout.session.completed` ativa; `invoice.paid`
-  (`billing_reason=subscription_cycle`) renova o período; `invoice.payment_failed`
-  marca `past_due`; `customer.subscription.deleted` rebaixa para `free`.
 
-O plano efetivo é espelhado em `users.plan` pelos dois webhooks.
+O plano efetivo é espelhado em `users.plan` pelo webhook.
 
 **Enforcement da cota:**
 1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do
@@ -538,13 +521,16 @@ O plano efetivo é espelhado em `users.plan` pelos dois webhooks.
 
 ## Evoluções planejadas (ainda não implementadas)
 
-- **Upload resumável (TUS):** o upload atual é um PUT único na signed URL,
-  frágil para vídeos de vários GB. Migrar para o upload resumável do Supabase.
-- **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
-  escala real (o corte dinâmico deixa os jobs mais longos; a fila serial do
-  semáforo cresce mais rápido).
 - **Tuning do corte dinâmico:** pesos do score visual, durações de shot e
   intensidade de zoom calibrados com sets reais de balada (pouca luz, laser).
+  Ainda não foi feito por falta de material real; a ferramenta para isso
+  existe: `python -m tools.calibrate set.mp4` (em `backend/`) roda a análise
+  do worker num vídeo local e mostra, por janela, pouca luz, persistência da
+  track do DJ, movimento e o plano de shots em cada intensidade.
+- **Retomar upload entre visitas:** o upload resumável sobrevive a quedas de
+  conexão, mas não a fechar a aba (cada set cria um projeto novo).
+- **Posição na fila na UI:** o projeto fica em `processing` enquanto espera a
+  vez; a tabela `jobs` já tem o dado para mostrar "na fila".
 
 ## Autenticação
 
@@ -570,7 +556,7 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - name
 - email
 - password
-- plan (`free | pro | premium`) — espelhado pelos webhooks da AbacatePay
+- plan (`free | pro | premium`) — espelhado pelo webhook da AbacatePay
 - date_create
 
 ### Subscription (assinatura AbacatePay)
@@ -618,13 +604,6 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - source_type (`upload | youtube`)
 - status_processo
 
-### Transcript
-- id
-- source_id
-- texto_completo
-- timestamp
-- palavra_chave
-
 ### Cuts / Clipe
 - id
 - projeto_id
@@ -643,9 +622,16 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   direção profunda não rodou (tier != full, sem chave, ou janela fora do teto
   de chamadas)
 - url
-- status (`ready | processing | error`) — `processing` enquanto o worker
-  regenera o vídeo num re-corte (`POST /recut`)
-- crop_keyframes — direção manual de câmera do editor (JSON `[{t, cx, cy,
-  zoom}]`, `t` relativo ao início do corte, `cx`/`cy` frações 0-1 do frame da
-  fonte, `zoom` ≥ 1); NULL = sem direção manual (render automático), `[]` =
-  usuário limpou os keyframes
+- status (`ready | processing | error`) — hoje sempre `ready`
+- crop_keyframes — legado do editor de cortes removido; não é mais lida nem
+  escrita
+
+### Job (fila do worker)
+- id
+- project_id
+- kind (`process`)
+- payload — parâmetros do processamento (limites do plano, estilo, `ai_tier`)
+- status (`queued | running | done | error`)
+- attempts — quantas vezes o job foi pego (>1 = retomado após worker morrer)
+- worker_id / error
+- created_at / started_at / heartbeat_at / finished_at

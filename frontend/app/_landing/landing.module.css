@@ -59,7 +59,7 @@
   background: linear-gradient(180deg, #ffffff, #fbfaff);
   box-shadow: 0 40px 90px -40px rgba(124, 58, 237, 0.42);
   overflow: hidden;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 96px;
 }
 
 .genHead {

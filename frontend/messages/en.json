@@ -9,27 +9,35 @@
       "howItWorks": "How it works",
       "pricing": "Pricing",
       "login": "Log in",
-      "tryFree": "Try for free"
+      "tryFree": "Try for free",
+      "features": "Features",
+      "faq": "FAQ"
     },
     "hero": {
       "titleLine1": "1 long set.",
       "titleLine2": "30 viral clips.",
-      "subtitle": "Upload your set. Our AI finds the drops, the switch-ups and the highest-energy moments and hands back vertical videos ready for your feed."
+      "subtitle": "Upload your set. Our AI finds the drops, the switch-ups and the highest-energy moments and hands back vertical videos ready for your feed.",
+      "badge": "Built for DJs · audio + video AI",
+      "ctaPrimary": "Start for free",
+      "ctaSecondary": "See how it works",
+      "trust1": "No credit card required",
+      "trust2": "1 hour of set for free",
+      "trust3": "File or YouTube link"
     },
     "how": {
       "eyebrow": "HOW IT WORKS",
       "title": "From file to feed in three steps.",
       "step1": {
         "title": "Upload your set",
-        "body": "Drag in your set video, up to 3 hours long"
+        "body": "Drag in your set video, up to 3 hours long, or paste a YouTube link."
       },
       "step2": {
         "title": "AI cuts the peaks",
-        "body": "We detect drops, switch-ups and the highest-energy moments and cut automatically  no need to review everything yourself."
+        "body": "We detect drops, switch-ups and the highest-energy moments and cut automatically, no need to review everything yourself."
       },
       "step3": {
         "title": "Get 30 clips",
-        "body": "9:16 vertical videos, ready to post on TikTok, Reels and Shorts. You can still edit any clip however you like "
+        "body": "9:16 vertical videos, ready to post on TikTok, Reels and Shorts. And you can edit any clip however you like."
       }
     },
     "pricing": {
@@ -62,7 +70,8 @@
         "feature3": "Up to 30 clips per set",
         "feature4": "Re-cut down to the exact minute",
         "cta": "Subscribe to Premium"
-      }
+      },
+      "note": "No commitment. Cancel anytime."
     },
     "finalCta": {
       "title": "Your next set already has 30 clips waiting.",
@@ -70,7 +79,11 @@
       "button": "Try it free now"
     },
     "footer": {
-      "copy": "© 2026 DJviral · cuts that become feed"
+      "copy": "© 2026 DJviral · cuts that become feed",
+      "tagline": "Viral clips from your sets, ready for the feed.",
+      "product": "Product",
+      "account": "Account",
+      "signup": "Create free account"
     },
     "generator": {
       "headerLabel": "Clip generator",
@@ -108,13 +121,82 @@
       "videoTag": "YOUR SET · 2:47:11",
       "generateBtn": "✂ Generate clips",
       "footer": "One click turns the whole set into clips ready for TikTok, Reels and Shorts."
+    },
+    "platforms": {
+      "label": "Clips in the right format for"
+    },
+    "stats": {
+      "s1": "of set per video",
+      "s2": "clips per set",
+      "s3": "vertical, ready for the feed",
+      "s4": "of set free to try",
+      "v1": "3h",
+      "v2": "30",
+      "v3": "9:16",
+      "v4": "1h"
+    },
+    "features": {
+      "eyebrow": "FEATURES",
+      "title": "Everything a set needs to become content.",
+      "subtitle": "Not a generic podcast clipper: DJviral is built for music, dance floors and drops.",
+      "f1": {
+        "title": "Listens to the set like a DJ",
+        "body": "The analysis runs on the audio: energy, beat impact and the contrast before and after each drop. The best moments rise to the top."
+      },
+      "f2": {
+        "title": "Dynamic cuts on the beat",
+        "body": "Zooms on the DJ, the crowd and whoever is dancing, with camera changes aligned to the beat. Three intensity levels."
+      },
+      "f3": {
+        "title": "Titles that stop the scroll",
+        "body": "Every clip comes with a ready-made hook for your TikTok or Reels caption, written by AI from the scene."
+      },
+      "f4": {
+        "title": "CapCut-style editor",
+        "body": "Adjust start and end, reframe the shot and add camera keyframes. The clip is re-rendered the way you want it."
+      },
+      "f5": {
+        "title": "File or YouTube",
+        "body": "Upload your set video, up to 3 hours long, or just paste a YouTube link. We handle the rest."
+      },
+      "f6": {
+        "title": "A link to share",
+        "body": "Create a public link for a set so your promoter, club or social media manager can watch and download the clips without logging in."
+      }
+    },
+    "faq": {
+      "eyebrow": "FAQ",
+      "title": "Frequently asked questions",
+      "q1": {
+        "q": "How does the AI pick the clips?",
+        "a": "It analyzes the audio of the whole set (energy, beat impact and drop contrast), then looks at the picture in the best sections: motion, the DJ and the crowd. The highest-scoring moments become clips."
+      },
+      "q2": {
+        "q": "What kind of video can I upload?",
+        "a": "Any set video up to 3 hours long, as a file or a YouTube link. Clips come out in vertical 9:16."
+      },
+      "q3": {
+        "q": "Is it really free?",
+        "a": "Yes. The free trial includes 1 hour of set and up to 10 clips per set, no credit card required. You only subscribe if you want more hours and more clips."
+      },
+      "q4": {
+        "q": "Can I adjust a clip after it is generated?",
+        "a": "Yes. In the editor you can change the start and end, reframe the shot, zoom and rename the clip. The video is re-rendered with your changes."
+      },
+      "q5": {
+        "q": "How long does it take to generate the clips?",
+        "a": "It depends on the length of the set and the style you pick. Processing runs in the background: you can close the tab and come back later, and the clips will be in your studio."
+      },
+      "q6": {
+        "q": "How does the subscription work?",
+        "a": "Paid plans renew monthly and are paid by card. You can cancel at any time from the Plan tab in the studio."
+      }
     }
   },
   "studio": {
     "header": {
       "tabs": {
         "generator": "Generator",
-        "editor": "Editor",
         "saved": "Saved clips"
       },
       "newSet": "＋ New set",
@@ -196,8 +278,7 @@
         "shared": "🔗 Shared",
         "share": "🔗 Share",
         "deleteSet": "🗑 Delete set",
-        "inSet": "in set",
-        "edit": "✎ Edit"
+        "inSet": "in set"
       }
     },
     "generator": {
@@ -227,7 +308,6 @@
       "savedCheck": "Saved ✓",
       "selected": "Selected",
       "select": "Select",
-      "edit": "✎ Edit",
       "download": "Download",
       "form": {
         "title": "New set",
@@ -380,69 +460,6 @@
         "saving": "Saving...",
         "changePassword": "Change password"
       }
-    },
-    "editor": {
-      "back": "Back",
-      "errors": {
-        "codecUnsupported": "the browser can't play this file's format/codec (e.g. iPhone HEVC/MOV or MKV)",
-        "networkFailure": "network failure while downloading the original video from storage",
-        "sourceLoadFailed": "the original video couldn't be loaded",
-        "code": "code",
-        "recutFailed": "The re-cut failed. Try again.",
-        "recutSlow": "The re-cut is taking a while. Try again shortly.",
-        "titleEmpty": "The title can't be empty.",
-        "nothingToSave": "Nothing to save.",
-        "renameFailed": "Failed to rename",
-        "recutRequestFailed": "Failed to re-cut",
-        "saveFailed": "Error saving"
-      },
-      "status": {
-        "regenerating": "Regenerating the clip's video...",
-        "saving": "Saving..."
-      },
-      "cutNamePlaceholder": "Clip name",
-      "cutTitleAria": "Clip title",
-      "editorFallbackName": "Editor",
-      "exporting": "Exporting...",
-      "saveCut": "Save clip",
-      "loadingSet": "Loading the original set...",
-      "sourceUnavailable": {
-        "withError": "Couldn't play this set's original video: {reason}. The preview below shows the already-generated clip; you can still adjust start/end and the title — manual zoom needs the original video.",
-        "noSource": "This set's original video isn't available for preview (YouTube set or removed file). You can adjust start/end on the timeline — manual zoom needs the original video."
-      },
-      "loadingVideo": "Loading the set's video...",
-      "regeneratingVideo": "Regenerating the video with the new edit...",
-      "pause": "Pause",
-      "play": "Play",
-      "startHere": "⇤ Start here",
-      "endHere": "End here ⇥",
-      "removeKeyframe": "Remove keyframe",
-      "addKeyframe": "Add keyframe",
-      "panel": {
-        "framing": "Framing",
-        "zoom": "Zoom",
-        "cameraZoomAria": "Camera zoom",
-        "framingHint": "Drag the video in the preview (or scroll) to frame it. Each adjustment becomes a ◆ keyframe at the current point.",
-        "keyframes": "Keyframes",
-        "noKeyframes": "No keyframes yet — the camera stays centered.",
-        "clearKeyframes": "Clear all keyframes",
-        "trim": "Trim",
-        "start": "Start",
-        "end": "End",
-        "duration": "Duration: {dur}s (min. {min}s · max. {max}s)"
-      },
-      "timeline": {
-        "fitToClip": "Fit to clip",
-        "fullWindow": "Full window",
-        "hint": "drag the purple handles to shorten or extend the clip — you can go beyond what the AI picked (the white line below marks the original choice). To keep the editor light, the timeline loads ~1 min before and after the clip; extending the clip moves the window along."
-      }
-    },
-    "editPicker": {
-      "empty": "No clips to edit yet. Generate a set in the Generator or save clips — they'll show up here to adjust timing, zoom and keyframes.",
-      "title": "Choose a clip to edit",
-      "subtitle": "adjust start/end on the timeline, drag the TikTok window and create zoom keyframes",
-      "inSet": "in set",
-      "edit": "✎ Edit"
     }
   },
   "publicShare": {
