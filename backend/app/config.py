@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # estoura a memória. 2 threads derrubam isso para ~300 MB sem perda de
     # velocidade real (a CPU da VM é limitada de qualquer forma).
     ffmpeg_threads: int = 2
+    # Clipes renderizados ao mesmo tempo dentro de um job. O render é a etapa
+    # mais longa (~1/3 do job); 2 quase a divide pela metade, mas dobra o pico
+    # de memória/CPU do FFmpeg — suba só com folga no plano da Railway.
+    render_concurrency: int = 1
 
     # ---- Análise de áudio (analyzer.py) ----
     # Pesos dos três sinais no score combinado (RMS/onset/contraste). Somam 1.0
@@ -233,6 +237,12 @@ class Settings(BaseSettings):
     # /process pede (planos pagos) E há chave da API. Qualquer falha degrada
     # para a heurística local (nunca derruba o job), igual à fase visual do YOLO.
     ai_director_enabled: bool = True
+    # A IA dirige a câmera do corte dinâmico (tier 'full'): a direção por frame
+    # (`AIDirection.frames`) vira o shot plan direto, sem YOLO/tracking — a
+    # análise visual local só roda como rede de segurança quando a direção de
+    # uma janela falha. False = comportamento anterior (YOLO + heurísticas
+    # montam os shots e a IA só dá dicas), útil para comparar lado a lado.
+    ai_camera_enabled: bool = True
     # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
     anthropic_api_key: str = ""
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
@@ -241,18 +251,18 @@ class Settings(BaseSettings):
     ai_director_model: str = "claude-sonnet-5"
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
-    ai_director_max_calls: int = 20
+    ai_director_max_calls: int = 30
     # Quantos keyframes amostrar por janela para a direção profunda. Mais
     # frames dão à IA melhor noção espacial (boxes) e temporal (story/moments),
     # ao custo de mais tokens por chamada — mas só no top-K.
-    ai_director_frames: int = 7
+    ai_director_frames: int = 12
     # Largura (px) dos frames enviados à direção profunda.
-    ai_director_frame_width: int = 768
+    ai_director_frame_width: int = 512
     # Teto de tempo (s) da direção profunda por job; estourou, as janelas
     # restantes ficam só com o score ajustado da triagem.
-    ai_director_budget_seconds: int = 180
+    ai_director_budget_seconds: int = 300
     # Timeout (s) de cada chamada individual à API.
-    ai_director_timeout: float = 30.0
+    ai_director_timeout: float = 60.0
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
     # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
     # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
@@ -266,9 +276,11 @@ class Settings(BaseSettings):
     ai_triage_group_size: int = 6
     # Keyframes por janela na triagem (bem menos que a direção profunda —
     # só precisa classificar hype/worthy, não localizar boxes).
-    ai_triage_frames_per_window: int = 2
+    # 4 frames de 512px custam centavos por job e dão ao modelo uma leitura bem
+    # mais confiável de um trecho de 60s do que 2 miniaturas.
+    ai_triage_frames_per_window: int = 4
     # Largura (px) dos frames da triagem (menor que a direção profunda).
-    ai_triage_frame_width: int = 256
+    ai_triage_frame_width: int = 512
     # Teto de tempo (s) da fase de triagem por job (separado do budget da
     # direção profunda).
     ai_triage_budget_seconds: int = 90
@@ -278,6 +290,14 @@ class Settings(BaseSettings):
     # visualmente sobreviver ao corte do top-K — por isso pesa relativamente
     # forte (a triagem é o único filtro de IA que vê TODOS os candidatos).
     score_hype_lite_weight: float = 0.30
+    # Chamadas à IA simultâneas (lotes de triagem e direções profundas rodam
+    # em paralelo — a espera é rede, não CPU). 1 = serial.
+    ai_concurrency: int = 6
+    # Com a triagem ligada, a análise visual pesada (YOLO) roda só nas
+    # `n_final * fator` melhores janelas pelo score música + triagem, em vez de
+    # em todos os candidatos — a maior parte deles seria descartada de qualquer
+    # forma. A folga acima de 1.0 deixa o score visual ainda reordenar a borda.
+    visual_shortlist_factor: float = 1.25
 
 
 settings = Settings()

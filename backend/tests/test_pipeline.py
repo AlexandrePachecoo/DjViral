@@ -179,3 +179,129 @@ def test_generate_titles_lite_tier_calls_title_group(monkeypatch):
     cands = [(peak, None, None, 0.9)]
     out = pipeline._generate_titles("video.mp4", cands, "lite")
     assert out == {id(peak): "hook 🔥"}
+
+
+def test_generate_titles_reuses_triage_titles(monkeypatch):
+    # Título que a triagem já deu não gera chamada extra; só o corte sem
+    # título passa pelo title_group.
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
+    monkeypatch.setattr(settings, "ai_director_enabled", True)
+    has, lacks = Peak(start_sec=10.0, score=0.9), Peak(start_sec=90.0, score=0.8)
+    asked: list = []
+
+    def _title_group(vp, windows):
+        asked.extend(w[0] for w in windows)
+        return {windows[0][0]: "fallback"}
+
+    monkeypatch.setattr(ai_director, "title_group", _title_group)
+    cands = [(has, None, None, 0.9), (lacks, None, None, 0.8)]
+    out = pipeline._generate_titles(
+        "video.mp4", cands, "lite", known={id(has): "da triagem 🔥"}
+    )
+    assert asked == [id(lacks)]
+    assert out == {id(has): "da triagem 🔥", id(lacks): "fallback"}
+
+
+# ---- funil: triagem antes da análise visual pesada ----
+
+def test_visual_analysis_runs_only_on_triage_shortlist(monkeypatch):
+    monkeypatch.setattr(settings, "visual_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
+    monkeypatch.setattr(settings, "ai_director_enabled", True)
+    monkeypatch.setattr(settings, "visual_shortlist_factor", 1.0)
+    monkeypatch.setattr(settings, "score_hype_lite_weight", 0.5)
+    monkeypatch.setattr(pipeline.visual, "load_model", lambda: None)
+    analyzed: list = []
+    monkeypatch.setattr(
+        pipeline.visual,
+        "analyze_window",
+        lambda vp, start, *a, **k: analyzed.append(start) or _fake_wv(0.0),
+    )
+    # 4 candidatos com música parecida; a triagem só vê hype no 2º e no 4º.
+    peaks = [Peak(start_sec=100.0 * (i + 1), score=0.5) for i in range(4)]
+    hot = {id(peaks[1]), id(peaks[3])}
+    monkeypatch.setattr(
+        ai_director,
+        "triage_group",
+        lambda vp, windows: {
+            key: ai_director.Triage(hype=0.9 if key in hot else 0.1, title=f"t{key}")
+            for key, _s, _d in windows
+        },
+    )
+    titles: dict = {}
+    result = pipeline._score_candidates(
+        "video.mp4", peaks, "basic", ai_tier="lite", n_final=2, titles_out=titles
+    )
+    # YOLO só nas 2 janelas da shortlist; as outras 2 nem são decodificadas.
+    assert sorted(analyzed) == [195.0, 395.0]
+    assert {id(r[0]) for r in result[:2]} == hot
+    assert len(result) == 4 and all(r[1] is None for r in result[2:])
+    assert set(titles) == {id(p) for p in peaks}
+
+
+def test_without_triage_every_candidate_gets_visual_analysis(monkeypatch):
+    # IA desligada: sem shortlist, comportamento antigo (todos analisados).
+    monkeypatch.setattr(settings, "visual_enabled", True)
+    monkeypatch.setattr(pipeline.visual, "load_model", lambda: None)
+    analyzed: list = []
+    monkeypatch.setattr(
+        pipeline.visual,
+        "analyze_window",
+        lambda vp, start, *a, **k: analyzed.append(start) or _fake_wv(0.5),
+    )
+    peaks = [Peak(start_sec=100.0 * (i + 1), score=0.5) for i in range(4)]
+    pipeline._score_candidates("video.mp4", peaks, "basic", ai_tier="off", n_final=2)
+    assert len(analyzed) == 4
+
+
+# ---- câmera da IA: tier full dispensa o YOLO ----
+
+def test_ai_camera_directs_top_n_without_local_visual_analysis(monkeypatch):
+    monkeypatch.setattr(settings, "visual_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
+    monkeypatch.setattr(settings, "ai_director_enabled", True)
+    monkeypatch.setattr(settings, "ai_camera_enabled", True)
+    monkeypatch.setattr(settings, "ai_triage_group_size", 0)  # sem triagem
+
+    def _no_yolo(*a, **k):
+        raise AssertionError("a análise visual local não deveria rodar")
+
+    monkeypatch.setattr(pipeline.visual, "load_model", _no_yolo)
+    monkeypatch.setattr(pipeline.visual, "analyze_window", _no_yolo)
+    directed: list = []
+
+    def _direct(video_path, start_sec, duration, wv):
+        directed.append(start_sec)
+        # A direção da 2ª melhor janela falha (None) — fica sem `ai`.
+        return None if start_sec == 195.0 else ai_director.AIDirection(hype_score=1.0)
+
+    monkeypatch.setattr(ai_director, "direct", _direct)
+    peaks = [Peak(start_sec=100.0 * (i + 1), score=0.9 - 0.1 * i) for i in range(4)]
+    result = pipeline._score_candidates(
+        "video.mp4", peaks, "dynamic", ai_tier="full", n_final=2
+    )
+    assert sorted(directed) == [95.0, 195.0]  # só as 2 melhores
+    assert [r[0] for r in result[:2]] == peaks[:2]  # as mesmas 2 são as escolhidas
+    assert result[0][2] is not None and result[1][2] is None
+    assert all(r[1] is None for r in result)
+
+
+def test_ai_camera_off_keeps_local_visual_analysis(monkeypatch):
+    monkeypatch.setattr(settings, "visual_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
+    monkeypatch.setattr(settings, "ai_director_enabled", True)
+    monkeypatch.setattr(settings, "ai_camera_enabled", False)
+    monkeypatch.setattr(settings, "ai_triage_group_size", 0)
+    monkeypatch.setattr(pipeline.visual, "load_model", lambda: None)
+    analyzed: list = []
+    monkeypatch.setattr(
+        pipeline.visual,
+        "analyze_window",
+        lambda vp, start, *a, **k: analyzed.append(start) or _fake_wv(0.5),
+    )
+    monkeypatch.setattr(
+        ai_director, "direct", lambda *a, **k: ai_director.AIDirection(hype_score=0.5)
+    )
+    peaks = [Peak(start_sec=100.0 * (i + 1), score=0.5) for i in range(3)]
+    pipeline._score_candidates("video.mp4", peaks, "dynamic", ai_tier="full", n_final=2)
+    assert len(analyzed) == 3

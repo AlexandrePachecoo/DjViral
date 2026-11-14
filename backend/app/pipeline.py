@@ -1,13 +1,15 @@
 """Orquestra o processamento de um projeto: analisa → corta → sobe → persiste."""
 import json
 import logging
+import math
 import os
 import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
-from . import ai_director, analyzer, clipper, dynamic, visual, youtube
+from . import ai_director, analyzer, camera, clipper, dynamic, visual, youtube
 from .analyzer import Peak
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
@@ -219,18 +221,23 @@ def _process_project(
             "Projeto %s: %d picos candidatos (%d BPM)", project_id, len(peaks), bpm
         )
 
+        # A triagem da IA já devolve um título por janela; `ai_titles` carrega
+        # esses títulos para não gastar uma segunda passada só com isso.
+        ai_titles: dict[int, str] = {}
         candidates = _score_candidates(
-            video_path, peaks, cut_style, ai_tier
+            video_path, peaks, cut_style, ai_tier, n_final=n_final,
+            titles_out=ai_titles,
         )[:n_final]
 
         # Títulos/hooks virais (IA barata) para os cortes JÁ selecionados —
         # roda em qualquer tier com IA ligada (inclusive 'lite'/free). Sem IA
         # (ou falha), cada corte cai no título heurístico "Drop N · BPM".
-        titles = _generate_titles(video_path, candidates, ai_tier)
+        titles = _generate_titles(video_path, candidates, ai_tier, known=ai_titles)
 
         src_dims = probe_video(video_path) if cut_style == "dynamic" else None
 
-        for idx, (peak, wv, ai, final_score) in enumerate(candidates):
+        def _render_and_store(item) -> None:
+            idx, (peak, wv, ai, final_score) = item
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 clip_path = tmp.name
             try:
@@ -263,6 +270,14 @@ def _process_project(
             finally:
                 if os.path.exists(clip_path):
                     os.remove(clip_path)
+
+        # `render_concurrency` clipes ao mesmo tempo (default 1 = serial, como
+        # antes). O `list()` propaga a primeira exceção, que derruba o job
+        # como no laço serial.
+        with ThreadPoolExecutor(
+            max_workers=max(1, settings.render_concurrency)
+        ) as pool:
+            list(pool.map(_render_and_store, enumerate(candidates)))
 
         client.table("projects").update({"status": "done"}).eq(
             "id", project_id
@@ -323,31 +338,120 @@ def _ai_flags(ai_tier: str) -> tuple[bool, bool]:
     return triage_on, deep_on
 
 
+def _window(peak: Peak) -> tuple[int, float, float]:
+    """Janela ``(chave, início, duração)`` de um pico, como a IA a recebe."""
+    return (
+        id(peak),
+        max(0.0, peak.start_sec - settings.pre_roll),
+        float(settings.clip_duration),
+    )
+
+
 def _generate_titles(
     video_path: str,
     candidates: list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]],
     ai_tier: str,
+    known: dict[int, str] | None = None,
 ) -> dict[int, str]:
-    """Gera títulos/hooks virais (IA barata) para os cortes já selecionados.
+    """Títulos/hooks virais (IA barata) para os cortes já selecionados.
 
-    Roda em qualquer tier com IA ligada (inclusive 'lite'/free), pois usa só o
-    modelo de triagem. Devolve ``{id(peak): título}``; cortes sem título ficam
-    de fora e o chamador usa o heurístico. Nunca derruba o job.
+    ``known`` são os títulos que a TRIAGEM já devolveu (``{id(peak): título}``)
+    — o caso normal, sem chamada extra. Só os cortes que ficaram sem título
+    (triagem desligada, lote que falhou) passam por ``ai_director.title_group``.
+    Roda em qualquer tier com IA ligada (inclusive 'lite'/free). Cortes sem
+    título ficam de fora e o chamador usa o heurístico. Nunca derruba o job.
     """
     triage_on, _ = _ai_flags(ai_tier)
     if not triage_on or not candidates:
         return {}
-    windows = [
-        (
-            id(peak),
-            max(0.0, peak.start_sec - settings.pre_roll),
-            float(settings.clip_duration),
-        )
+    titles = {
+        id(peak): known[id(peak)]
         for peak, _wv, _ai, _score in candidates
+        if known and known.get(id(peak))
+    }
+    missing = [
+        _window(peak)
+        for peak, _wv, _ai, _score in candidates
+        if id(peak) not in titles
     ]
-    titles = ai_director.title_group(video_path, windows)
+    if missing:
+        titles.update(ai_director.title_group(video_path, missing))
     logger.info("Títulos de IA: %d/%d cortes com hook", len(titles), len(candidates))
     return titles
+
+
+def _run_triage(video_path: str, peaks: list[Peak]) -> dict[int, "ai_director.Triage"]:
+    """Triagem da IA em TODOS os candidatos, com os lotes em paralelo.
+
+    Cada lote é uma chamada independente (grabs de frame + API), então a fase
+    inteira custa o tempo do lote mais lento, não a soma. Lotes que não
+    terminarem dentro do budget ficam de fora (janelas só com score local).
+    """
+    size = max(1, settings.ai_triage_group_size)
+    groups = [peaks[i : i + size] for i in range(0, len(peaks), size)]
+    out: dict[int, "ai_director.Triage"] = {}
+    pool = ThreadPoolExecutor(max_workers=max(1, settings.ai_concurrency))
+    try:
+        futures = [
+            pool.submit(
+                ai_director.triage_group, video_path, [_window(p) for p in group]
+            )
+            for group in groups
+        ]
+        done, pending = wait(futures, timeout=settings.ai_triage_budget_seconds)
+        for fut in done:
+            try:
+                out.update(fut.result())
+            except Exception:  # noqa: BLE001 - a triagem nunca é fatal
+                logger.exception("Lote de triagem de IA falhou")
+        if pending:
+            logger.warning(
+                "Budget de triagem de IA (%ss) estourado — %d lote(s) ficam só "
+                "com o score local",
+                settings.ai_triage_budget_seconds, len(pending),
+            )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    logger.info("Triagem de IA: %d/%d janelas avaliadas", len(out), len(peaks))
+    return out
+
+
+def _run_direction(
+    video_path: str, targets: list[tuple[Peak, WindowVisual | None]]
+) -> dict[int, "ai_director.AIDirection"]:
+    """Direção profunda da IA nas janelas ``targets``, em paralelo."""
+    out: dict[int, "ai_director.AIDirection"] = {}
+    if not targets:
+        return out
+    pool = ThreadPoolExecutor(max_workers=max(1, settings.ai_concurrency))
+    try:
+        futures = {
+            pool.submit(ai_director.direct, video_path, *_window(peak)[1:], wv): peak
+            for peak, wv in targets
+        }
+        done, pending = wait(futures, timeout=settings.ai_director_budget_seconds)
+        for fut in done:
+            try:
+                ai = fut.result()
+            except Exception:  # noqa: BLE001 - a direção nunca é fatal
+                logger.exception("Direção de IA falhou")
+                continue
+            if ai is not None:
+                out[id(futures[fut])] = ai
+        if pending:
+            logger.warning(
+                "Budget da direção de IA (%ss) estourado — %d janela(s) sem direção",
+                settings.ai_director_budget_seconds, len(pending),
+            )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    usage = ai_director.get_usage()
+    logger.info(
+        "Diretor de IA: %d chamadas de direção, %d direções aproveitadas, "
+        "custo estimado do job ~$%.4f (%d chamadas no total)",
+        len(targets), len(out), usage["usd"], usage["calls"],
+    )
+    return out
 
 
 def _score_candidates(
@@ -355,48 +459,111 @@ def _score_candidates(
     peaks: list[Peak],
     cut_style: str,
     ai_tier: str = "off",
+    n_final: int | None = None,
+    titles_out: dict[int, str] | None = None,
 ) -> list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]]:
-    """Roda a análise das janelas candidatas e re-ranqueia.
+    """Avalia as janelas candidatas e re-ranqueia. Funil do mais barato ao mais caro:
 
-    Quatro etapas:
-    1. Score LOCAL por janela = ``score_music_weight * musical + (1 - peso) *
-       visual`` (áudio + YOLO), como antes. Janela sem análise visual (visual
-       desligado, budget estourado ou erro) fica só com o score musical.
-    2. Se o tier liga a triagem ('lite'/'full'), a TRIAGEM da IA roda em lotes
-       cobrindo TODOS os candidatos (barata: poucos keyframes pequenos, várias
-       janelas por chamada) e ajusta o score: ``adjusted = (1-w1)*base +
-       w1*hype_lite``. Diferente da direção profunda, isto nunca corta
-       candidatos por um top-K — só reordena.
-    3. Só no tier 'full', a DIREÇÃO PROFUNDA da IA roda nas TOP-K janelas pelo
-       score AJUSTADO (teto ``ai_director_max_calls`` + budget de tempo
-       próprio); o hype profundo refina o score final: ``final = (1-w2)*
-       adjusted + w2*hype``.
-    4. Sem IA (tier 'off' ou sem chave), o score final é o local de sempre.
+    1. TRIAGEM da IA ('lite'/'full') em TODOS os candidatos, em lotes paralelos
+       (poucos keyframes pequenos por janela): devolve ``hype`` e um título por
+       janela. É segundos de trabalho, então vem ANTES de qualquer análise pesada.
+    2. SHORTLIST: com ``n_final`` e triagem, só as ``n_final *
+       visual_shortlist_factor`` melhores por ``música + hype`` seguem para a
+       análise visual — YOLO em janelas que seriam descartadas era o maior
+       desperdício do job. Sem triagem (ou sem ``n_final``), todas seguem.
+    3. ANÁLISE VISUAL (YOLO) da shortlist: ``base = w_music * musical + (1 -
+       w_music) * visual`` (só musical se a janela ficou sem análise) e
+       ``adjusted = (1-w1)*base + w1*hype`` nas janelas triadas.
+    4. DIREÇÃO PROFUNDA ('full') nas top-K pelo score ajustado, em paralelo:
+       ``final = (1-w2)*adjusted + w2*hype_profundo``.
 
-    Nenhuma das fases (visual, triagem, direção) derruba o job.
+    Com a câmera da IA ligada (``ai_camera_enabled``, tier 'full') os passos
+    2-3 não existem: as ``n_final`` melhores por ``música + hype`` recebem a
+    direção profunda direto (é ela que monta os shots) e o YOLO não roda — a
+    análise visual local só acontece no render, como rede de segurança da
+    janela cuja direção falhou.
+
+    Devolve a shortlist ordenada pelo score final, seguida das janelas que
+    ficaram fora dela (pelo score de triagem). ``titles_out`` recebe os títulos
+    da triagem (``{id(peak): título}``). Nenhuma fase derruba o job.
     """
-    if not settings.visual_enabled or not peaks:
-        return [(peak, None, None, peak.score) for peak in peaks]
+    if not peaks:
+        return []
+    triage_on, deep_on = _ai_flags(ai_tier)
+    if triage_on:
+        ai_director.reset_usage()
 
-    net = visual.load_model()
-    net_face = visual.load_face_model() if cut_style == "dynamic" else None
-    if cut_style == "dynamic":
-        detect_every = settings.visual_detect_every
-    else:
-        detect_every = max(1, int(8 * settings.visual_fps))  # ~1 detecção/8s
-    deadline = time.monotonic() + settings.visual_budget_seconds
-    w_music = settings.score_music_weight
+    # ---- 1) triagem da IA em todos os candidatos ----
+    triage_map: dict[int, "ai_director.Triage"] = {}
+    if triage_on and settings.ai_triage_group_size > 0:
+        triage_map = _run_triage(video_path, peaks)
+        if titles_out is not None:
+            titles_out.update(
+                {key: tr.title for key, tr in triage_map.items() if tr.title}
+            )
+    w1 = min(1.0, max(0.0, settings.score_hype_lite_weight))
 
-    # ---- 1) score local (áudio + YOLO) ----
-    scored: list[tuple[Peak, WindowVisual | None, float]] = []
-    for peak in peaks:
-        wv: WindowVisual | None = None
-        if time.monotonic() < deadline:
+    def _with_hype(peak: Peak, base: float) -> float:
+        triage = triage_map.get(id(peak))
+        return base if triage is None else (1 - w1) * base + w1 * triage.hype
+
+    # ---- IA dirige a câmera ('full'): direção nos N melhores, sem YOLO ----
+    if deep_on and settings.ai_camera_enabled:
+        ranked = sorted(peaks, key=lambda p: _with_hype(p, p.score), reverse=True)
+        n_direct = min(
+            len(ranked) if n_final is None else n_final,
+            max(0, settings.ai_director_max_calls),
+        )
+        top, rest = ranked[:n_direct], ranked[n_direct:]
+        ai_map = _run_direction(video_path, [(p, None) for p in top])
+        w2 = min(1.0, max(0.0, settings.score_hype_weight))
+        directed = []
+        for peak in top:
+            ai = ai_map.get(id(peak))
+            score = _with_hype(peak, peak.score)
+            final = (1 - w2) * score + w2 * ai.hype_score if ai is not None else score
+            directed.append((peak, None, ai, final))
+        directed.sort(key=lambda item: item[3], reverse=True)
+        return directed + [(p, None, None, _with_hype(p, p.score)) for p in rest]
+
+    # ---- 2) shortlist para a análise pesada ----
+    shortlist, rest = list(peaks), []
+    if triage_map and n_final is not None:
+        keep = math.ceil(n_final * max(1.0, settings.visual_shortlist_factor))
+        if keep < len(peaks):
+            ranked = sorted(peaks, key=lambda p: _with_hype(p, p.score), reverse=True)
+            kept = {id(p) for p in ranked[:keep]}
+            shortlist = [p for p in peaks if id(p) in kept]
+            rest = [p for p in ranked if id(p) not in kept]
+            logger.info(
+                "Shortlist: %d de %d candidatos seguem para a análise visual",
+                len(shortlist), len(peaks),
+            )
+
+    # ---- 3) score local (áudio + YOLO) da shortlist ----
+    visuals: dict[int, WindowVisual] = {}
+    if settings.visual_enabled:
+        net = visual.load_model()
+        net_face = visual.load_face_model() if cut_style == "dynamic" else None
+        if cut_style == "dynamic":
+            detect_every = settings.visual_detect_every
+        else:
+            detect_every = max(1, int(8 * settings.visual_fps))  # ~1 detecção/8s
+        deadline = time.monotonic() + settings.visual_budget_seconds
+        for i, peak in enumerate(shortlist):
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Budget visual (%ss) estourado — %d janela(s) só com score "
+                    "musical",
+                    settings.visual_budget_seconds, len(shortlist) - i,
+                )
+                break
+            _key, start, duration = _window(peak)
             try:
-                wv = visual.analyze_window(
+                visuals[id(peak)] = visual.analyze_window(
                     video_path,
-                    max(0.0, peak.start_sec - settings.pre_roll),
-                    float(settings.clip_duration),
+                    start,
+                    duration,
                     net=net,
                     detect_every=detect_every,
                     fps=settings.visual_fps,
@@ -406,90 +573,36 @@ def _score_candidates(
                 logger.exception(
                     "Análise visual falhou na janela %.1fs", peak.start_sec
                 )
-        elif not scored or scored[-1][1] is not None:
-            logger.warning(
-                "Budget visual (%ss) estourado — janelas restantes só com "
-                "score musical",
-                settings.visual_budget_seconds,
-            )
+
+    w_music = settings.score_music_weight
+    adjusted: dict[int, float] = {}
+    for peak in shortlist:
+        wv = visuals.get(id(peak))
         base = (
             w_music * peak.score + (1 - w_music) * wv.visual_score
             if wv is not None
             else peak.score
         )
-        scored.append((peak, wv, base))
+        adjusted[id(peak)] = _with_hype(peak, base)
 
-    triage_on, deep_on = _ai_flags(ai_tier)
-    if triage_on:
-        ai_director.reset_usage()
-
-    # ---- 2) triagem da IA em TODOS os candidatos (opcional, barata) ----
-    adjusted_map: dict[int, float] = {id(peak): base for peak, _wv, base in scored}
-    if triage_on and settings.ai_triage_group_size > 0:
-        triage_deadline = time.monotonic() + settings.ai_triage_budget_seconds
-        w1 = min(1.0, max(0.0, settings.score_hype_lite_weight))
-        group_size = max(1, settings.ai_triage_group_size)
-        n_triaged = 0
-        for i in range(0, len(scored), group_size):
-            if time.monotonic() >= triage_deadline:
-                logger.warning(
-                    "Budget de triagem de IA (%ss) estourado — candidatos "
-                    "restantes ficam só com o score local",
-                    settings.ai_triage_budget_seconds,
-                )
-                break
-            group = scored[i : i + group_size]
-            windows = [
-                (
-                    id(peak),
-                    max(0.0, peak.start_sec - settings.pre_roll),
-                    float(settings.clip_duration),
-                )
-                for peak, _wv, _base in group
-            ]
-            triage_map = ai_director.triage_group(video_path, windows)
-            for peak, _wv, base in group:
-                triage = triage_map.get(id(peak))
-                if triage is not None:
-                    n_triaged += 1
-                    adjusted_map[id(peak)] = (1 - w1) * base + w1 * triage.hype
-        logger.info("Triagem de IA: %d/%d janelas avaliadas", n_triaged, len(scored))
-
-    # ---- 3) direção profunda da IA nas top-K janelas pelo score ajustado ----
+    # ---- 4) direção profunda da IA nas top-K pelo score ajustado ----
     ai_map: dict[int, "ai_director.AIDirection"] = {}
     if deep_on:
-        ai_deadline = time.monotonic() + settings.ai_director_budget_seconds
-        calls = 0
-        ordered = sorted(scored, key=lambda it: adjusted_map[id(it[0])], reverse=True)
-        for peak, wv, _base in ordered:
-            if calls >= settings.ai_director_max_calls or time.monotonic() >= ai_deadline:
-                break
-            calls += 1
-            ai = ai_director.direct(
-                video_path,
-                max(0.0, peak.start_sec - settings.pre_roll),
-                float(settings.clip_duration),
-                wv,
-            )
-            if ai is not None:
-                ai_map[id(peak)] = ai
-        usage = ai_director.get_usage()
-        logger.info(
-            "Diretor de IA: %d chamadas de direção, %d direções aproveitadas, "
-            "custo estimado do job ~$%.4f (%d chamadas no total)",
-            calls, len(ai_map), usage["usd"], usage["calls"],
+        top = sorted(shortlist, key=lambda p: adjusted[id(p)], reverse=True)
+        top = top[: max(0, settings.ai_director_max_calls)]
+        ai_map = _run_direction(
+            video_path, [(p, visuals.get(id(p))) for p in top]
         )
 
-    # ---- 4) score final (ajustado + hype profundo) e re-rank ----
     w2 = min(1.0, max(0.0, settings.score_hype_weight))
     result: list[tuple[Peak, WindowVisual | None, "ai_director.AIDirection | None", float]] = []
-    for peak, wv, _base in scored:
-        adjusted = adjusted_map[id(peak)]
+    for peak in shortlist:
         ai = ai_map.get(id(peak))
-        final = (1 - w2) * adjusted + w2 * ai.hype_score if ai is not None else adjusted
-        result.append((peak, wv, ai, final))
-
+        score = adjusted[id(peak)]
+        final = (1 - w2) * score + w2 * ai.hype_score if ai is not None else score
+        result.append((peak, visuals.get(id(peak)), ai, final))
     result.sort(key=lambda item: item[3], reverse=True)
+    result.extend((p, None, None, _with_hype(p, p.score)) for p in rest)
     return result
 
 
@@ -547,6 +660,33 @@ def _cut_dynamic_tiered(
     return False
 
 
+# A rede do YOLO (cv2.dnn) não é thread-safe; os renders podem rodar em
+# paralelo (`render_concurrency`), então a análise sob demanda é serializada.
+_visual_lock = threading.Lock()
+
+
+def _analyze_for_render(
+    video_path: str, start: float, duration: float
+) -> WindowVisual | None:
+    """Análise visual local de UMA janela, sob demanda, para o planejador legado."""
+    if not settings.visual_enabled:
+        return None
+    try:
+        with _visual_lock:
+            return visual.analyze_window(
+                video_path,
+                start,
+                duration,
+                net=visual.load_model(),
+                detect_every=settings.visual_detect_every,
+                fps=settings.visual_fps,
+                net_face=visual.load_face_model(),
+            )
+    except Exception:  # noqa: BLE001 - análise visual nunca é fatal
+        logger.exception("Análise visual sob demanda falhou em %.1fs", start)
+        return None
+
+
 def _render_clip(
     video_path: str,
     peak: Peak,
@@ -569,33 +709,51 @@ def _render_clip(
     dinâmico cai para o corte seco — o clipe nunca é perdido.
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
+    duration = float(settings.clip_duration)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
-        # Detecção rodou, não achou ninguém e a cena está parada → seco... a
-        # menos que a IA tenha visto o DJ onde o YOLO falhou (cena escura); e a
-        # IA também pode declarar a cena "não digna" de zooms (worthy=False).
-        boring = (
-            wv is not None
+        ai_camera = (
+            settings.ai_camera_enabled and ai is not None and bool(ai.frames)
+        )
+        if not ai_camera and wv is None:
+            # Sem direção da IA e sem análise local (a janela veio do caminho
+            # da câmera da IA e a direção dela falhou): analisa só esta janela.
+            wv = _analyze_for_render(video_path, start, duration)
+        # A IA pode declarar a cena "não digna" de zooms (worthy=False). No
+        # caminho legado, detecção que rodou, não achou ninguém e cena parada
+        # também vão de corte seco — a menos que a IA tenha visto o DJ.
+        boring = (ai is not None and not ai.worthy) or (
+            not ai_camera
+            and wv is not None
             and wv.detected
             and wv.dj_box is None
             and wv.motion_score < 0.1
             and (ai is None or ai.dj_box is None)
-        ) or (ai is not None and not ai.worthy)
+        )
         if not boring:
             shots = None
             try:
-                beats = visual.get_beat_times(
-                    video_path, start, float(settings.clip_duration), bpm
-                )
-                shots = dynamic.build_shot_plan(
-                    wv,
-                    beats,
-                    float(settings.clip_duration),
-                    src_dims["width"],
-                    src_dims["height"],
-                    peak_at=peak.start_sec - start,
-                    ai=ai,
-                    intensity=cut_intensity,
-                )
+                beats = visual.get_beat_times(video_path, start, duration, bpm)
+                if ai_camera:
+                    shots = camera.build_ai_shot_plan(
+                        ai,
+                        beats,
+                        duration,
+                        src_dims["width"],
+                        src_dims["height"],
+                        peak_at=peak.start_sec - start,
+                        intensity=cut_intensity,
+                    )
+                else:
+                    shots = dynamic.build_shot_plan(
+                        wv,
+                        beats,
+                        duration,
+                        src_dims["width"],
+                        src_dims["height"],
+                        peak_at=peak.start_sec - start,
+                        ai=ai,
+                        intensity=cut_intensity,
+                    )
             except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
                     "Falha ao montar o shot plan em %.1fs", peak.start_sec
