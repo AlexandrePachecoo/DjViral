@@ -9,27 +9,35 @@
       "howItWorks": "Como funciona",
       "pricing": "Preços",
       "login": "Entrar",
-      "tryFree": "Teste grátis"
+      "tryFree": "Teste grátis",
+      "features": "Recursos",
+      "faq": "Dúvidas"
     },
     "hero": {
       "titleLine1": "1 set longo.",
       "titleLine2": "30 cortes virais.",
-      "subtitle": "Suba o vídeo do seu set. A IA acha os drops, as viradas e os momentos de maior energia  e devolve vídeos verticais prontos pro feed."
+      "subtitle": "Suba o vídeo do seu set. A IA acha os drops, as viradas e os momentos de maior energia e devolve vídeos verticais prontos pro feed.",
+      "badge": "Feito para DJs · IA de áudio + vídeo",
+      "ctaPrimary": "Começar grátis",
+      "ctaSecondary": "Ver como funciona",
+      "trust1": "Sem cartão de crédito",
+      "trust2": "1 hora de set grátis",
+      "trust3": "Arquivo ou link do YouTube"
     },
     "how": {
       "eyebrow": "COMO FUNCIONA",
       "title": "Do arquivo ao feed em três passos.",
       "step1": {
         "title": "Envie seu set",
-        "body": "Arraste o vídeo do seu set de até 3 horas"
+        "body": "Arraste o vídeo do seu set de até 3 horas ou cole o link do YouTube."
       },
       "step2": {
         "title": "A IA corta os picos",
-        "body": "Detectamos drops, viradas e os momentos de maior energia e cortamos automaticamente  sem você rever tudo."
+        "body": "Detectamos drops, viradas e os momentos de maior energia e cortamos automaticamente, sem você rever tudo."
       },
       "step3": {
         "title": "Receba 30 cortes",
-        "body": "Vídeos verticais 9:16, prontos para postar no TikTok, Reels e Shorts. Ainda tem a opção de editar o corte do jeito que quiser "
+        "body": "Vídeos verticais 9:16, prontos para postar no TikTok, Reels e Shorts. E dá pra editar cada corte do jeito que quiser."
       }
     },
     "pricing": {
@@ -62,7 +70,8 @@
         "feature3": "Até 30 cortes por set",
         "feature4": "Re-corte no minuto exato",
         "cta": "Assinar Premium"
-      }
+      },
+      "note": "Sem fidelidade. Cancele quando quiser."
     },
     "finalCta": {
       "title": "Seu próximo set já tem 30 cortes esperando.",
@@ -70,7 +79,11 @@
       "button": "Testar grátis agora"
     },
     "footer": {
-      "copy": "© 2026 DJviral · cortes que viram feed"
+      "copy": "© 2026 DJviral · cortes que viram feed",
+      "tagline": "Cortes virais a partir dos seus sets, prontos pro feed.",
+      "product": "Produto",
+      "account": "Conta",
+      "signup": "Criar conta grátis"
     },
     "generator": {
       "headerLabel": "Gerador de cortes",
@@ -108,19 +121,112 @@
       "videoTag": "SEU SET · 2:47:11",
       "generateBtn": "✂ Gerar cortes",
       "footer": "Um clique transforma o set inteiro em cortes prontos pra TikTok, Reels e Shorts."
+    },
+    "platforms": {
+      "label": "Cortes no formato certo para"
+    },
+    "stats": {
+      "s1": "de set por vídeo",
+      "s2": "cortes por set",
+      "s3": "vertical, pronto pro feed",
+      "s4": "de set grátis pra testar",
+      "v1": "3h",
+      "v2": "30",
+      "v3": "9:16",
+      "v4": "1h"
+    },
+    "features": {
+      "eyebrow": "RECURSOS",
+      "title": "Tudo que um set precisa pra virar conteúdo.",
+      "subtitle": "Nada de editor genérico de podcast: a DJviral foi feita pra música, pista e drop.",
+      "f1": {
+        "title": "Ouve o set como um DJ",
+        "body": "A análise é feita pelo áudio: energia, impacto das batidas e o contraste antes e depois do drop. Os melhores momentos sobem pro topo."
+      },
+      "f2": {
+        "title": "Corte dinâmico no beat",
+        "body": "Zoom no DJ, no público e em quem está dançando, com trocas de câmera alinhadas à batida. Três níveis de intensidade."
+      },
+      "f3": {
+        "title": "Títulos que seguram o scroll",
+        "body": "Cada corte já chega com um gancho pronto pra legenda do TikTok ou Reels, gerado por IA a partir da cena."
+      },
+      "f4": {
+        "title": "Editor estilo CapCut",
+        "body": "Ajuste início e fim, reposicione o enquadramento e crie keyframes de câmera. O corte é regenerado do jeito que você quer."
+      },
+      "f5": {
+        "title": "Arquivo ou YouTube",
+        "body": "Envie o vídeo do set, de até 3 horas, ou só cole o link do YouTube. O resto é com a gente."
+      },
+      "f6": {
+        "title": "Link pra compartilhar",
+        "body": "Gere um link público do set pra produtora, o clube ou o seu social media ver e baixar os cortes sem login."
+      }
+    },
+    "faq": {
+      "eyebrow": "DÚVIDAS",
+      "title": "Perguntas frequentes",
+      "q1": {
+        "q": "Como a IA escolhe os cortes?",
+        "a": "Ela analisa o áudio do set inteiro (energia, impacto das batidas e o contraste dos drops) e depois olha a imagem dos melhores trechos: movimento, DJ e público. Os momentos com maior pontuação viram cortes."
+      },
+      "q2": {
+        "q": "Que tipo de vídeo posso enviar?",
+        "a": "Qualquer vídeo de set com até 3 horas, enviado como arquivo ou por link do YouTube. Os cortes saem em vertical 9:16."
+      },
+      "q3": {
+        "q": "É grátis mesmo?",
+        "a": "Sim. O teste grátis inclui 1 hora de set e até 10 cortes por set, sem cartão de crédito. Você só assina se quiser mais horas e mais cortes."
+      },
+      "q4": {
+        "q": "Posso ajustar um corte depois de gerado?",
+        "a": "Pode. No editor você muda o início e o fim, reposiciona o enquadramento, dá zoom e renomeia o corte. O vídeo é regenerado com os seus ajustes."
+      },
+      "q5": {
+        "q": "Quanto tempo leva pra gerar os cortes?",
+        "a": "Depende da duração do set e do estilo escolhido. O processamento roda em segundo plano: você pode fechar a aba e voltar depois que os cortes estarão no seu estúdio."
+      },
+      "q6": {
+        "q": "Como funciona a assinatura?",
+        "a": "Os planos pagos renovam todo mês, com pagamento por PIX ou cartão. Você pode cancelar a qualquer momento pela aba Plano do estúdio."
+      }
     }
   },
   "studio": {
     "header": {
-      "tabs": { "generator": "Gerador", "editor": "Edição", "saved": "Cortes salvos" },
+      "tabs": {
+        "generator": "Gerador",
+        "saved": "Cortes salvos"
+      },
       "newSet": "＋ Novo set",
-      "menu": { "profile": "Perfil", "plan": "Planos/Uso", "logout": "Sair da conta" }
+      "menu": {
+        "profile": "Perfil",
+        "plan": "Planos/Uso",
+        "logout": "Sair da conta"
+      }
     },
     "plan": {
       "cards": {
-        "free": { "name": "Teste grátis", "priceNote": "para experimentar", "f1": "1 hora de set no total", "f2": "10 cortes por set", "f3": "Vídeos verticais 9:16" },
-        "pro": { "name": "Pro", "f1": "Até 5 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
-        "premium": { "name": "Premium", "f1": "Até 12 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
+        "free": {
+          "name": "Teste grátis",
+          "priceNote": "para experimentar",
+          "f1": "1 hora de set no total",
+          "f2": "10 cortes por set",
+          "f3": "Vídeos verticais 9:16"
+        },
+        "pro": {
+          "name": "Pro",
+          "f1": "Até 5 horas de set por mês",
+          "f2": "Até 30 cortes por set",
+          "f3": "Re-corte no minuto exato"
+        },
+        "premium": {
+          "name": "Premium",
+          "f1": "Até 12 horas de set por mês",
+          "f2": "Até 30 cortes por set",
+          "f3": "Re-corte no minuto exato"
+        },
         "paidPriceNote": "/mês · PIX ou cartão"
       },
       "errors": {
@@ -172,8 +278,7 @@
         "shared": "🔗 Compartilhado",
         "share": "🔗 Compartilhar",
         "deleteSet": "🗑 Apagar set",
-        "inSet": "no set",
-        "edit": "✎ Editar"
+        "inSet": "no set"
       }
     },
     "generator": {
@@ -203,7 +308,6 @@
       "savedCheck": "Salvo ✓",
       "selected": "Selecionado",
       "select": "Selecionar",
-      "edit": "✎ Editar",
       "download": "Baixar",
       "form": {
         "title": "Novo set",
@@ -211,15 +315,30 @@
         "namePlaceholder": "Nome do set",
         "styleLabel": "Estilo de corte",
         "style": {
-          "basic": { "title": "Corte seco", "desc": "Enquadramento fixo no centro. Processamento mais rápido." },
-          "dynamic": { "title": "Corte dinâmico", "desc": "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais." }
+          "basic": {
+            "title": "Corte seco",
+            "desc": "Enquadramento fixo no centro. Processamento mais rápido."
+          },
+          "dynamic": {
+            "title": "Corte dinâmico",
+            "desc": "Zoom no DJ e no público, cortes no ritmo da batida. Demora mais."
+          }
         },
         "intensityLabel": "Intensidade",
         "intensityAria": "Intensidade do corte dinâmico",
         "intensity": {
-          "subtle": { "title": "Sutil", "desc": "Poucas trocas de shot, zooms discretos." },
-          "medium": { "title": "Médio", "desc": "Equilíbrio entre ritmo e naturalidade." },
-          "intense": { "title": "Intenso", "desc": "Muita troca dj/público, zooms fortes na batida." }
+          "subtle": {
+            "title": "Sutil",
+            "desc": "Poucas trocas de shot, zooms discretos."
+          },
+          "medium": {
+            "title": "Médio",
+            "desc": "Equilíbrio entre ritmo e naturalidade."
+          },
+          "intense": {
+            "title": "Intenso",
+            "desc": "Muita troca dj/público, zooms fortes na batida."
+          }
         },
         "numCutsLabel": "Quantidade de cortes",
         "planAllows": "Seu plano permite até {max} cortes por set.",
@@ -232,7 +351,12 @@
     },
     "profile": {
       "title": "Perfil",
-      "planLabels": { "free": "Teste grátis", "pro": "Pro", "premium": "Premium", "admin": "Admin" },
+      "planLabels": {
+        "free": "Teste grátis",
+        "pro": "Pro",
+        "premium": "Premium",
+        "admin": "Admin"
+      },
       "errors": {
         "saveFailed": "falha ao salvar",
         "unexpected": "Erro inesperado",
@@ -275,69 +399,6 @@
         "saving": "Salvando...",
         "changePassword": "Alterar senha"
       }
-    },
-    "editor": {
-      "back": "Voltar",
-      "errors": {
-        "codecUnsupported": "o navegador não consegue reproduzir o formato/codec do arquivo original (ex.: HEVC/MOV de iPhone ou MKV)",
-        "networkFailure": "falha de rede ao baixar o vídeo original do armazenamento",
-        "sourceLoadFailed": "o vídeo original não pôde ser carregado",
-        "code": "código",
-        "recutFailed": "O re-corte falhou. Tente de novo.",
-        "recutSlow": "O re-corte está demorando. Tente novamente em instantes.",
-        "titleEmpty": "O título não pode ficar vazio.",
-        "nothingToSave": "Nada para salvar.",
-        "renameFailed": "Falha ao renomear",
-        "recutRequestFailed": "Falha ao re-cortar",
-        "saveFailed": "Erro ao salvar"
-      },
-      "status": {
-        "regenerating": "Regenerando o vídeo do corte...",
-        "saving": "Salvando..."
-      },
-      "cutNamePlaceholder": "Nome do corte",
-      "cutTitleAria": "Título do corte",
-      "editorFallbackName": "Editor",
-      "exporting": "Exportando...",
-      "saveCut": "Salvar corte",
-      "loadingSet": "Carregando o set original...",
-      "sourceUnavailable": {
-        "withError": "Não deu para tocar o vídeo original deste set: {reason}. O preview abaixo mostra o corte já gerado; dá para ajustar o início/fim e o título — o zoom manual precisa do vídeo original.",
-        "noSource": "O vídeo original deste set não está disponível para pré-visualização (set do YouTube ou arquivo removido). Dá para ajustar o início/fim na timeline — o zoom manual precisa do vídeo original."
-      },
-      "loadingVideo": "Carregando o vídeo do set...",
-      "regeneratingVideo": "Regenerando o vídeo com a nova edição...",
-      "pause": "Pausar",
-      "play": "Tocar",
-      "startHere": "⇤ Início aqui",
-      "endHere": "Fim aqui ⇥",
-      "removeKeyframe": "Remover keyframe",
-      "addKeyframe": "Adicionar keyframe",
-      "panel": {
-        "framing": "Enquadramento",
-        "zoom": "Zoom",
-        "cameraZoomAria": "Zoom da câmera",
-        "framingHint": "Arraste o vídeo no preview (ou role o scroll) para enquadrar. Cada ajuste vira um keyframe ◆ no ponto atual.",
-        "keyframes": "Keyframes",
-        "noKeyframes": "Nenhum keyframe ainda — a câmera fica parada no centro.",
-        "clearKeyframes": "Limpar todos os keyframes",
-        "trim": "Trecho",
-        "start": "Início",
-        "end": "Fim",
-        "duration": "Duração: {dur}s (mín. {min}s · máx. {max}s)"
-      },
-      "timeline": {
-        "fitToClip": "Ajustar ao corte",
-        "fullWindow": "Janela toda",
-        "hint": "arraste as alças roxas para encurtar ou estender o corte — pode ir além do trecho que a IA escolheu (a linha branca embaixo marca a escolha original). Para o editor ficar leve, a timeline carrega ~1 min antes e depois do corte; ao estender o corte, a janela acompanha."
-      }
-    },
-    "editPicker": {
-      "empty": "Nenhum corte para editar ainda. Gere um set no Gerador ou salve cortes — eles aparecem aqui para ajustar tempo, zoom e keyframes.",
-      "title": "Escolha um corte para editar",
-      "subtitle": "ajuste início/fim na timeline, arraste a janela do TikTok e crie keyframes de zoom",
-      "inSet": "no set",
-      "edit": "✎ Editar"
     }
   },
   "publicShare": {

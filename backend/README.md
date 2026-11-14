@@ -11,7 +11,8 @@ suficientes. A Vercel (`../frontend`) faz a orquestração e dispara este worker
 
 1. **Disparo** (`POST /process`, JSON `{project_id}` + header `X-Worker-Secret`)
    — a Vercel chama este endpoint depois que o navegador subiu o vídeo direto ao
-   Supabase Storage. Responde 202 e processa em background (`BackgroundTasks`).
+   Supabase Storage. Responde 202 e enfileira um job na tabela `jobs`; uma
+   thread consumidora do worker o executa (`app/jobs.py`).
 2. **Download** (`pipeline.py`) — busca a linha `source` do projeto, baixa o
    vídeo do bucket `sources` para um arquivo temporário.
 3. **Análise** (`analyzer.py`) — [Librosa](https://librosa.org) carrega o áudio
@@ -35,7 +36,8 @@ suficientes. A Vercel (`../frontend`) faz a orquestração e dispara este worker
 ## Supabase
 
 1. **Database → SQL editor**: rode `supabase/schema.sql` (cria `projects`,
-   `sources`, `cuts`).
+   `sources`, `cuts`, a fila `jobs` e a função `claim_job`). O arquivo é
+   idempotente: rode de novo a cada migração.
 2. **Storage**: crie o bucket público `clips` e o bucket privado `sources`.
 3. Aumente o limite de tamanho de upload do projeto para comportar sets longos.
 
@@ -68,6 +70,18 @@ curl -X POST http://localhost:8000/process \
   -d '{"project_id": "<uuid>"}'
 ```
 
+### Calibrar o corte dinâmico com um set real (sem Supabase)
+
+```bash
+python -m tools.calibrate set.mp4 --top 15 --json relatorio.json
+```
+
+Roda áudio → janelas candidatas → análise visual → plano de shots, sem
+renderizar, e mostra por janela: pouca luz, persistência da track do DJ,
+movimento, score visual e os shots de cada intensidade. As variáveis de
+ambiente valem, então dá para comparar um ajuste
+(`DYNAMIC_MIN_SHOT_CONF=0.2 python -m tools.calibrate set.mp4`).
+
 ### Testar só o núcleo de análise (sem Supabase)
 
 ```bash
@@ -92,9 +106,11 @@ python -c "from app.analyzer import analyze; print(analyze('set_teste.mp4', top_
   esse limite o x264 abre uma thread por núcleo do host (~34 na Railway) e cada
   uma segura buffers de frame 1080p → ~900 MB por corte; com 2 threads o pico
   fica em ~300 MB, sem custo real de velocidade.
-- `BackgroundTasks` roda no mesmo processo, com no máximo
-  `MAX_CONCURRENT_JOBS` (default 1) jobs pesados simultâneos — os demais
-  esperam na fila. Para escala real, migrar para fila dedicada
-  (Redis/BullMQ/Celery).
+- Os jobs ficam numa fila durável no Postgres (tabela `jobs`): no máximo
+  `MAX_CONCURRENT_JOBS` (default 1) rodam ao mesmo tempo neste processo, os
+  demais esperam. Um job interrompido por redeploy/crash volta para a fila
+  depois de `JOB_STALE_SECONDS` sem heartbeat (até `JOB_MAX_ATTEMPTS` vezes).
+  Sem a migração da fila aplicada, o worker cai no `BackgroundTasks` em
+  memória (que perde o job num redeploy).
 - A heurística de score (RMS + onset + contraste) é simples. Refinamentos
   futuros: análise de vocais, estrutura da música, etc.

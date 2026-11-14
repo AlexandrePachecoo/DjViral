@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { PLANS, priceLabel } from "@/lib/plans";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
 // Aba "Plano": plano atual + uso do período + upgrade via checkout hospedado.
-// O provedor é escolhido pelo locale no servidor (/api/billing/checkout):
-// Stripe (USD, cartão) no internacional (en), AbacatePay (BRL, PIX ou cartão)
-// no Brasil (pt). A UI só mostra o preço na moeda do locale e abre a URL de
-// pagamento que a rota devolver.
+// A cobrança é sempre pela AbacatePay (BRL, PIX ou cartão): a UI mostra o
+// preço em reais e abre a URL de pagamento que /api/billing/checkout devolver.
 
 type Billing = {
   plan: "free" | "pro" | "premium" | "admin";
@@ -40,7 +38,6 @@ function fmtHours(seconds: number): string {
 
 export function PlanView() {
   const t = useTranslations("studio.plan");
-  const locale = useLocale();
   const CARDS: {
     id: "free" | "pro" | "premium";
     name: string;
@@ -51,21 +48,21 @@ export function PlanView() {
     {
       id: "free",
       name: t("cards.free.name"),
-      price: priceLabel(PLANS.free, locale),
+      price: priceLabel(PLANS.free),
       priceNote: t("cards.free.priceNote"),
       features: [t("cards.free.f1"), t("cards.free.f2"), t("cards.free.f3")],
     },
     {
       id: "pro",
       name: t("cards.pro.name"),
-      price: priceLabel(PLANS.pro, locale),
+      price: priceLabel(PLANS.pro),
       priceNote: t("cards.paidPriceNote"),
       features: [t("cards.pro.f1"), t("cards.pro.f2"), t("cards.pro.f3")],
     },
     {
       id: "premium",
       name: t("cards.premium.name"),
-      price: priceLabel(PLANS.premium, locale),
+      price: priceLabel(PLANS.premium),
       priceNote: t("cards.paidPriceNote"),
       features: [t("cards.premium.f1"), t("cards.premium.f2"), t("cards.premium.f3")],
     },
@@ -188,9 +185,7 @@ export function PlanView() {
               {t("remaining", { remaining: fmtHours(usage.remainingSeconds), maxCuts: usage.maxCutsPerSet })}
               {usage.monthly && usage.periodEnd
                 ? t("renewsOn", {
-                    date: new Date(usage.periodEnd).toLocaleDateString(
-                      locale === "en" ? "en-US" : "pt-BR"
-                    ),
+                    date: new Date(usage.periodEnd).toLocaleDateString("pt-BR"),
                   })
                 : ""}
             </div>

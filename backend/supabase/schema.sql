@@ -106,26 +106,21 @@ alter table cuts add column if not exists score_hype double precision;
 -- antigos). NULL em cortes antigos ou quando o BPM não pôde ser estimado.
 alter table cuts add column if not exists bpm integer;
 
--- Migração: direção manual de câmera do editor de cortes. Array JSON de
--- keyframes `{t, cx, cy, zoom}` (t em segundos relativos ao início do corte;
--- cx/cy = centro da janela 9:16 em frações 0-1 do frame da fonte; zoom >= 1)
--- definidos pelo usuário ao arrastar a janela TikTok no editor. NULL = sem
--- direção manual (render automático); o worker regrava a cada re-corte que
--- envia keyframes ([] = usuário limpou a direção manual).
+-- Legado: direção manual de câmera do editor de cortes (keyframes
+-- `{t, cx, cy, zoom}`). O editor foi removido; a coluna não é mais lida nem
+-- escrita e fica só para não perder o que já foi salvo.
 alter table cuts add column if not exists crop_keyframes jsonb;
 
 -- ---------------------------------------------------------------------------
 -- Pagamento / planos (AbacatePay)
 -- ---------------------------------------------------------------------------
 
--- Assinaturas dos planos pagos ('pro' | 'premium'). O provedor depende do
--- locale: AbacatePay (BRL, PIX ou cartão) no Brasil, Stripe (USD, cartão) no
--- internacional — gravado em `provider`. Uma linha é criada com status
--- 'pending' quando o usuário abre o checkout; os webhooks de cada provedor
--- (AbacatePay: subscription.completed / renewed / payment_failed / cancelled;
--- Stripe: checkout.session.completed / invoice.paid / invoice.payment_failed /
--- customer.subscription.deleted) atualizam o status e o período vigente, e
--- espelham o plano em `users.plan`.
+-- Assinaturas dos planos pagos ('pro' | 'premium'), cobradas pela AbacatePay
+-- (BRL, PIX ou cartão). Uma linha é criada com status 'pending' quando o
+-- usuário abre o checkout; o webhook (subscription.completed / renewed /
+-- payment_failed / cancelled) atualiza o status e o período vigente, e espelha
+-- o plano em `users.plan`. `provider` = 'stripe' só existe em linhas antigas,
+-- da época da cobrança internacional (integração removida).
 create table if not exists subscriptions (
     id                       uuid primary key default gen_random_uuid(),
     user_id                  uuid not null references users (id) on delete cascade,
@@ -154,3 +149,85 @@ create table if not exists webhook_events (
     event       text not null,             -- ex.: subscription.completed
     received_at timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Fila de jobs do worker
+-- ---------------------------------------------------------------------------
+
+-- Migração: fila durável de processamento. `POST /process` do worker insere
+-- uma linha `queued`; as threads consumidoras pegam a mais antiga com
+-- `claim_job` e batem `heartbeat_at` enquanto rodam. Um job cujo worker morreu
+-- (heartbeat velho) volta sozinho para a fila. Sem esta migração o worker cai
+-- no modo antigo (BackgroundTasks em memória, que perde o job num redeploy).
+create table if not exists jobs (
+    id           uuid primary key default gen_random_uuid(),
+    project_id   uuid not null references projects (id) on delete cascade,
+    kind         text not null default 'process',
+    payload      jsonb not null default '{}'::jsonb,  -- limites do plano, estilo, ai_tier
+    status       text not null default 'queued',      -- queued | running | done | error
+    attempts     integer not null default 0,
+    worker_id    text,          -- processo que pegou o job (diagnóstico)
+    error        text,
+    created_at   timestamptz not null default now(),
+    started_at   timestamptz,
+    heartbeat_at timestamptz,
+    finished_at  timestamptz
+);
+
+-- A fila só é lida/escrita pelo worker (service role, que ignora RLS). Com RLS
+-- ligado e sem policy, as chaves públicas do projeto não enxergam a tabela.
+alter table jobs enable row level security;
+
+create index if not exists idx_jobs_queue on jobs (status, created_at);
+create index if not exists idx_jobs_project on jobs (project_id);
+
+-- Pega o próximo job, de forma atômica (FOR UPDATE SKIP LOCKED: dois workers
+-- nunca pegam o mesmo). Candidatos: os `queued` e os `running` com heartbeat
+-- mais velho que `p_stale_seconds` (worker morreu no meio). Antes, os
+-- abandonados que já gastaram `p_max_attempts` tentativas viram `error`, e o
+-- projeto junto — senão ele ficaria em `processing` para sempre.
+create or replace function claim_job(
+    p_worker text,
+    p_stale_seconds integer default 180,
+    p_max_attempts integer default 3
+) returns setof jobs
+language plpgsql
+as $$
+declare
+    v_cutoff timestamptz := now() - make_interval(secs => p_stale_seconds);
+begin
+    with dead as (
+        update jobs
+           set status = 'error',
+               error = 'worker interrompido ' || attempts || 'x durante o processamento',
+               finished_at = now()
+         where status = 'running'
+           and heartbeat_at < v_cutoff
+           and attempts >= p_max_attempts
+        returning project_id
+    )
+    update projects
+       set status = 'error'
+     where id in (select project_id from dead)
+       and status = 'processing';
+
+    return query
+    update jobs
+       set status = 'running',
+           worker_id = p_worker,
+           attempts = attempts + 1,
+           started_at = now(),
+           heartbeat_at = now(),
+           error = null
+     where id = (
+        select id
+          from jobs
+         where status = 'queued'
+            or (status = 'running' and heartbeat_at < v_cutoff)
+         order by created_at
+         limit 1
+           for update skip locked
+     )
+    returning *;
+end;
+$$;

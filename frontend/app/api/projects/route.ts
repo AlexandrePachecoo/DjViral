@@ -4,6 +4,23 @@ import { getSessionUser } from "@/lib/auth";
 import { getPlanUsage, planOf } from "@/lib/plans";
 import { canonicalYoutubeUrl, extractYoutubeId } from "@/lib/youtube";
 
+// Endpoint TUS do Storage para uploads autenticados por signed upload token.
+// Em projetos hospedados (`<ref>.supabase.co`) usa o hostname direto do
+// Storage (`<ref>.storage.supabase.co`), recomendado para arquivos grandes;
+// em domínio próprio/local, o mesmo host da API.
+function resumableEndpoint(): string | null {
+  const base = process.env.SUPABASE_URL;
+  if (!base) return null;
+  try {
+    const url = new URL(base);
+    const hosted = url.hostname.match(/^([a-z0-9]+)\.supabase\.co$/);
+    if (hosted) url.hostname = `${hosted[1]}.storage.supabase.co`;
+    return `${url.origin}/storage/v1/upload/resumable/sign`;
+  } catch {
+    return null;
+  }
+}
+
 // Lista os projetos do usuário autenticado (mais recentes primeiro). O estúdio
 // usa isso pra escolher o set ativo e popular o seletor de sets.
 export async function GET() {
@@ -25,8 +42,9 @@ export async function GET() {
 }
 
 // Cria um projeto + source. Duas origens de vídeo:
-//   - upload (`filename`): devolve uma signed upload URL para o navegador
-//     enviar o vídeo DIRETO ao Supabase Storage (sem passar pela Vercel);
+//   - upload (`filename`): devolve o destino do upload (endpoint resumável
+//     + signed upload URL) para o navegador enviar o vídeo DIRETO ao Supabase
+//     Storage (sem passar pela Vercel);
 //   - YouTube (`youtube_url`): guarda o link no source e o worker baixa o
 //     vídeo com yt-dlp na hora de processar (sem upload).
 export async function POST(req: NextRequest) {
@@ -182,9 +200,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // O navegador envia em upload resumável (TUS), autenticado pelo token da
+  // signed upload URL; `signedUrl` fica como reserva (PUT único).
   return NextResponse.json({
     project_id: project.id,
     signedUrl: signed.signedUrl,
     storagePath,
+    token: signed.token,
+    bucket: SOURCES_BUCKET,
+    tusEndpoint: resumableEndpoint(),
   });
 }

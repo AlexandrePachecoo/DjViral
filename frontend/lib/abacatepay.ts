@@ -101,12 +101,24 @@ async function ensureProduct(plan: PlanDef): Promise<string> {
 // Cria um checkout de assinatura (PIX ou cartão com recorrência mensal) e
 // retorna a URL da página de pagamento + o id do checkout (bill_...).
 //
-// PIX recorrente ("PIX Automático") é um recurso opt-in da AbacatePay — nem
-// toda loja tem habilitado (peça em Configurações → Meios de pagamento ou
-// pelo suporte deles). Enquanto não estiver, /subscriptions/create rejeita
-// `methods: ["PIX", "CARD"]` com "PIX Automático is not available for this
-// store". Tentamos com os dois primeiro e, só nesse erro específico, caímos
-// para CARD (suportado por qualquer loja) em vez de quebrar o checkout.
+// Os dois meios recorrentes são habilitados POR LOJA na AbacatePay: PIX
+// recorrente ("PIX Automático") é opt-in e o cartão também precisa estar
+// liberado para a loja (conta de produção nova costuma nascer sem). Pedir um
+// meio que a loja não tem faz /subscriptions/create rejeitar o checkout
+// inteiro ("PIX Automático is not available for this store" / "CARD is not
+// available for this store"). Então tentamos com os dois e, se um for
+// recusado, repetimos só com o outro em vez de quebrar o checkout. Se a loja
+// não tem NENHUM dos dois, o erro explica o que habilitar.
+// Se o erro diz que um meio de pagamento não está disponível para a loja,
+// devolve o OUTRO meio (para tentar só com ele); senão null.
+function unavailableMethodFallback(err: unknown): "PIX" | "CARD" | null {
+  const message = err instanceof Error ? err.message : "";
+  if (!message.includes("not available for this store")) return null;
+  if (message.includes("PIX")) return "CARD";
+  if (message.includes("CARD")) return "PIX";
+  return null;
+}
+
 export async function createSubscriptionCheckout(opts: {
   planId: "pro" | "premium";
   externalId: string; // nosso id da assinatura (subscriptions.external_id)
@@ -129,19 +141,28 @@ export async function createSubscriptionCheckout(opts: {
     },
   };
 
+  const create = (methods: ("PIX" | "CARD")[]) =>
+    abacateFetch<Billing>("/subscriptions/create", {
+      method: "POST",
+      body: { ...body, methods },
+    });
+
   let billing: Billing;
   try {
-    billing = await abacateFetch<Billing>("/subscriptions/create", {
-      method: "POST",
-      body: { ...body, methods: ["PIX", "CARD"] },
-    });
+    billing = await create(["PIX", "CARD"]);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "";
-    if (!message.includes("PIX Automático")) throw err;
-    billing = await abacateFetch<Billing>("/subscriptions/create", {
-      method: "POST",
-      body: { ...body, methods: ["CARD"] },
-    });
+    const fallback = unavailableMethodFallback(err);
+    if (!fallback) throw err;
+    try {
+      billing = await create([fallback]);
+    } catch (second) {
+      if (!unavailableMethodFallback(second)) throw second;
+      throw new Error(
+        "A loja na AbacatePay não tem nenhum meio de pagamento recorrente " +
+          "habilitado (cartão ou PIX Automático). Habilite um deles no painel " +
+          "da AbacatePay para vender assinaturas."
+      );
+    }
   }
 
   return { checkoutId: billing.id, url: billing.url };
