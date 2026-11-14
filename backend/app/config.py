@@ -222,6 +222,12 @@ class Settings(BaseSettings):
     # /process pede (planos pagos) E há chave da API. Qualquer falha degrada
     # para a heurística local (nunca derruba o job), igual à fase visual do YOLO.
     ai_director_enabled: bool = True
+    # A IA dirige a câmera do corte dinâmico (tier 'full'): a direção por frame
+    # (`AIDirection.frames`) vira o shot plan direto, sem YOLO/tracking — a
+    # análise visual local só roda como rede de segurança quando a direção de
+    # uma janela falha. False = comportamento anterior (YOLO + heurísticas
+    # montam os shots e a IA só dá dicas), útil para comparar lado a lado.
+    ai_camera_enabled: bool = True
     # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
     anthropic_api_key: str = ""
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
@@ -230,18 +236,18 @@ class Settings(BaseSettings):
     ai_director_model: str = "claude-sonnet-5"
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
-    ai_director_max_calls: int = 20
+    ai_director_max_calls: int = 30
     # Quantos keyframes amostrar por janela para a direção profunda. Mais
     # frames dão à IA melhor noção espacial (boxes) e temporal (story/moments),
     # ao custo de mais tokens por chamada — mas só no top-K.
-    ai_director_frames: int = 7
+    ai_director_frames: int = 12
     # Largura (px) dos frames enviados à direção profunda.
-    ai_director_frame_width: int = 768
+    ai_director_frame_width: int = 512
     # Teto de tempo (s) da direção profunda por job; estourou, as janelas
     # restantes ficam só com o score ajustado da triagem.
-    ai_director_budget_seconds: int = 180
+    ai_director_budget_seconds: int = 300
     # Timeout (s) de cada chamada individual à API.
-    ai_director_timeout: float = 30.0
+    ai_director_timeout: float = 60.0
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
     # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
     # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
@@ -271,7 +277,7 @@ class Settings(BaseSettings):
     score_hype_lite_weight: float = 0.30
     # Chamadas à IA simultâneas (lotes de triagem e direções profundas rodam
     # em paralelo — a espera é rede, não CPU). 1 = serial.
-    ai_concurrency: int = 4
+    ai_concurrency: int = 6
     # Com a triagem ligada, a análise visual pesada (YOLO) roda só nas
     # `n_final * fator` melhores janelas pelo score música + triagem, em vez de
     # em todos os candidatos — a maior parte deles seria descartada de qualquer

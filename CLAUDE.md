@@ -118,7 +118,10 @@ YouTube quando necessário.
    (YOLO em janelas que seriam descartadas era o maior desperdício do job;
    sem IA, todas seguem como antes); (c) na shortlist,
    `score = 0.6*musical + 0.4*visual` (pesos em config), misturado ao hype da
-   triagem; (d) direção profunda nas top-K, em paralelo. Um *time budget*
+   triagem; (d) direção profunda nas top-K, em paralelo. **No tier `full`
+   com `AI_CAMERA_ENABLED` (default)** os passos (b)-(c) não existem: as N
+   melhores por `música + hype` recebem a direção profunda direto e o YOLO
+   não roda (`cuts.score_visual` fica NULL). Um *time budget*
    (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
    as janelas restantes ficam só com o score musical. As parcelas são
    persistidas em `cuts.score_musical` / `cuts.score_visual`.
@@ -142,19 +145,14 @@ YouTube quando necessário.
      `Drop N · BPM` quando a IA não deu título; o BPM passa a viver em
      `cuts.bpm`). Saneado em `_coerce_title`.
    - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
-     `AI_DIRECTOR_MODEL` default
-     **Sonnet**) roda só nas TOP-K janelas pelo score já AJUSTADO (teto
-     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio): amostra
-     `AI_DIRECTOR_FRAMES` keyframes (`AI_DIRECTOR_FRAME_WIDTH`px, reaproveita
-     `visual.iter_frames`), encoda em JPEG e pergunta ao modelo a **vibe do
-     público** (`hype`), o **protagonista** (`subject`: dj/crowd/wide), os
-     **momentos de auge** (`moments`), se a cena é digna de zoom (`worthy`),
-     o **roteiro de câmera** (`story`: até 6 passos `{t, subject}` com
-     subject dj/crowd/dancer/wide) e o **enquadramento** do DJ, do público e
-     da pessoa dançando em destaque (`dj_box`/`crowd_box`/`dancer_box`,
-     `[cx, cy, w, h]` em frações 0-1 do frame; saneados em `_coerce_box`). O
-     hype profundo refina o score final (`(1-w_hype)*adjusted + w_hype*hype`,
-     `SCORE_HYPE_WEIGHT`) e a direção alimenta o corte dinâmico (passo 4).
+     `AI_DIRECTOR_MODEL` default **Sonnet**) — a IA é a **diretora de câmera**:
+     recebe `AI_DIRECTOR_FRAMES` keyframes (default 12, `AI_DIRECTOR_FRAME_WIDTH`
+     px) da janela e devolve `hype`, `worthy`, `moments` (auges) e **`frames`**:
+     por keyframe, o `focus` (dj/crowd/dancer/wide — o que a câmera enquadra
+     naquele instante) e o `box` do alvo (`[cx, cy, w, h]` em frações 0-1;
+     saneados em `_coerce_frames`/`_coerce_box`). `subject`/`story`/`*_box`
+     (lidos só pelo planejador legado) são derivados desses frames. O hype
+     profundo refina o score final (`SCORE_HYPE_WEIGHT`).
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
    job) — é a primeira dependência de API de IA do projeto; como o YOLO,
    **nunca derruba um job**: sem chave, sem o pacote `anthropic`, timeout ou
@@ -164,7 +162,19 @@ YouTube quando necessário.
    projeto (`projects.cut_style`):
    - **`basic` (seco)** — `clipper.cut()`: crop central 9:16 fixo + re-encode
      (comportamento original).
-   - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
+   - **`dynamic` com câmera da IA** (`camera.build_ai_shot_plan`, tier `full`
+     quando a janela tem `AIDirection.frames`) — o caminho principal: os shots
+     saem direto da direção por frame. Cortes nas trocas de `focus` e nos auges
+     (drop + `moments`, sempre com punch-in fechado no artista), alinhados aos
+     beats; planos mais longos que `DYNAMIC_SHOT_MAX` são divididos e alternam
+     normal ↔ fechado; o crop é o `box` da IA com folga (justo no fechado) e o
+     pan segue as posições que ela deu. Sem YOLO, tracking, rosto nem guardas
+     de atividade. Usa os mesmos presets de `cut_intensity` e o mesmo
+     `clipper.cut_dynamic`. `AI_CAMERA_ENABLED=false` volta ao planejador
+     legado abaixo (para comparar lado a lado).
+   - **`dynamic` legado** (tiers `off`/`lite`, câmera da IA desligada, ou
+     janela cuja direção falhou — aí o YOLO roda sob demanda só nela, no
+     render) — `dynamic.build_shot_plan()` monta uma timeline de shots
      de 3–8s com um **arco narrativo**: abertura (wide/protagonista com
      push-in), punch-in apertado no protagonista exatamente no drop e, depois
      dele, rotação intencional protagonista ↔ dançarino/público com **wide de
@@ -404,6 +414,8 @@ ganchos detalhados em [`design.md`](design.md).
   em dois estágios + títulos (opcional; nível escolhido pelo `ai_tier` do
   `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
+  `AI_CAMERA_ENABLED` (a IA monta os shots do dinâmico no tier `full`; false =
+  planejador legado YOLO + heurísticas),
   `AI_TRIAGE_MODEL` (default
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
@@ -494,6 +506,10 @@ O plano efetivo é espelhado em `users.plan` pelos dois webhooks.
 - **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
   escala real (o corte dinâmico deixa os jobs mais longos; a fila serial do
   semáforo cresce mais rápido).
+- **Aposentar o planejador legado:** depois de validar a câmera da IA em sets
+  reais, remover `dynamic.build_shot_plan` e a análise visual que só ele usa
+  (tracking, rosto, guardas de atividade) — exige decidir o que o tier `lite`
+  (free) recebe no estilo dinâmico.
 - **Tuning do corte dinâmico:** pesos do score visual, durações de shot e
   intensidade de zoom calibrados com sets reais de balada (pouca luz, laser).
 

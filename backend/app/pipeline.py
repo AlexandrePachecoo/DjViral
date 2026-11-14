@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from . import ai_director, analyzer, clipper, dynamic, visual, youtube
+from . import ai_director, analyzer, camera, clipper, dynamic, visual, youtube
 from .analyzer import Peak
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
@@ -446,6 +446,12 @@ def _score_candidates(
     4. DIREÇÃO PROFUNDA ('full') nas top-K pelo score ajustado, em paralelo:
        ``final = (1-w2)*adjusted + w2*hype_profundo``.
 
+    Com a câmera da IA ligada (``ai_camera_enabled``, tier 'full') os passos
+    2-3 não existem: as ``n_final`` melhores por ``música + hype`` recebem a
+    direção profunda direto (é ela que monta os shots) e o YOLO não roda — a
+    análise visual local só acontece no render, como rede de segurança da
+    janela cuja direção falhou.
+
     Devolve a shortlist ordenada pelo score final, seguida das janelas que
     ficaram fora dela (pelo score de triagem). ``titles_out`` recebe os títulos
     da triagem (``{id(peak): título}``). Nenhuma fase derruba o job.
@@ -469,6 +475,25 @@ def _score_candidates(
     def _with_hype(peak: Peak, base: float) -> float:
         triage = triage_map.get(id(peak))
         return base if triage is None else (1 - w1) * base + w1 * triage.hype
+
+    # ---- IA dirige a câmera ('full'): direção nos N melhores, sem YOLO ----
+    if deep_on and settings.ai_camera_enabled:
+        ranked = sorted(peaks, key=lambda p: _with_hype(p, p.score), reverse=True)
+        n_direct = min(
+            len(ranked) if n_final is None else n_final,
+            max(0, settings.ai_director_max_calls),
+        )
+        top, rest = ranked[:n_direct], ranked[n_direct:]
+        ai_map = _run_direction(video_path, [(p, None) for p in top])
+        w2 = min(1.0, max(0.0, settings.score_hype_weight))
+        directed = []
+        for peak in top:
+            ai = ai_map.get(id(peak))
+            score = _with_hype(peak, peak.score)
+            final = (1 - w2) * score + w2 * ai.hype_score if ai is not None else score
+            directed.append((peak, None, ai, final))
+        directed.sort(key=lambda item: item[3], reverse=True)
+        return directed + [(p, None, None, _with_hype(p, p.score)) for p in rest]
 
     # ---- 2) shortlist para a análise pesada ----
     shortlist, rest = list(peaks), []
@@ -604,6 +629,33 @@ def _cut_dynamic_tiered(
     return False
 
 
+# A rede do YOLO (cv2.dnn) não é thread-safe; os renders podem rodar em
+# paralelo (`render_concurrency`), então a análise sob demanda é serializada.
+_visual_lock = threading.Lock()
+
+
+def _analyze_for_render(
+    video_path: str, start: float, duration: float
+) -> WindowVisual | None:
+    """Análise visual local de UMA janela, sob demanda, para o planejador legado."""
+    if not settings.visual_enabled:
+        return None
+    try:
+        with _visual_lock:
+            return visual.analyze_window(
+                video_path,
+                start,
+                duration,
+                net=visual.load_model(),
+                detect_every=settings.visual_detect_every,
+                fps=settings.visual_fps,
+                net_face=visual.load_face_model(),
+            )
+    except Exception:  # noqa: BLE001 - análise visual nunca é fatal
+        logger.exception("Análise visual sob demanda falhou em %.1fs", start)
+        return None
+
+
 def _render_clip(
     video_path: str,
     peak: Peak,
@@ -626,33 +678,51 @@ def _render_clip(
     dinâmico cai para o corte seco — o clipe nunca é perdido.
     """
     start = max(0.0, peak.start_sec - settings.pre_roll)
+    duration = float(settings.clip_duration)
     if cut_style == "dynamic" and src_dims and src_dims["width"] and src_dims["height"]:
-        # Detecção rodou, não achou ninguém e a cena está parada → seco... a
-        # menos que a IA tenha visto o DJ onde o YOLO falhou (cena escura); e a
-        # IA também pode declarar a cena "não digna" de zooms (worthy=False).
-        boring = (
-            wv is not None
+        ai_camera = (
+            settings.ai_camera_enabled and ai is not None and bool(ai.frames)
+        )
+        if not ai_camera and wv is None:
+            # Sem direção da IA e sem análise local (a janela veio do caminho
+            # da câmera da IA e a direção dela falhou): analisa só esta janela.
+            wv = _analyze_for_render(video_path, start, duration)
+        # A IA pode declarar a cena "não digna" de zooms (worthy=False). No
+        # caminho legado, detecção que rodou, não achou ninguém e cena parada
+        # também vão de corte seco — a menos que a IA tenha visto o DJ.
+        boring = (ai is not None and not ai.worthy) or (
+            not ai_camera
+            and wv is not None
             and wv.detected
             and wv.dj_box is None
             and wv.motion_score < 0.1
             and (ai is None or ai.dj_box is None)
-        ) or (ai is not None and not ai.worthy)
+        )
         if not boring:
             shots = None
             try:
-                beats = visual.get_beat_times(
-                    video_path, start, float(settings.clip_duration), bpm
-                )
-                shots = dynamic.build_shot_plan(
-                    wv,
-                    beats,
-                    float(settings.clip_duration),
-                    src_dims["width"],
-                    src_dims["height"],
-                    peak_at=peak.start_sec - start,
-                    ai=ai,
-                    intensity=cut_intensity,
-                )
+                beats = visual.get_beat_times(video_path, start, duration, bpm)
+                if ai_camera:
+                    shots = camera.build_ai_shot_plan(
+                        ai,
+                        beats,
+                        duration,
+                        src_dims["width"],
+                        src_dims["height"],
+                        peak_at=peak.start_sec - start,
+                        intensity=cut_intensity,
+                    )
+                else:
+                    shots = dynamic.build_shot_plan(
+                        wv,
+                        beats,
+                        duration,
+                        src_dims["width"],
+                        src_dims["height"],
+                        peak_at=peak.start_sec - start,
+                        ai=ai,
+                        intensity=cut_intensity,
+                    )
             except Exception:  # noqa: BLE001 - sem shot plan, cai pro seco
                 logger.exception(
                     "Falha ao montar o shot plan em %.1fs", peak.start_sec

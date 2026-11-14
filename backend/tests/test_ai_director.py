@@ -497,3 +497,38 @@ def test_usage_accumulates_and_resets():
 
     ai_director.reset_usage()
     assert ai_director.get_usage() == {"usd": 0.0, "calls": 0}
+
+
+# ---- direção por frame (câmera da IA) ----
+
+def test_coerce_parses_per_frame_direction_and_derives_legacy_fields():
+    out = {
+        "hype": 0.8,
+        "worthy": True,
+        "moments": [12.0],
+        "frames": [
+            {"t": 2.5, "focus": "wide", "box": None},
+            {"t": 7.5, "focus": "dj", "box": [0.3, 0.4, 0.2, 0.5]},
+            {"t": 12.5, "focus": "DJ", "box": [0.34, 0.4, 0.2, 0.5]},
+            {"t": 17.5, "focus": "dj", "box": [9, 9, 9, 9]},  # box inválido
+            {"t": 99.0, "focus": "dj", "box": [0.5, 0.5, 0.2, 0.2]},  # fora
+            {"t": 22.5, "focus": "drone", "box": None},  # foco desconhecido
+            "lixo",
+        ],
+    }
+    d = ai_director._coerce(out, 60.0)
+    assert [(t, f) for t, f, _b in d.frames] == [
+        (2.5, "wide"), (7.5, "dj"), (12.5, "dj"), (17.5, "dj")
+    ]
+    assert d.frames[1][2].cx == pytest.approx(0.3) and d.frames[3][2] is None
+    # Campos do planejador legado derivados dos frames.
+    assert d.subject == "dj"
+    assert d.dj_box is not None and d.crowd_box is None
+    assert d.story == [(0.0, "wide"), (7.5, "dj")]
+
+
+def test_coerce_without_frames_keeps_legacy_keys():
+    d = ai_director._coerce(
+        {"hype": 0.5, "subject": "crowd", "dj_box": [0.5, 0.4, 0.2, 0.4]}, 60.0
+    )
+    assert d.frames == [] and d.subject == "crowd" and d.dj_box is not None

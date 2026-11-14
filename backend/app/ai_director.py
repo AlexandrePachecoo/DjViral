@@ -95,6 +95,12 @@ class AIDirection:
       shot plan quando o YOLO não achou ninguém (balada escura, laser,
       contraluz) — a IA "vê" a cena semanticamente onde a detecção falha.
       ``None`` = o modelo não localizou (ou não devolveu um box válido).
+    - ``frames``: a direção de câmera propriamente dita — uma entrada
+      ``(t, focus, box)`` por keyframe visto pelo modelo: o que a câmera
+      enquadra naquele instante (``focus`` em :data:`STORY_SUBJECTS`) e onde
+      está (``box`` normalizado, ou ``None``). É o que
+      :func:`app.camera.build_ai_shot_plan` consome; ``subject``/``story``/
+      ``*_box`` acima são derivados dela (usados só pelo planejador legado).
     """
 
     hype_score: float = 0.0
@@ -105,6 +111,7 @@ class AIDirection:
     dj_box: Box | None = None
     crowd_box: Box | None = None
     dancer_box: Box | None = None
+    frames: list[tuple[float, str, Box | None]] = field(default_factory=list)
 
 
 @dataclass
@@ -148,43 +155,44 @@ _TRIAGE_PROMPT = (
 
 
 _PROMPT = (
-    "Estas imagens são keyframes de uma janela de ~{duration:.0f}s de um SET DE DJ "
-    "(balada/festival), em ordem cronológica; cada frame vem rotulado com seu "
-    "instante t em segundos relativos ao INÍCIO da janela.\n\n"
-    "Avalie pensando em CORTE VIRAL para TikTok/Reels e responda APENAS com um "
-    "objeto JSON (sem texto ao redor, sem markdown), com exatamente estas chaves:\n"
+    "Você é o DIRETOR DE CÂMERA de um corte VERTICAL (9:16) para TikTok/Reels, "
+    "feito de um trecho de ~{duration:.0f}s de um SET DE DJ filmado na "
+    "horizontal. As imagens são frames do trecho em ordem cronológica, cada um "
+    "rotulado com seu instante t (segundos desde o início do trecho). O corte "
+    "vertical mostra só ~1/3 da largura do frame — você decide, frame a frame, "
+    "O QUE a câmera enquadra.\n\n"
+    "Responda APENAS com um objeto JSON (sem texto ao redor, sem markdown), com "
+    "exatamente estas chaves:\n"
     '- "hype": número de 0.0 a 1.0 = energia/vibe do PÚBLICO (mãos pra cima, '
     "pulos, aglomeração, delírio, luzes/pyro = alto; pista vazia ou parada = "
     "baixo).\n"
-    '- "subject": "dj" (cabine/artista em destaque), "crowd" (o público é o show) '
-    'ou "wide" (plano aberto sem foco claro).\n'
-    '- "moments": lista de até 3 instantes (segundos, entre 0 e {duration:.0f}) de '
-    "maior auge visual — o drop das mãos, o jato de CO2, a explosão; lista vazia se "
-    "não houver pico claro.\n"
-    '- "worthy": true se a cena tem movimento/energia que justifique zooms '
-    "dinâmicos; false se é estática/vazia demais (corte seco é melhor).\n"
-    '- "dj_box": onde o DJ/artista está no quadro, como [cx, cy, w, h] em '
-    "frações 0.0-1.0 do frame (centro x, centro y, largura, altura do retângulo "
-    "que o enquadra com a cabine); use a posição típica ao longo dos frames, e "
-    "null se não estiver visível.\n"
-    '- "crowd_box": idem para a massa do público (o retângulo que cobre a '
-    "aglomeração), ou null se não houver público visível.\n"
-    '- "dancer_box": idem para UMA pessoa do público dançando em destaque (a '
-    "que mais renderia um zoom), ou null se ninguém se destacar.\n"
-    '- "story": roteiro de câmera para o corte dinâmico — lista ordenada de '
-    'até 6 passos {{"t": segundos, "subject": "dj"|"crowd"|"dancer"|"wide"}} '
-    "dizendo para onde a câmera olha a partir do instante t. Monte um ARCO "
-    "narrativo com intenção: (1) ABRIR num plano aberto/no protagonista, "
-    "(2) fechar no artista ou no dançarino EXATAMENTE nos instantes de "
-    '"moments" (o auge/drop), (3) mostrar a reação de quem está dançando ou '
-    "do público, (4) dar um respiro (wide) e voltar. Evite ficar preso num só "
-    'sujeito o clipe inteiro. Use "dancer" só se dancer_box existir; lista '
-    "vazia se preferir a alternância automática.\n"
-    'Exemplo: {{"hype": 0.8, "subject": "crowd", "moments": [12.5], '
-    '"worthy": true, "dj_box": [0.5, 0.35, 0.22, 0.4], "crowd_box": '
-    '[0.5, 0.78, 0.85, 0.4], "dancer_box": [0.3, 0.7, 0.1, 0.25], '
-    '"story": [{{"t": 0, "subject": "wide"}}, {{"t": 5, "subject": "dj"}}, '
-    '{{"t": 14, "subject": "dancer"}}, {{"t": 22, "subject": "dj"}}]}}'
+    '- "worthy": true se a cena tem movimento/energia que justifique cortes e '
+    "zooms dinâmicos; false se é estática/vazia demais (corte seco é melhor).\n"
+    '- "moments": lista de até 3 instantes (segundos, entre 0 e {duration:.0f}) '
+    "de maior auge visual — o drop das mãos, o jato de CO2, a explosão; lista "
+    "vazia se não houver pico claro.\n"
+    '- "frames": UMA entrada POR FRAME recebido, na mesma ordem: '
+    '{{"t": instante do frame, "focus": "dj"|"crowd"|"dancer"|"wide", '
+    '"box": [cx, cy, w, h] ou null}}.\n'
+    '  - "focus" = o que mais rende NAQUELE instante: "dj" (artista/cabine), '
+    '"crowd" (a massa do público reagindo), "dancer" (UMA pessoa dançando em '
+    'destaque) ou "wide" (plano aberto: a cena inteira, luzes/pyro, ou nada '
+    "se destaca).\n"
+    '  - "box" = retângulo que envolve o alvo NAQUELE frame, em frações '
+    "0.0-1.0 do frame (centro x, centro y, largura, altura). DJ: corpo + "
+    "cabine; dancer: o corpo inteiro; crowd: a aglomeração. Em \"wide\", o "
+    "box marca onde está a ação principal (para centralizar o plano aberto), "
+    "ou null.\n"
+    "Dirija com intenção: abra situando a cena, feche no artista nos auges "
+    '("moments"), mostre a reação do público ou de quem dança, dê respiros '
+    "em wide. Não fique preso num só focus se a cena oferece mais, mas também "
+    "não troque sem motivo. Se o alvo não aparece num frame (a câmera da "
+    "gravação trocou), não invente: escolha outro focus para aquele frame.\n"
+    'Exemplo: {{"hype": 0.8, "worthy": true, "moments": [12.5], "frames": ['
+    '{{"t": 2.5, "focus": "wide", "box": [0.5, 0.4, 0.3, 0.5]}}, '
+    '{{"t": 7.5, "focus": "dj", "box": [0.52, 0.38, 0.2, 0.45]}}, '
+    '{{"t": 12.5, "focus": "dj", "box": [0.5, 0.37, 0.2, 0.45]}}, '
+    '{{"t": 17.5, "focus": "crowd", "box": [0.5, 0.8, 0.9, 0.35]}}]}}'
     "{hint}"
 )
 
@@ -467,7 +475,7 @@ def _coerce(out: dict, duration: float) -> AIDirection:
         if not deduped or mv - deduped[-1] > 0.5:
             deduped.append(mv)
 
-    return AIDirection(
+    direction = AIDirection(
         hype_score=hype,
         subject=subject,
         moments=deduped[:3],
@@ -476,7 +484,69 @@ def _coerce(out: dict, duration: float) -> AIDirection:
         dj_box=_coerce_box(out.get("dj_box")),
         crowd_box=_coerce_box(out.get("crowd_box")),
         dancer_box=_coerce_box(out.get("dancer_box")),
+        frames=_coerce_frames(out.get("frames"), duration),
     )
+    if direction.frames:
+        _derive_legacy_fields(direction, duration)
+    return direction
+
+
+def _coerce_frames(value, duration: float) -> list[tuple[float, str, Box | None]]:
+    """Sanea a direção por frame ``[{t, focus, box}]`` do modelo.
+
+    Entradas com ``t`` fora de ``[0, duration]`` ou ``focus`` desconhecido são
+    descartadas; ``box`` inválido vira ``None`` (o planejador trata). Ordena
+    por ``t`` e colapsa instantes repetidos (vence o primeiro).
+    """
+    frames: dict[float, tuple[float, str, Box | None]] = {}
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            t = float(item.get("t"))
+        except (TypeError, ValueError):
+            continue
+        focus = str(item.get("focus") or "").strip().lower()
+        if not math.isfinite(t) or not 0.0 <= t <= duration or focus not in STORY_SUBJECTS:
+            continue
+        frames.setdefault(round(t, 2), (round(t, 2), focus, _coerce_box(item.get("box"))))
+    return [frames[t] for t in sorted(frames)]
+
+
+def _derive_legacy_fields(direction: AIDirection, duration: float) -> None:
+    """Preenche ``subject``/``story``/``*_box`` a partir de ``frames``.
+
+    Só o planejador legado (:func:`app.dynamic.build_shot_plan`, usado quando
+    a câmera da IA está desligada) lê esses campos; derivá-los evita manter um
+    segundo prompt só para ele.
+    """
+    frames = direction.frames
+    counts: dict[str, int] = {}
+    for _t, focus, _box in frames:
+        key = "crowd" if focus == "dancer" else focus
+        counts[key] = counts.get(key, 0) + 1
+    direction.subject = max(counts, key=counts.get)
+
+    def _median(focus: str) -> Box | None:
+        boxes = [b for _t, f, b in frames if f == focus and b is not None]
+        if not boxes:
+            return None
+        mid = lambda vals: sorted(vals)[len(vals) // 2]  # noqa: E731
+        return Box(
+            cx=mid([b.cx for b in boxes]), cy=mid([b.cy for b in boxes]),
+            w=mid([b.w for b in boxes]), h=mid([b.h for b in boxes]),
+            conf=AI_BOX_CONF,
+        )
+
+    direction.dj_box = _median("dj")
+    direction.crowd_box = _median("crowd")
+    direction.dancer_box = _median("dancer")
+    runs = [
+        {"t": 0.0 if i == 0 else t, "subject": focus}
+        for i, (t, focus, _box) in enumerate(frames)
+        if i == 0 or focus != frames[i - 1][1]
+    ]
+    direction.story = _coerce_story(runs, duration)
 
 
 def _coerce_story(value, duration: float) -> list[tuple[float, str]]:
@@ -547,10 +617,17 @@ def direct(
     try:
         resp = client.messages.create(
             model=settings.ai_director_model,
-            max_tokens=512,
+            # Folga larga: em modelos que pensam antes de responder, um teto
+            # curto corta o JSON no meio e a direção inteira é perdida.
+            max_tokens=8192,
             messages=[{"role": "user", "content": content}],
         )
         _track_usage(settings.ai_director_model, resp)
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            logger.warning(
+                "Diretor de IA: resposta truncada por max_tokens (janela %.1fs)",
+                start_sec,
+            )
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", None) == "text"
         )
@@ -616,7 +693,7 @@ def triage_group(
     try:
         resp = client.messages.create(
             model=settings.ai_triage_model,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": content}],
         )
         _track_usage(settings.ai_triage_model, resp)
