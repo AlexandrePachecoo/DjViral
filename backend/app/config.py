@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # estoura a memória. 2 threads derrubam isso para ~300 MB sem perda de
     # velocidade real (a CPU da VM é limitada de qualquer forma).
     ffmpeg_threads: int = 2
+    # Clipes renderizados ao mesmo tempo dentro de um job. O render é a etapa
+    # mais longa (~1/3 do job); 2 quase a divide pela metade, mas dobra o pico
+    # de memória/CPU do FFmpeg — suba só com folga no plano da Railway.
+    render_concurrency: int = 1
 
     # ---- Análise de áudio (analyzer.py) ----
     # Pesos dos três sinais no score combinado (RMS/onset/contraste). Somam 1.0
@@ -251,9 +255,11 @@ class Settings(BaseSettings):
     ai_triage_group_size: int = 6
     # Keyframes por janela na triagem (bem menos que a direção profunda —
     # só precisa classificar hype/worthy, não localizar boxes).
-    ai_triage_frames_per_window: int = 2
+    # 4 frames de 512px custam centavos por job e dão ao modelo uma leitura bem
+    # mais confiável de um trecho de 60s do que 2 miniaturas.
+    ai_triage_frames_per_window: int = 4
     # Largura (px) dos frames da triagem (menor que a direção profunda).
-    ai_triage_frame_width: int = 256
+    ai_triage_frame_width: int = 512
     # Teto de tempo (s) da fase de triagem por job (separado do budget da
     # direção profunda).
     ai_triage_budget_seconds: int = 90
@@ -263,6 +269,14 @@ class Settings(BaseSettings):
     # visualmente sobreviver ao corte do top-K — por isso pesa relativamente
     # forte (a triagem é o único filtro de IA que vê TODOS os candidatos).
     score_hype_lite_weight: float = 0.30
+    # Chamadas à IA simultâneas (lotes de triagem e direções profundas rodam
+    # em paralelo — a espera é rede, não CPU). 1 = serial.
+    ai_concurrency: int = 4
+    # Com a triagem ligada, a análise visual pesada (YOLO) roda só nas
+    # `n_final * fator` melhores janelas pelo score música + triagem, em vez de
+    # em todos os candidatos — a maior parte deles seria descartada de qualquer
+    # forma. A folga acima de 1.0 deixa o score visual ainda reordenar a borda.
+    visual_shortlist_factor: float = 1.25
 
 
 settings = Settings()

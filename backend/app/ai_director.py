@@ -2,7 +2,7 @@
 
 Dois estágios, orquestrados pelo `pipeline._score_candidates`:
 
-1. :func:`triage_group` — TRIAGEM barata (1-2 keyframes pequenos por janela,
+1. :func:`triage_group` — TRIAGEM barata (poucos keyframes pequenos por janela,
    várias janelas por chamada): cobre TODOS os candidatos, não só um top-K
    pré-filtrado pelo score local. Devolve só ``hype``/``worthy`` por janela
    (:class:`Triage`), suficiente para reordenar os candidatos ANTES de
@@ -13,7 +13,7 @@ Dois estágios, orquestrados pelo `pipeline._score_candidates`:
    momentos de auge) que alimenta o corte dinâmico.
 
 Como o :mod:`analyzer` e o :mod:`visual`, é um módulo puro (sem FastAPI/Supabase)
-e **nunca derruba um job**: sem chave, sem o pacote ``anthropic``, sem ``cv2``,
+e **nunca derruba um job**: sem chave, sem o pacote ``anthropic``,
 timeout ou JSON inválido → cada função devolve o "vazio" (``None``/``{}``) e o
 pipeline segue apenas na heurística local (áudio + YOLO).
 """
@@ -22,18 +22,15 @@ import json
 import logging
 import math
 import re
+import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from . import visual
 from .config import settings
 from .visual import Box
 
 logger = logging.getLogger("djviral.ai_director")
-
-try:  # opencv encoda os frames em JPEG; sem ele o diretor fica desligado
-    import cv2
-except Exception:  # noqa: BLE001 - qualquer falha de import conta como "sem cv2"
-    cv2 = None
 
 # Enquadramentos válidos que o modelo pode escolher como protagonista da janela.
 VALID_SUBJECTS = {"dj", "crowd", "wide"}
@@ -59,14 +56,22 @@ JPEG_QUALITY = 80
 # tabela cai no preço do Sonnet (estimativa conservadora, não subestima).
 _PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-haiku-5-5": (0.1, 0.5),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
     "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-5-5": (4.0, 20.0),
 }
 _DEFAULT_PRICE = (3.0, 15.0)
 
 # Acumulador de custo/chamadas da IA no job corrente (resetado pelo pipeline
 # no início de cada `_score_candidates`). Só para observabilidade nos logs.
 _usage = {"usd": 0.0, "calls": 0}
+# As chamadas à IA rodam em paralelo (threads do pipeline): o lock protege o
+# acumulador de custo e a criação preguiçosa do cliente.
+_lock = threading.Lock()
+# Grabs de frame simultâneos por janela (cada um é um FFmpeg curtinho).
+_GRAB_WORKERS = 4
 
 
 @dataclass
@@ -114,6 +119,9 @@ class Triage:
 
     hype: float = 0.0
     worthy: bool = True
+    # Título/hook viral da janela (mesma chamada da triagem — evita uma
+    # segunda passada só para títulos). ``""`` = o modelo não deu título.
+    title: str = ""
 
 
 _TRIAGE_PROMPT = (
@@ -128,9 +136,14 @@ _TRIAGE_PROMPT = (
     "pulos, aglomeração, delírio = alto; pista vazia ou parada = baixo).\n"
     '- "worthy": true se a cena tem movimento/energia que justifique virar '
     "corte; false se é estática/vazia demais.\n"
+    '- "title": TÍTULO/LEGENDA em PORTUGUÊS-BR para postar esse trecho — um '
+    "gancho curto e com energia que PARE o scroll, na vibe de quem posta clipe "
+    'de balada (ex.: "quando o drop DESTRUIU a pista 🔥"). No máximo ~60 '
+    'caracteres; 0 a 2 emojis; SEM hashtags; nada genérico como "Drop 1".\n'
     "Responda para TODAS as janelas listadas, uma entrada cada.\n"
-    'Exemplo: [{{"window": 0, "hype": 0.8, "worthy": true}}, '
-    '{{"window": 1, "hype": 0.15, "worthy": false}}]'
+    'Exemplo: [{{"window": 0, "hype": 0.8, "worthy": true, "title": '
+    '"a pista inteira foi ao delírio 🔥"}}, {{"window": 1, "hype": 0.15, '
+    '"worthy": false, "title": "aquele respiro antes do drop"}}]'
 )
 
 
@@ -206,16 +219,20 @@ def _get_client():
     ``None`` (sem chave, sem o pacote, ou falha de init) é o gatilho do fallback:
     o pipeline ignora a IA e usa só o score local. Nunca levanta exceção.
     """
+    if _client is not None:
+        return _client
+    with _lock:
+        return _init_client()
+
+
+def _init_client():
+    """Cria o cliente (uma vez por processo); chamado sob ``_lock``."""
     global _client, _client_failed
     if _client is not None:
         return _client
     if _client_failed:
         return None
     if not settings.anthropic_api_key:
-        _client_failed = True
-        return None
-    if cv2 is None:
-        logger.warning("cv2 indisponível — diretor de IA desligado")
         _client_failed = True
         return None
     try:
@@ -236,41 +253,57 @@ def _get_client():
     return _client
 
 
+def _grab_frame(video_path: str, t_abs: float, width: int) -> str | None:
+    """Um frame JPEG (base64) em ``t_abs`` via seek rápido do FFmpeg.
+
+    ``-ss`` antes do ``-i`` pula direto para o keyframe mais próximo e decoda
+    só até o instante pedido — décimos de segundo, em vez de decodificar a
+    janela inteira para aproveitar meia dúzia de frames.
+    """
+    cmd = [
+        "ffmpeg",
+        "-v", "error",
+        "-ss", f"{max(0.0, t_abs):.3f}",
+        "-i", video_path,
+        "-frames:v", "1",
+        "-vf", f"scale='min({int(width)},iw)':-2",
+        "-q:v", "4",
+        "-f", "image2pipe",
+        "-c:v", "mjpeg",
+        "pipe:1",
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=30)
+    if result.returncode != 0 or not result.stdout:
+        return None
+    return base64.b64encode(result.stdout).decode("ascii")
+
+
 def _sample_frames(
     video_path: str, start_sec: float, duration: float, n: int, width: int | None = None
 ) -> list[tuple[float, str]]:
     """Amostra ``n`` keyframes espalhados na janela → ``[(t_rel, jpeg_b64)]``.
 
-    Reaproveita ``visual.iter_frames`` (pipe FFmpeg, sem a janela inteira em RAM),
-    lendo só até o último alvo (~90% da janela) e parando. Cada alvo é a fração
-    (i+0.5)/n da duração, evitando as bordas. ``width`` (px) escala o custo de
-    tokens da chamada — a triagem usa frames bem menores que a direção profunda.
+    Cada alvo é a fração (i+0.5)/n da duração (evita as bordas) e vira um grab
+    independente com seek rápido (:func:`_grab_frame`), alguns em paralelo.
+    ``width`` (px) escala o custo de tokens da chamada — a triagem usa frames
+    menores que a direção profunda. Frames que falharem ficam de fora; nunca
+    levanta exceção.
     """
-    if cv2 is None:
-        return []
     n = max(1, n)
     frame_width = width or settings.ai_director_frame_width
     targets = [duration * (i + 0.5) / n for i in range(n)]
-    frames: list[tuple[float, str]] = []
-    ti = 0
     try:
-        for t, frame in visual.iter_frames(
-            video_path, start_sec, duration, fps=2.0, width=frame_width
-        ):
-            if ti >= len(targets):
-                break
-            if t + 1e-6 >= targets[ti]:
-                ok, buf = cv2.imencode(
-                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+        with ThreadPoolExecutor(max_workers=min(_GRAB_WORKERS, n)) as pool:
+            grabbed = list(
+                pool.map(
+                    lambda t: _grab_frame(video_path, start_sec + t, frame_width),
+                    targets,
                 )
-                if ok:
-                    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-                    frames.append((round(float(t), 2), b64))
-                ti += 1
+            )
     except Exception:  # noqa: BLE001 - amostragem nunca derruba o job (ex.: ffmpeg)
         logger.exception("Falha ao amostrar keyframes (%.1fs)", start_sec)
         return []
-    return frames
+    return [(round(t, 2), b64) for t, b64 in zip(targets, grabbed) if b64]
 
 
 def _hint(wv) -> str:
@@ -337,8 +370,9 @@ def _parse_json_array(text: str) -> list | None:
 
 def reset_usage() -> None:
     """Zera o acumulador de custo/chamadas — chamado pelo pipeline a cada job."""
-    _usage["usd"] = 0.0
-    _usage["calls"] = 0
+    with _lock:
+        _usage["usd"] = 0.0
+        _usage["calls"] = 0
 
 
 def get_usage() -> dict:
@@ -354,8 +388,11 @@ def _track_usage(model: str, resp) -> None:
     in_price, out_price = _PRICING_USD_PER_MTOK.get(model, _DEFAULT_PRICE)
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    _usage["usd"] += (input_tokens * in_price + output_tokens * out_price) / 1_000_000
-    _usage["calls"] += 1
+    with _lock:
+        _usage["usd"] += (
+            input_tokens * in_price + output_tokens * out_price
+        ) / 1_000_000
+        _usage["calls"] += 1
 
 
 def _coerce_box(value) -> Box | None:
@@ -579,7 +616,7 @@ def triage_group(
     try:
         resp = client.messages.create(
             model=settings.ai_triage_model,
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": content}],
         )
         _track_usage(settings.ai_triage_model, resp)
@@ -612,7 +649,11 @@ def triage_group(
         if hype != hype:  # NaN
             hype = 0.0
         hype = min(1.0, max(0.0, hype))
-        out[key] = Triage(hype=hype, worthy=bool(item.get("worthy", True)))
+        out[key] = Triage(
+            hype=hype,
+            worthy=bool(item.get("worthy", True)),
+            title=_coerce_title(item.get("title")),
+        )
     return out
 
 

@@ -247,8 +247,23 @@ def test_sample_frames_swallows_ffmpeg_failure(monkeypatch):
     def _boom(*a, **k):
         raise FileNotFoundError("ffprobe")
 
-    monkeypatch.setattr(ai_director.visual, "iter_frames", _boom)
+    monkeypatch.setattr(ai_director, "_grab_frame", _boom)
     assert ai_director._sample_frames("video.mp4", 0.0, 60.0, 5) == []
+
+
+def test_sample_frames_spreads_targets_and_skips_failed_grabs(monkeypatch):
+    # Um grab por alvo (fração (i+0.5)/n da janela), com seek absoluto; grab
+    # que falha (None) fica de fora sem derrubar os demais.
+    seen = []
+
+    def _grab(video_path, t_abs, width):
+        seen.append((t_abs, width))
+        return None if t_abs == 115.0 else "Zm9v"
+
+    monkeypatch.setattr(ai_director, "_grab_frame", _grab)
+    out = ai_director._sample_frames("video.mp4", 100.0, 60.0, 2, width=512)
+    assert sorted(seen) == [(115.0, 512), (145.0, 512)]
+    assert out == [(45.0, "Zm9v")]
 
 
 def test_direct_returns_none_when_sampling_raises(monkeypatch):
@@ -258,7 +273,7 @@ def test_direct_returns_none_when_sampling_raises(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("pipe morto")
 
-    monkeypatch.setattr(ai_director.visual, "iter_frames", _boom)
+    monkeypatch.setattr(ai_director, "_grab_frame", _boom)
     assert ai_director.direct("video.mp4", 0.0, 60.0) is None
 
 
@@ -287,7 +302,7 @@ def test_parse_json_array_garbage_returns_none():
 
 def test_triage_group_happy_path(monkeypatch):
     monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
-        '[{"window": 10, "hype": 0.8, "worthy": true}, '
+        '[{"window": 10, "hype": 0.8, "worthy": true, "title": "\\"o drop 🔥\\""}, '
         '{"window": 20, "hype": 0.1, "worthy": false}]'
     ))
     monkeypatch.setattr(
@@ -298,6 +313,8 @@ def test_triage_group_happy_path(monkeypatch):
     )
     assert out[10].hype == pytest.approx(0.8) and out[10].worthy is True
     assert out[20].hype == pytest.approx(0.1) and out[20].worthy is False
+    # O título vem na mesma chamada (saneado); ausente vira "".
+    assert out[10].title == "o drop 🔥" and out[20].title == ""
 
 
 def test_triage_group_no_windows_returns_empty(monkeypatch):

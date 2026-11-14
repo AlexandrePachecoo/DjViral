@@ -108,9 +108,17 @@ YouTube quando necessário.
    `get_beat_times` detecta os beats da janela para alinhar os cortes do
    estilo dinâmico. Qualquer falha (modelo ausente, cv2 quebrado) degrada
    para score de movimento/sem rosto — a fase visual nunca derruba um job.
-3. **Score combinado** — o áudio gera mais candidatos que o pedido
-   (`min(2N, 45)`), cada janela ganha `score = 0.6*musical + 0.4*visual`
-   (pesos em config), re-ranqueia e ficam os N melhores. Um *time budget*
+3. **Score combinado / funil** (`pipeline._score_candidates`) — o áudio gera
+   mais candidatos que o pedido (`min(N * VISUAL_CANDIDATES_FACTOR,
+   VISUAL_CANDIDATES_CAP)`) e o funil vai do mais barato ao mais caro:
+   (a) **triagem da IA primeiro**, em TODOS os candidatos (segundos: grabs de
+   frame com seek rápido + lotes em paralelo, `AI_CONCURRENCY`); (b)
+   **shortlist** — com triagem, só as `N * VISUAL_SHORTLIST_FACTOR` (default
+   1.25) melhores por `música + hype` seguem para a análise visual pesada
+   (YOLO em janelas que seriam descartadas era o maior desperdício do job;
+   sem IA, todas seguem como antes); (c) na shortlist,
+   `score = 0.6*musical + 0.4*visual` (pesos em config), misturado ao hype da
+   triagem; (d) direção profunda nas top-K, em paralelo. Um *time budget*
    (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
    as janelas restantes ficam só com o score musical. As parcelas são
    persistidas em `cuts.score_musical` / `cuts.score_visual`.
@@ -121,16 +129,16 @@ YouTube quando necessário.
    `ANTHROPIC_API_KEY` presente:
    - **Triagem** (`triage_group`, barata, modelo `AI_TRIAGE_MODEL` default
      Haiku; roda em `lite` e `full`) roda em LOTES (`AI_TRIAGE_GROUP_SIZE`
-     janelas por chamada, 1-2 keyframes pequenos cada) cobrindo **TODOS** os
+     janelas por chamada, `AI_TRIAGE_FRAMES_PER_WINDOW` keyframes pequenos cada) cobrindo **TODOS** os
      candidatos, não só um top-K — devolve só `hype`/`worthy` por janela e
      ajusta o score (`adjusted = (1-w)*base + w*hype_lite`,
      `SCORE_HYPE_LITE_WEIGHT`) ANTES de qualquer corte por top-K, o que deixa
      um trecho mal ranqueado pela heurística local mas bem avaliado
      visualmente sobreviver ao corte.
-   - **Títulos virais** (`title_group`, barata, mesmo modelo da triagem; roda
-     em `lite` e `full`) — depois da seleção final, uma chamada em lote gera um
-     **gancho/legenda de TikTok/Reels por corte** a partir de poucos keyframes
-     pequenos dos cortes JÁ escolhidos; vira `cuts.titulo` (fallback heurístico
+   - **Títulos virais** (roda em `lite` e `full`) — a PRÓPRIA triagem devolve
+     um **gancho/legenda de TikTok/Reels por janela** (`Triage.title`), sem
+     passada extra; `title_group` só cobre cortes selecionados que ficaram sem
+     título (lote de triagem que falhou). Vira `cuts.titulo` (fallback heurístico
      `Drop N · BPM` quando a IA não deu título; o BPM passa a viver em
      `cuts.bpm`). Saneado em `_coerce_title`.
    - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
@@ -239,7 +247,9 @@ YouTube quando necessário.
 5. `pipeline.py` — orquestra download → analyze → visual/re-rank → cut →
    upload → persiste `cuts`. O download do vídeo é em **streaming** (chunks
    para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs
-   pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1). O re-corte
+   pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1);
+   `RENDER_CONCURRENCY` (default 1) renderiza vários clipes do mesmo job em
+   paralelo (mais rápido, mais memória). O re-corte
    (`POST /recut`) respeita o `cut_style` do projeto: num projeto dinâmico,
    re-roda a análise visual só na janela nova e regenera os zooms. Quando o
    `/recut` traz **`keyframes`** (direção manual do editor visual, ver "Editor
@@ -398,6 +408,7 @@ ganchos detalhados em [`design.md`](design.md).
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
   `AI_TRIAGE_FRAME_WIDTH`, `AI_TRIAGE_BUDGET_SECONDS`, `SCORE_HYPE_LITE_WEIGHT`,
+  `AI_CONCURRENCY` (chamadas à IA em paralelo), `VISUAL_SHORTLIST_FACTOR`,
   `AI_DIRECTOR_MODEL` (default `claude-sonnet-5`, só no top-K pelo score
   ajustado), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
   `AI_DIRECTOR_FRAME_WIDTH`, `AI_DIRECTOR_BUDGET_SECONDS`,
