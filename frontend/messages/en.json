@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "title": "DJviral — Your set becomes 30 viral clips. No editing required.",
-    "description": "Upload a set up to 3 hours long. DJviral finds the best moments and delivers 30 vertical videos ready for TikTok and Reels."
+    "title": "DJviral — Your set becomes vertical clips ready for TikTok.",
+    "description": "Upload 1 hour of set for free, no card. The AI finds the drops and returns 9:16 videos for Reels, TikTok and Shorts. Up to 30 clips per set on paid plans."
   },
   "landing": {
     "nav": {
@@ -14,11 +14,11 @@
       "faq": "FAQ"
     },
     "hero": {
-      "titleLine1": "1 long set.",
-      "titleLine2": "30 viral clips.",
-      "subtitle": "Upload your set. Our AI finds the drops, the switch-ups and the highest-energy moments and hands back vertical videos ready for your feed.",
+      "titleLine1": "Your set becomes",
+      "titleLine2": "vertical clips ready for TikTok.",
+      "subtitle": "Upload 1 hour free, no card. The AI finds the drops and returns 9:16 videos for Reels, TikTok and Shorts.",
       "badge": "Built for DJs · audio + video AI",
-      "ctaPrimary": "Start for free",
+      "ctaPrimary": "Try 1 hour free, no card",
       "ctaSecondary": "See how it works",
       "trust1": "No credit card required",
       "trust2": "1 hour of set for free",
@@ -36,8 +36,8 @@
         "body": "We detect drops, switch-ups and the highest-energy moments and cut automatically, no need to review everything yourself."
       },
       "step3": {
-        "title": "Get 30 clips",
-        "body": "9:16 vertical videos, ready to post on TikTok, Reels and Shorts. And you can edit any clip however you like."
+        "title": "Get your clips",
+        "body": "9:16 vertical videos for TikTok, Reels and Shorts. Up to 10 per set on the free trial; up to 30 on paid plans."
       }
     },
     "pricing": {
@@ -71,24 +71,27 @@
         "feature4": "Re-cut down to the exact minute",
         "cta": "Subscribe to Premium"
       },
-      "note": "No commitment. Cancel anytime."
+      "note": "No commitment. Cancel anytime. Up to 30 clips per set on paid plans."
     },
     "finalCta": {
-      "title": "Your next set already has 30 clips waiting.",
-      "subtitle": "Upload a set now and watch DJviral turn 1 hour into 10 clips — for free.",
+      "title": "Your next set can become clips for the feed.",
+      "subtitle": "Upload a set now and watch DJviral turn 1 hour into up to 10 clips — for free.",
       "button": "Try it free now"
     },
     "footer": {
       "copy": "© 2026 DJviral · cuts that become feed",
-      "tagline": "Viral clips from your sets, ready for the feed.",
+      "tagline": "Vertical clips from your sets, ready for the feed.",
       "product": "Product",
       "account": "Account",
+      "legal": "Legal",
+      "privacy": "Privacy",
+      "terms": "Terms",
       "signup": "Create free account"
     },
     "generator": {
       "headerLabel": "Clip generator",
       "dropTitle": "Drag your set video here",
-      "dropHint": "MP4 · up to 3 hours · the file never leaves your browser",
+      "dropHint": "MP4 or a YouTube link · up to 3 hours. Processing runs on our servers and you can close the tab. <privacy>Privacy Policy</privacy>",
       "dropCta": "Select a file and try for free",
       "fileLoaded": "set loaded",
       "nameLabel": "Set name",
@@ -127,11 +130,11 @@
     },
     "stats": {
       "s1": "of set per video",
-      "s2": "clips per set",
+      "s2": "clips on the free trial",
       "s3": "vertical, ready for the feed",
       "s4": "of set free to try",
       "v1": "3h",
-      "v2": "30",
+      "v2": "10",
       "v3": "9:16",
       "v4": "1h"
     },
@@ -416,6 +419,11 @@
     }
   },
   "login": {
+    "metaTitleLogin": "Log in · DJviral",
+    "metaTitleRegister": "Create account · DJviral",
+    "metaDescriptionLogin": "Access your account to generate clips from your set.",
+    "metaDescriptionRegister": "Create a free account, no card, and try 1 hour of set.",
+    "consent": "By creating an account you agree to the <terms>Terms</terms> and the <privacy>Privacy Policy</privacy>.",
     "titleLogin": "Log in",
     "titleRegister": "Create account",
     "subtitleLogin": "Access your account to generate clips.",

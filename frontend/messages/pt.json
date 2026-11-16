@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "title": "DJviral — Seu set vira 30 cortes virais. Sem editar nada.",
-    "description": "Suba um set de até 3 horas. A DJviral encontra os melhores momentos e te entrega 30 vídeos verticais prontos pro TikTok e Reels."
+    "title": "DJviral — Seu set vira cortes verticais prontos pro TikTok.",
+    "description": "Envie 1 hora de set grátis, sem cartão. A IA acha os drops e devolve vídeos 9:16 para Reels, TikTok e Shorts. Nos planos pagos, até 30 cortes por set."
   },
   "landing": {
     "nav": {
@@ -14,11 +14,11 @@
       "faq": "Dúvidas"
     },
     "hero": {
-      "titleLine1": "1 set longo.",
-      "titleLine2": "30 cortes virais.",
-      "subtitle": "Suba o vídeo do seu set. A IA acha os drops, as viradas e os momentos de maior energia e devolve vídeos verticais prontos pro feed.",
+      "titleLine1": "Seu set vira",
+      "titleLine2": "cortes verticais prontos pro TikTok.",
+      "subtitle": "Envie 1 hora grátis, sem cartão. A IA acha os drops e devolve vídeos 9:16 para Reels, TikTok e Shorts.",
       "badge": "Feito para DJs · IA de áudio + vídeo",
-      "ctaPrimary": "Começar grátis",
+      "ctaPrimary": "Testar 1 hora grátis, sem cartão",
       "ctaSecondary": "Ver como funciona",
       "trust1": "Sem cartão de crédito",
       "trust2": "1 hora de set grátis",
@@ -36,8 +36,8 @@
         "body": "Detectamos drops, viradas e os momentos de maior energia e cortamos automaticamente, sem você rever tudo."
       },
       "step3": {
-        "title": "Receba 30 cortes",
-        "body": "Vídeos verticais 9:16, prontos para postar no TikTok, Reels e Shorts. E dá pra editar cada corte do jeito que quiser."
+        "title": "Receba seus cortes",
+        "body": "Vídeos verticais 9:16 para TikTok, Reels e Shorts. No teste grátis, até 10 por set; nos planos pagos, até 30."
       }
     },
     "pricing": {
@@ -71,24 +71,27 @@
         "feature4": "Re-corte no minuto exato",
         "cta": "Assinar Premium"
       },
-      "note": "Sem fidelidade. Cancele quando quiser."
+      "note": "Sem fidelidade. Cancele quando quiser. Até 30 cortes por set nos planos pagos."
     },
     "finalCta": {
-      "title": "Seu próximo set já tem 30 cortes esperando.",
-      "subtitle": "Suba um set agora e veja a DJviral cortar 1 hora em 10 clipes — de graça.",
+      "title": "Seu próximo set pode virar cortes pro feed.",
+      "subtitle": "Suba um set agora e veja a DJviral transformar 1 hora em até 10 cortes — de graça.",
       "button": "Testar grátis agora"
     },
     "footer": {
       "copy": "© 2026 DJviral · cortes que viram feed",
-      "tagline": "Cortes virais a partir dos seus sets, prontos pro feed.",
+      "tagline": "Cortes verticais a partir dos seus sets, prontos pro feed.",
       "product": "Produto",
       "account": "Conta",
+      "legal": "Legal",
+      "privacy": "Privacidade",
+      "terms": "Termos",
       "signup": "Criar conta grátis"
     },
     "generator": {
       "headerLabel": "Gerador de cortes",
       "dropTitle": "Arraste o vídeo do seu set aqui",
-      "dropHint": "MP4 · até 3 horas · o arquivo não sai do seu navegador",
+      "dropHint": "MP4 ou link do YouTube · até 3 horas. O processamento roda nos nossos servidores e você pode fechar a aba. <privacy>Política de Privacidade</privacy>",
       "dropCta": "Selecionar arquivo e testar grátis",
       "fileLoaded": "set carregado",
       "nameLabel": "Nome do set",
@@ -127,11 +130,11 @@
     },
     "stats": {
       "s1": "de set por vídeo",
-      "s2": "cortes por set",
+      "s2": "cortes no teste grátis",
       "s3": "vertical, pronto pro feed",
       "s4": "de set grátis pra testar",
       "v1": "3h",
-      "v2": "30",
+      "v2": "10",
       "v3": "9:16",
       "v4": "1h"
     },
@@ -416,6 +419,11 @@
     }
   },
   "login": {
+    "metaTitleLogin": "Entrar · DJviral",
+    "metaTitleRegister": "Criar conta · DJviral",
+    "metaDescriptionLogin": "Acesse sua conta para gerar cortes do seu set.",
+    "metaDescriptionRegister": "Crie sua conta grátis, sem cartão, e teste 1 hora de set.",
+    "consent": "Ao criar a conta você concorda com os <terms>Termos</terms> e a <privacy>Política de Privacidade</privacy>.",
     "titleLogin": "Entrar",
     "titleRegister": "Criar conta",
     "subtitleLogin": "Acesse sua conta para gerar cortes.",
