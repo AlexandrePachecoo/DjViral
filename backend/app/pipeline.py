@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from . import ai_director, analyzer, camera, clipper, dynamic, visual, youtube
+from . import ai_director, analyzer, camera, clipper, dynamic, music, visual, youtube
 from .analyzer import Peak
 from .config import settings
 from .supabase_client import download_source, get_client, upload_clip
@@ -732,18 +732,21 @@ def _render_clip(
         if not boring:
             shots = None
             try:
-                beats = visual.get_beat_times(video_path, start, duration, bpm)
                 if ai_camera:
+                    # Batidas + vibe (drop/build/calmo) numa leitura só do áudio.
+                    profile = music.get_music_profile(video_path, start, duration, bpm)
                     shots = camera.build_ai_shot_plan(
                         ai,
-                        beats,
+                        profile.beats,
                         duration,
                         src_dims["width"],
                         src_dims["height"],
                         peak_at=peak.start_sec - start,
                         intensity=cut_intensity,
+                        music=profile,
                     )
                 else:
+                    beats = visual.get_beat_times(video_path, start, duration, bpm)
                     shots = dynamic.build_shot_plan(
                         wv,
                         beats,

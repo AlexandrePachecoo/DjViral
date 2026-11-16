@@ -34,6 +34,11 @@ from .visual import Box
 # Quanto um shot "tight" (auge / segunda metade de um plano longo) aproxima a
 # mais que o shot normal do mesmo alvo.
 TIGHT_ZOOM_STEP = 0.3
+# Sem público na tela há tantos shots seguidos, o próximo vira plano de reação
+# (se a IA informou onde a pista está).
+CROWD_EVERY = 2
+# No drop, o plano máximo encolhe para esta fração de `dynamic_shot_max`.
+DROP_SHOT_SCALE = 0.65
 # Folga em volta do box da IA num shot normal de pessoa (dj/dançarino): o crop
 # tem 2x a altura do box. No shot "tight" o crop é o próprio box.
 PERSON_MARGIN = 2.0
@@ -58,6 +63,7 @@ def _boundaries(
     punches: list[float],
     cfg,
     limit: int,
+    music=None,
 ) -> list[tuple[float, bool]]:
     """Instantes de corte ``(t, é_auge)`` dentro da tomada ``span``, em ordem.
 
@@ -85,7 +91,9 @@ def _boundaries(
     # Planos longos demais: divide em partes iguais (o zoom alterna entre elas).
     edges = [start] + sorted(t for t, _ in accepted) + [end]
     for t0, t1 in zip(edges, edges[1:]):
-        parts = math.ceil((t1 - t0) / shot_max)
+        # No drop a edição acelera: planos mais curtos que no resto do clipe.
+        fast = music is not None and music.vibe_at(t0, t1) == "drop"
+        parts = math.ceil((t1 - t0) / (shot_max * (DROP_SHOT_SCALE if fast else 1.0)))
         for i in range(1, parts):
             _add(t0 + (t1 - t0) * i / parts, False)
     return sorted(accepted)
@@ -187,6 +195,7 @@ def build_ai_shot_plan(
     src_h: int,
     peak_at: float | None = None,
     intensity: str = "medium",
+    music=None,
 ) -> list[Shot]:
     """Timeline de shots de um clipe a partir da direção por frame da IA.
 
@@ -196,6 +205,9 @@ def build_ai_shot_plan(
     punch-in. ``ai.cuts`` (trocas de câmera da gravação) dividem o clipe em
     tomadas planejadas separadamente. ``intensity`` aplica os mesmos presets
     do corte dinâmico (duração dos shots, zoom máximo, drift, beat-punch).
+    ``music`` (:class:`app.music.MusicProfile`, opcional) dá a vibe de cada
+    trecho: as viradas para o drop viram punch-ins e o zoom de cada shot segue
+    a vibe (:func:`_apply_vibe`); sem ele, o zoom é o padrão em tudo.
     """
     frames: list[Frame] = list(getattr(ai, "frames", None) or [])
     if not frames or duration <= 0:
@@ -209,31 +221,91 @@ def build_ai_shot_plan(
     ):
         return _reframe(frames, takes, duration, src_w, src_h, cfg)
 
-    punches = [t for t in [peak_at, *ai.moments] if t is not None]
+    if music is not None and not (cfg.music_vibe_enabled and music.vibes):
+        music = None
+    # Auges: o drop que originou o corte, as viradas de grave que o áudio
+    # mostra (mais precisas que a estimativa visual) e os momentos da IA.
+    drops = music.drop_starts() if music is not None else []
+    punches = [t for t in [peak_at, *drops, *ai.moments] if t is not None]
+    since_crowd = 0
+    crowd = list(getattr(ai, "crowd", None) or [])
     shots: list[Shot] = []
     for n, (take0, take1) in enumerate(takes):
         take_frames = [fr for fr in frames if take0 <= fr[0] < take1]
         # Cortes próprios que ainda cabem, guardando um shot por tomada restante.
         budget = max_shots - len(shots) - (len(takes) - n)
-        cuts = _boundaries(take_frames, beats, (take0, take1), punches, cfg, budget)
+        cuts = _boundaries(
+            take_frames, beats, (take0, take1), punches, cfg, budget, music
+        )
         edges = [(take0, False)] + cuts + [(take1, False)]
+        take_crowd = [(t, b) for t, b in crowd if take0 <= t < take1]
         prev_focus, prev_tight = None, False
         for (t0, punch), (t1, _) in zip(edges, edges[1:]):
+            # Plano de reação: depois de CROWD_EVERY shots seguidos sem público
+            # (fora dos auges e do build-up, que fica no artista até a virada),
+            # corta para a pista se a IA disse onde ela está.
+            react = None
+            building = music is not None and music.vibe_at(t0, t1) == "build"
+            if not punch and not building and since_crowd >= CROWD_EVERY:
+                react = _nearest(take_crowd, (t0 + t1) / 2)
             shot, prev_focus, prev_tight = _shot(
                 take_frames, t0, t1, punch, prev_focus, prev_tight,
-                beats, src_w, src_h, cfg,
+                beats, src_w, src_h, cfg, react,
             )
+            since_crowd = 0 if shot.kind in ("crowd", "dancer") else since_crowd + 1
+            _apply_vibe(shot, music, beats, cfg)
             shots.append(shot)
     return shots
+
+
+def _nearest(points: list[tuple[float, Box]], t: float) -> Box | None:
+    return min(points, key=lambda p: abs(p[0] - t))[1] if points else None
+
+
+def _apply_vibe(shot: Shot, music, beats: list[float], cfg) -> None:
+    """Ajusta o movimento de zoom do shot à vibe da música no trecho.
+
+    - ``drop``: rampa normal + pulso na batida (o tranco que acompanha o bumbo);
+    - ``build``: a câmera fecha sem parar e ACELERA até o fim do shot — a
+      virada cai no corte seguinte, que é o punch-in do drop;
+    - ``calm``: deriva lenta e uniforme, sem pulso.
+    Sem perfil de música (ou shot sem zoom) fica o movimento padrão.
+    """
+    if music is None or not shot.drift:
+        return
+    vibe = music.vibe_at(shot.t0, shot.t1)
+    dur = shot.t1 - shot.t0
+    if vibe == "drop":
+        period = music.period * max(1, cfg.beat_pulse_every)
+        if cfg.beat_pulse_amount > 0 and period > 0.2:
+            first = next((b for b in beats if b >= shot.t0 - 0.05), shot.t0)
+            shot.pulse = (round(period, 4), round(max(0.0, first - shot.t0), 3),
+                          cfg.beat_pulse_amount)
+    elif vibe == "build":
+        shot.drift = max(shot.drift, cfg.build_zoom)
+        shot.zoom_keys = [
+            (0.0, 1.0),
+            (round(dur * 0.6, 3), round(1.0 + shot.drift * 0.3, 4)),
+            (round(dur, 3), round(1.0 + shot.drift, 4)),
+        ]
+    elif vibe == "calm":
+        shot.drift = shot.drift * cfg.calm_drift_scale
+        shot.zoom_keys = None
 
 
 def _shot(
     frames: list[Frame], t0: float, t1: float, punch: bool,
     prev_focus: str | None, prev_tight: bool,
     beats: list[float], src_w: int, src_h: int, cfg,
+    react: Box | None = None,
 ) -> tuple[Shot, str, bool]:
-    """Um shot dentro de uma tomada (``frames`` são só os dela)."""
+    """Um shot dentro de uma tomada (``frames`` são só os dela). ``react`` é o
+    box do público para um plano de reação: troca o alvo quando a IA manteve o
+    foco no artista/plano aberto."""
     focus = _focus_in_span(frames, t0, t1)
+    if react is not None and focus in ("dj", "wide"):
+        frames = [(t0, "crowd", react)]
+        focus = "crowd"
     if punch and focus == "wide":
         # Auge pede um plano fechado: no artista se a IA o localizou.
         focus = next(

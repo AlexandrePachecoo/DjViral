@@ -86,6 +86,11 @@ class Shot:
     drift: float = 0.0
     path: list[tuple[float, int, int]] | None = None
     zoom_keys: list[tuple[float, float]] | None = None
+    # Pulso de zoom na batida: ``(período s, fase s, intensidade)``. A cada
+    # ``período`` a partir de ``fase`` (relativos ao shot) o zoom dá um tranco de
+    # ``intensidade`` e relaxa até a batida seguinte — o "soco" do drop. Soma-se
+    # à rampa/keys acima. ``None`` = sem pulso.
+    pulse: tuple[float, float, float] | None = None
 
 
 def _even(v: float) -> int:
