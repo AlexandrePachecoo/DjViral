@@ -59,8 +59,11 @@ JPEG_QUALITY = 80
 # tabela cai no preço do Sonnet (estimativa conservadora, não subestima).
 _PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
     "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-5-5": (4.0, 20.0),
 }
 _DEFAULT_PRICE = (3.0, 15.0)
 

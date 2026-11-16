@@ -1,4 +1,4 @@
-import { getLocale, getTranslations } from "next-intl/server";
+import { getTranslations } from "next-intl/server";
 import styles from "./page.module.css";
 import Generator from "./_landing/Generator";
 import BeforeAfter from "./_landing/BeforeAfter";
@@ -31,12 +31,11 @@ function Logo() {
 
 export default async function Landing() {
   const t = await getTranslations("landing");
-  const locale = await getLocale();
-  // Preços por locale: USD (Stripe) no internacional, BRL (AbacatePay) no BR.
-  // Ambos os planos pagos levam ao cadastro; o checkout acontece dentro do app.
-  const proPrice = priceLabel(PLANS.pro, locale);
-  const premiumPrice = priceLabel(PLANS.premium, locale);
-  const freePrice = locale === "en" ? "$0" : "R$0";
+  // Só existe cobrança em BRL (AbacatePay), em qualquer locale. Os dois planos
+  // pagos levam ao cadastro; o checkout (mensal ou anual) acontece no app.
+  const proPrice = priceLabel(PLANS.pro);
+  const premiumPrice = priceLabel(PLANS.premium);
+  const freePrice = priceLabel(PLANS.free);
 
   return (
     <div className={styles.page}>

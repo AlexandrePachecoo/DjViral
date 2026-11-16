@@ -142,6 +142,13 @@ create table if not exists subscriptions (
     updated_at               timestamptz not null default now()
 );
 
+-- Ciclo de cobrança escolhido no checkout ('monthly' | 'annual'). No anual o
+-- período cobrado é de 12 meses, mas a cota de horas/sets continua mensal
+-- (janela ancorada em current_period_start — ver frontend/lib/plans.ts).
+-- O Stripe/USD foi descontinuado: novas assinaturas são sempre AbacatePay; as
+-- linhas 'stripe' antigas continuam sendo tratadas pelo webhook/cancelamento.
+alter table subscriptions add column if not exists cycle text not null default 'monthly';
+
 create index if not exists idx_subscriptions_user on subscriptions (user_id);
 create index if not exists idx_subscriptions_checkout on subscriptions (provider_checkout_id);
 create index if not exists idx_subscriptions_provider_sub on subscriptions (provider_subscription_id);

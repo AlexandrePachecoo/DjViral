@@ -37,7 +37,7 @@
       "title": "Start free. Grow when it pops off.",
       "popularBadge": "★ MOST POPULAR",
       "perMonth": "/mo",
-      "paymentSub": "Renews monthly",
+      "paymentSub": "PIX or card · renews monthly",
       "contactCta": "Contact us",
       "free": {
         "name": "Free trial",
@@ -49,7 +49,7 @@
       },
       "pro": {
         "name": "Pro",
-        "feature1": "Up to 5 hours of sets per month",
+        "feature1": "Up to 5 hours and 8 sets per month",
         "feature2": "Sets up to 3 hours long",
         "feature3": "Up to 30 clips per set",
         "feature4": "Re-cut down to the exact minute",
@@ -57,7 +57,7 @@
       },
       "premium": {
         "name": "Premium",
-        "feature1": "Up to 12 hours of sets per month",
+        "feature1": "Up to 12 hours and 20 sets per month",
         "feature2": "Sets up to 3 hours long",
         "feature3": "Up to 30 clips per set",
         "feature4": "Re-cut down to the exact minute",
@@ -121,15 +121,19 @@
         "free": { "name": "Free trial", "priceNote": "to try it out", "f1": "1 hour of set in total", "f2": "10 clips per set", "f3": "9:16 vertical videos" },
         "pro": { "name": "Pro", "f1": "Up to 5 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
         "premium": { "name": "Premium", "f1": "Up to 12 hours of sets per month", "f2": "Up to 30 clips per set", "f3": "Re-cut down to the exact minute" },
-        "paidPriceNote": "/mo · card"
+        "sets": "Up to {n} sets per month",
+        "paidPriceNote": "/mo · PIX or card",
+        "paidPriceNoteAnnual": "/yr · PIX or card"
       },
+      "cycle": { "label": "Billing cycle", "monthly": "Monthly", "annual": "Yearly", "annualBadge": "2 months free" },
+      "setsUsed": " · {used} of {max} sets used",
       "errors": {
         "loadFailed": "Couldn't load your plan. Reload the page.",
         "checkoutFailed": "failed to open checkout",
         "unexpected": "Unexpected error"
       },
       "justPaid": {
-        "text": "✓ Payment complete! Your plan activates as soon as the payment confirmation arrives (usually a few seconds).",
+        "text": "✓ Payment complete! Your plan activates as soon as AbacatePay confirms the payment (usually a few seconds).",
         "refresh": "Refresh"
       },
       "yourPlan": "Your plan:",
@@ -138,13 +142,13 @@
       "onTrial": " on trial",
       "remaining": "{remaining} of set left · up to {maxCuts} clips per set",
       "renewsOn": " · renews on {date}",
-      "pastDue": "⚠ The last charge failed — we'll retry. Check your card to avoid losing access.",
+      "pastDue": "⚠ The last charge failed — AbacatePay will retry. Check your payment method to avoid losing access.",
       "adminAccount": "Admin account — unlimited usage, no billing. The cards below are just the publicly sold plans.",
       "currentPlan": "Current plan",
       "openingCheckout": "Opening checkout...",
       "contactCta": "Contact us",
       "subscribeTo": "Subscribe to {name}",
-      "paymentFootnote": "Payments are securely processed by Stripe. Cards renew automatically every month; cancel anytime."
+      "paymentFootnote": "Payments are processed by AbacatePay in Brazilian reais (BRL). Subscriptions renew automatically each cycle (monthly or yearly); on the yearly plan your hours and sets still reset every month."
     },
     "saved": {
       "empty": "No clips saved yet. Generate a set and save your favorite clips.",
@@ -419,7 +423,7 @@
       "title": "Start free. Grow when it pops off.",
       "popularBadge": "★ MOST POPULAR",
       "perMonth": "/mo",
-      "paymentSub": "Renews monthly",
+      "paymentSub": "PIX or card · renews monthly",
       "contactCta": "Contact us",
       "free": {
         "name": "Free trial",
@@ -432,7 +436,7 @@
       },
       "pro": {
         "name": "Pro",
-        "feature1": "Up to 5 hours of sets per month",
+        "feature1": "Up to 5 hours and 8 sets per month",
         "feature2": "Sets up to 3 hours long",
         "feature3": "Up to 30 clips per set",
         "feature4": "Re-cut down to the exact minute",
@@ -440,7 +444,7 @@
       },
       "premium": {
         "name": "Premium",
-        "feature1": "Up to 12 hours of sets per month",
+        "feature1": "Up to 12 hours and 20 sets per month",
         "feature2": "Sets up to 3 hours long",
         "feature3": "Up to 30 clips per set",
         "feature4": "Re-cut down to the exact minute",

@@ -49,7 +49,7 @@
       },
       "pro": {
         "name": "Pro",
-        "feature1": "Até 5 horas de set por mês",
+        "feature1": "Até 5 horas e 8 sets por mês",
         "feature2": "Sets de até 3 horas",
         "feature3": "Até 30 cortes por set",
         "feature4": "Re-corte no minuto exato",
@@ -57,7 +57,7 @@
       },
       "premium": {
         "name": "Premium",
-        "feature1": "Até 12 horas de set por mês",
+        "feature1": "Até 12 horas e 20 sets por mês",
         "feature2": "Sets de até 3 horas",
         "feature3": "Até 30 cortes por set",
         "feature4": "Re-corte no minuto exato",
@@ -121,8 +121,12 @@
         "free": { "name": "Teste grátis", "priceNote": "para experimentar", "f1": "1 hora de set no total", "f2": "10 cortes por set", "f3": "Vídeos verticais 9:16" },
         "pro": { "name": "Pro", "f1": "Até 5 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
         "premium": { "name": "Premium", "f1": "Até 12 horas de set por mês", "f2": "Até 30 cortes por set", "f3": "Re-corte no minuto exato" },
-        "paidPriceNote": "/mês · PIX ou cartão"
+        "sets": "Até {n} sets por mês",
+        "paidPriceNote": "/mês · PIX ou cartão",
+        "paidPriceNoteAnnual": "/ano · PIX ou cartão"
       },
+      "cycle": { "label": "Ciclo de cobrança", "monthly": "Mensal", "annual": "Anual", "annualBadge": "2 meses grátis" },
+      "setsUsed": " · {used} de {max} sets usados",
       "errors": {
         "loadFailed": "Não foi possível carregar seu plano. Recarregue a página.",
         "checkoutFailed": "falha ao abrir o checkout",
@@ -144,7 +148,7 @@
       "openingCheckout": "Abrindo checkout...",
       "contactCta": "Fale conosco",
       "subscribeTo": "Assinar {name}",
-      "paymentFootnote": "Pagamento processado pela AbacatePay. Cartão renova automaticamente todo mês; no PIX você recebe a cobrança da renovação a cada ciclo."
+      "paymentFootnote": "Pagamento processado pela AbacatePay. A assinatura renova automaticamente a cada ciclo (mensal ou anual); no PIX você recebe a cobrança da renovação. No anual, a cota de horas e sets continua renovando todo mês."
     },
     "saved": {
       "empty": "Nenhum corte salvo ainda. Gere um set e salve seus cortes favoritos.",
@@ -432,7 +436,7 @@
       },
       "pro": {
         "name": "Pro",
-        "feature1": "Até 5 horas de set por mês",
+        "feature1": "Até 5 horas e 8 sets por mês",
         "feature2": "Sets de até 3 horas",
         "feature3": "Até 30 cortes por set",
         "feature4": "Re-corte no minuto exato",
@@ -440,7 +444,7 @@
       },
       "premium": {
         "name": "Premium",
-        "feature1": "Até 12 horas de set por mês",
+        "feature1": "Até 12 horas e 20 sets por mês",
         "feature2": "Sets de até 3 horas",
         "feature3": "Até 30 cortes por set",
         "feature4": "Re-corte no minuto exato",
