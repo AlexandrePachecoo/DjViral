@@ -117,6 +117,10 @@ class AIDirection:
     # (:func:`app.visual.detect_scene_cuts`). Um box só vale na tomada em que
     # foi visto; o planejador nunca leva um enquadramento de uma para outra.
     cuts: list[float] = field(default_factory=list)
+    # Onde o PÚBLICO está em cada keyframe em que aparece, seja qual for o
+    # ``focus`` daquele frame: ``(t, box)``. Dá ao planejador para onde cortar
+    # num plano de reação mesmo quando a IA manteve o foco no artista.
+    crowd: list[tuple[float, Box]] = field(default_factory=list)
 
 
 @dataclass
@@ -178,7 +182,7 @@ _PROMPT = (
     "vazia se não houver pico claro.\n"
     '- "frames": UMA entrada POR FRAME recebido, na mesma ordem: '
     '{{"t": instante do frame, "focus": "dj"|"crowd"|"dancer"|"wide", '
-    '"box": [cx, cy, w, h] ou null}}.\n'
+    '"box": [cx, cy, w, h] ou null, "crowd": [cx, cy, w, h] ou null}}.\n'
     '  - "focus" = o que mais rende NAQUELE instante: "dj" (artista/cabine), '
     '"crowd" (a massa do público reagindo), "dancer" (UMA pessoa dançando em '
     'destaque) ou "wide" (plano aberto: a cena inteira, luzes/pyro, ou nada '
@@ -188,6 +192,13 @@ _PROMPT = (
     "cabine; dancer: o corpo inteiro; crowd: a aglomeração. Em \"wide\", o "
     "box marca onde está a ação principal (para centralizar o plano aberto), "
     "ou null.\n"
+    '  - "crowd" = onde está o PÚBLICO naquele frame (o retângulo da parte '
+    "mais animada da pista), SEMPRE que houver público visível — mesmo quando "
+    'o focus do frame é outro; null só se não aparece público.\n'
+    "O público é metade do show: havendo gente reagindo (mãos pra cima, "
+    'pulando, cantando), dê focus "crowd" ou "dancer" a pelo menos um terço '
+    "dos frames, principalmente logo DEPOIS de um auge — é a reação que vende "
+    "o momento.\n"
     "Dirija com intenção: abra situando a cena, feche no artista nos auges "
     '("moments"), mostre a reação do público ou de quem dança, dê respiros '
     "em wide. Não fique preso num só focus se a cena oferece mais, mas também "
@@ -195,7 +206,8 @@ _PROMPT = (
     "gravação trocou), não invente: escolha outro focus para aquele frame.\n"
     'Exemplo: {{"hype": 0.8, "worthy": true, "moments": [12.5], "frames": ['
     '{{"t": 2.5, "focus": "wide", "box": [0.5, 0.4, 0.3, 0.5]}}, '
-    '{{"t": 7.5, "focus": "dj", "box": [0.52, 0.38, 0.2, 0.45]}}, '
+    '{{"t": 7.5, "focus": "dj", "box": [0.52, 0.38, 0.2, 0.45], '
+    '"crowd": [0.5, 0.82, 0.9, 0.3]}}, '
     '{{"t": 12.5, "focus": "dj", "box": [0.5, 0.37, 0.2, 0.45]}}, '
     '{{"t": 17.5, "focus": "crowd", "box": [0.5, 0.8, 0.9, 0.35]}}]}}'
     "{hint}"
@@ -529,6 +541,7 @@ def _coerce(out: dict, duration: float) -> AIDirection:
         crowd_box=_coerce_box(out.get("crowd_box")),
         dancer_box=_coerce_box(out.get("dancer_box")),
         frames=_coerce_frames(out.get("frames"), duration),
+        crowd=_coerce_crowd(out.get("frames"), duration),
     )
     if direction.frames:
         _derive_legacy_fields(direction, duration)
@@ -555,6 +568,27 @@ def _coerce_frames(value, duration: float) -> list[tuple[float, str, Box | None]
             continue
         frames.setdefault(round(t, 2), (round(t, 2), focus, _coerce_box(item.get("box"))))
     return [frames[t] for t in sorted(frames)]
+
+
+def _coerce_crowd(value, duration: float) -> list[tuple[float, Box]]:
+    """Posições do público por frame (chave ``crowd`` de cada entrada de
+    ``frames``; num frame com ``focus="crowd"`` o próprio ``box`` vale)."""
+    crowd: dict[float, tuple[float, Box]] = {}
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            t = float(item.get("t"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(t) or not 0.0 <= t <= duration:
+            continue
+        box = _coerce_box(item.get("crowd"))
+        if box is None and str(item.get("focus") or "").strip().lower() == "crowd":
+            box = _coerce_box(item.get("box"))
+        if box is not None:
+            crowd.setdefault(round(t, 2), (round(t, 2), box))
+    return [crowd[t] for t in sorted(crowd)]
 
 
 def _derive_legacy_fields(direction: AIDirection, duration: float) -> None:

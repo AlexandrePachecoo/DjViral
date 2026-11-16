@@ -1,7 +1,7 @@
 """Testes do shot plan dirigido pela IA (`camera.build_ai_shot_plan`)."""
 import pytest
 
-from app import ai_director, camera
+from app import ai_director, camera, clipper, music
 from app.config import settings
 from app.visual import Box
 
@@ -12,9 +12,10 @@ def _box(cx, cy=0.4, w=0.2, h=0.45):
     return Box(cx=cx, cy=cy, w=w, h=h, conf=0.5)
 
 
-def _direction(frames, moments=(), cuts=()):
+def _direction(frames, moments=(), cuts=(), crowd=()):
     return ai_director.AIDirection(
-        hype_score=0.7, frames=list(frames), moments=list(moments), cuts=list(cuts)
+        hype_score=0.7, frames=list(frames), moments=list(moments),
+        cuts=list(cuts), crowd=list(crowd),
     )
 
 
@@ -161,3 +162,113 @@ def test_heavily_edited_source_becomes_a_reframe_following_each_take():
     path = shots[0].path
     jumps = [(b[0] - a[0]) for a, b in zip(path, path[1:]) if a[1] != b[1]]
     assert len(jumps) == 29 and max(jumps) <= 0.04
+
+
+# ---- planos de reação do público ----
+
+def test_crowd_reaction_shots_appear_even_when_the_ai_stayed_on_the_dj():
+    frames = _frames([("dj", _box(0.5))] * 12)
+    crowd = [(t, _box(0.3, 0.8, 0.9, 0.3)) for t, _f, _b in frames]
+    shots = camera.build_ai_shot_plan(_direction(frames, crowd=crowd), [], 60.0, W, H)
+    _assert_valid(shots)
+    kinds = [s.kind for s in shots]
+    assert kinds.count("crowd") >= len(shots) // 4
+    # Nunca mais de CROWD_EVERY shots seguidos sem a pista.
+    run = 0
+    for k in kinds:
+        run = 0 if k == "crowd" else run + 1
+        assert run <= camera.CROWD_EVERY
+    # O plano de reação mira onde a IA disse que o público está.
+    crowd_shot = next(s for s in shots if s.kind == "crowd")
+    assert (crowd_shot.crop[2] + crowd_shot.crop[0] / 2) / W == pytest.approx(0.3, abs=0.05)
+
+
+def test_no_crowd_position_means_no_forced_reaction():
+    shots = camera.build_ai_shot_plan(
+        _direction(_frames([("dj", _box(0.5))] * 12)), [], 60.0, W, H
+    )
+    assert "crowd" not in {s.kind for s in shots}
+
+
+# ---- zoom pela vibe da música ----
+
+def _profile(sections, period=0.47):
+    """``sections``: [(segundos, vibe)] → MusicProfile com batidas regulares."""
+    vibes = [v for seconds, v in sections for _ in range(int(seconds / music.HOP_SECONDS))]
+    total = sum(sec for sec, _v in sections)
+    beats = [i * period for i in range(int(total / period))]
+    return music.MusicProfile(beats=beats, period=period, vibes=vibes)
+
+
+def test_zoom_follows_the_music_vibe(monkeypatch):
+    # Teto de shots folgado: o que se mede aqui é o ritmo que a vibe pede.
+    monkeypatch.setattr(settings, "dynamic_max_shots", 20)
+    prof = _profile([(12, "calm"), (8, "build"), (40, "drop")])
+    shots = camera.build_ai_shot_plan(
+        _direction(_frames([("dj", _box(0.5))] * 12)), prof.beats, 60.0, W, H, music=prof
+    )
+    _assert_valid(shots)
+    by_vibe = {v: [s for s in shots if prof.vibe_at(s.t0, s.t1) == v] for v in ("calm", "build", "drop")}
+    assert all(by_vibe.values())
+    # Calmo: deriva lenta, sem pulso. Build: fecha mais que o normal e acelera.
+    assert all(s.pulse is None and s.drift < settings.dynamic_drift for s in by_vibe["calm"])
+    build = by_vibe["build"][-1]
+    assert build.drift >= settings.build_zoom and build.pulse is None
+    (_t0, z0), (t_mid, z_mid), (t_end, z_end) = build.zoom_keys
+    assert (z_mid - z0) / t_mid < (z_end - z_mid) / (t_end - t_mid)
+    # Drop: pulso na batida, em fase com um beat do shot.
+    for s in by_vibe["drop"]:
+        period, phase, amount = s.pulse
+        assert amount == settings.beat_pulse_amount
+        assert period == pytest.approx(0.47 * settings.beat_pulse_every, abs=0.01)
+        assert any(abs((s.t0 + phase) - b) < 0.01 for b in prof.beats)
+    # A virada para o drop é um corte com plano fechado no artista.
+    drop_cut = next(s for s in shots if abs(s.t0 - 20.0) < 0.5)
+    assert drop_cut.kind == "dj"
+    assert drop_cut.crop[1] == min(s.crop[1] for s in shots)
+    # No drop os planos são mais curtos que no trecho calmo.
+    longest = lambda group: max(s.t1 - s.t0 for s in group)  # noqa: E731
+    assert longest(by_vibe["drop"]) <= settings.dynamic_shot_max * camera.DROP_SHOT_SCALE + 0.6
+
+
+def test_build_up_stays_on_the_artist():
+    prof = _profile([(30, "calm"), (8, "build"), (22, "drop")])
+    frames = _frames([("dj", _box(0.5))] * 12)
+    crowd = [(t, _box(0.3, 0.8, 0.9, 0.3)) for t, _f, _b in frames]
+    shots = camera.build_ai_shot_plan(
+        _direction(frames, crowd=crowd), prof.beats, 60.0, W, H, music=prof
+    )
+    assert all(s.kind == "dj" for s in shots if prof.vibe_at(s.t0, s.t1) == "build")
+
+
+def test_intensity_scales_the_beat_pulse():
+    prof = _profile([(60, "drop")])
+    amounts = {}
+    for level in ("subtle", "medium", "intense"):
+        shots = camera.build_ai_shot_plan(
+            _direction(_frames([("dj", _box(0.5))] * 12)), prof.beats, 60.0, W, H,
+            intensity=level, music=prof,
+        )
+        amounts[level] = max(s.pulse[2] for s in shots if s.pulse)
+    assert amounts["subtle"] < amounts["medium"] < amounts["intense"]
+
+
+def test_pulse_is_rendered_into_the_zoom_expression(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(
+        clipper, "_run_ffmpeg", lambda cmd, *a, **k: captured.setdefault("cmd", cmd)
+    )
+    shot = camera.Shot(
+        t0=0.0, t1=6.0, kind="dj", crop=(608, 1080, 656, 0), drift=0.06,
+        pulse=(0.94, 0.2, 0.05),
+    )
+    clipper.cut_dynamic("in.mp4", 0, str(tmp_path / "o.mp4"), [shot], duration=6, pre_roll=0)
+    graph = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
+    assert "+0.0500*exp(-4*mod(on/30-0.200+" in graph and ",0.9400)/0.9400)" in graph
+    # No fallback sem zoompan o pulso some junto com o zoom.
+    captured.clear()
+    clipper.cut_dynamic(
+        "in.mp4", 0, str(tmp_path / "o.mp4"), [shot], duration=6, pre_roll=0,
+        force_static=True,
+    )
+    assert "exp(" not in captured["cmd"][captured["cmd"].index("-filter_complex") + 1]

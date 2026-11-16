@@ -223,7 +223,18 @@ novo (`backend/app/jobs.py`):
      que a IA não viu vira wide. Gravação picotada demais (mais tomadas que
      `DYNAMIC_MAX_SHOTS`, ou tomada mediana menor que `DYNAMIC_SHOT_MIN`) vira
      **reenquadramento**: um crop de altura cheia, sem zoom, que salta para a
-     ação a cada tomada. Usa os mesmos presets de `cut_intensity` e o mesmo
+     ação a cada tomada. **Planos de reação do público:** a IA informa, por
+     frame, onde o público está (`AIDirection.crowd`, mesmo com o `focus` no
+     artista); depois de 2 shots seguidos sem pista (fora dos auges e do
+     build-up) o planejador corta para ela. **Zoom pela vibe da música**
+     (`music.get_music_profile`, `MUSIC_VIBE_ENABLED`): o envelope de GRAVES
+     do áudio do corte divide o trecho em `drop` (grave cheio), `build` (os
+     segundos sem grave antes de um drop) e `calm`; as viradas para o drop
+     viram punch-ins e cada shot se move conforme a vibe — no drop o zoom dá
+     um tranco na batida e relaxa (`Shot.pulse`, `BEAT_PULSE_AMOUNT`/
+     `BEAT_PULSE_EVERY`) e os planos encurtam; no build a câmera fecha
+     acelerando até a virada (`BUILD_ZOOM`), sempre no artista; no calmo a
+     deriva é lenta (`CALM_DRIFT_SCALE`). Usa os mesmos presets de `cut_intensity` e o mesmo
      `clipper.cut_dynamic`. `AI_CAMERA_ENABLED=false` volta ao planejador
      legado abaixo (para comparar lado a lado).
    - **`dynamic` legado** (tiers `off`/`lite`, câmera da IA desligada, ou
@@ -425,7 +436,9 @@ ganchos detalhados em [`design.md`](design.md).
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
   `AI_CAMERA_ENABLED` (a IA monta os shots do dinâmico no tier `full`; false =
   planejador legado YOLO + heurísticas), `AI_SCENE_CUTS_ENABLED` (detecta as
-  trocas de câmera da gravação), `DYNAMIC_MAX_UPSCALE`, `OUTPUT_CRF`,
+  trocas de câmera da gravação), `MUSIC_VIBE_ENABLED` + `BEAT_PULSE_AMOUNT` +
+  `BEAT_PULSE_EVERY` + `BUILD_ZOOM` + `CALM_DRIFT_SCALE` (zoom pela vibe da
+  música), `DYNAMIC_MAX_UPSCALE`, `OUTPUT_CRF`,
   `AI_TRIAGE_MODEL` (default
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,

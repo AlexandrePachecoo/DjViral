@@ -580,3 +580,19 @@ def test_direct_labels_frames_with_their_take(monkeypatch):
     ]
     assert "tomada 1" in texts[0] and "tomada 2" in texts[1]
     assert "troca de câmera" in texts[-1]
+
+
+def test_coerce_reads_crowd_position_per_frame():
+    d = ai_director._coerce(
+        {
+            "hype": 0.7,
+            "frames": [
+                {"t": 5, "focus": "dj", "box": [0.5, 0.4, 0.2, 0.4], "crowd": [0.4, 0.8, 0.9, 0.3]},
+                {"t": 10, "focus": "crowd", "box": [0.6, 0.75, 0.8, 0.4]},  # o próprio box
+                {"t": 15, "focus": "dj", "box": [0.5, 0.4, 0.2, 0.4], "crowd": None},
+                {"t": 20, "focus": "wide", "box": None, "crowd": [9, 9, 9, 9]},  # inválido
+            ],
+        },
+        60.0,
+    )
+    assert [(t, round(b.cx, 2)) for t, b in d.crowd] == [(5.0, 0.4), (10.0, 0.6)]

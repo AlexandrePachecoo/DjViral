@@ -257,6 +257,15 @@ def cut_dynamic(
                     z_expr = f"min({1 + drift:.4f},1+{drift:.4f}*{smooth})"
                 else:  # afasta
                     z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*{smooth})"
+            if shot.pulse:
+                # Pulso na batida: salto de `amount` no beat, decaindo até o
+                # próximo (exp(-4) ≈ 2% no fim do período). O `+period*64`
+                # mantém o argumento do mod positivo antes da fase.
+                period, phase, amount = shot.pulse
+                z_expr = (
+                    f"({z_expr})+{amount:.4f}*exp(-4*mod(on/{fps:g}"
+                    f"-{phase:.3f}+{period * 64:.3f},{period:.4f})/{period:.4f})"
+                )
             chain += (
                 f",scale={w * 2}:{h * 2}:flags=lanczos"
                 f",zoompan=z='{z_expr}'"

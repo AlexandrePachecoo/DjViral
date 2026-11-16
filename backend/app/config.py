@@ -178,7 +178,7 @@ class Settings(BaseSettings):
     # Teto de shots por clipe (largura do `split=N` no filtergraph). Motion
     # alto pode gerar até ~20 shots num clipe de 60s (shot_min=3s) — o teto
     # limita a complexidade/memória do filtro independente da cena.
-    dynamic_max_shots: int = 10
+    dynamic_max_shots: int = 12
     # Threads do FILTRO (split/scale/zoompan) do corte dinâmico, via
     # -filter_threads/-filter_complex_threads. Mesma razão do `ffmpeg_threads`
     # do encoder: sem limitar, o FFmpeg escalona por núcleo do host (~34 na
@@ -237,6 +237,19 @@ class Settings(BaseSettings):
     beat_punch_enabled: bool = True
     beat_punch_anticip_frac: float = 0.7
     beat_punch_anticip_zoom_frac: float = 0.3
+
+    # ---- Zoom pela vibe da música (câmera da IA) ----
+    # O áudio de cada corte é dividido em drop / build-up / calmo (`music.py`)
+    # e o zoom de cada shot segue a vibe do trecho. False = zoom igual em tudo.
+    music_vibe_enabled: bool = True
+    # Drop: tranco de zoom na batida (fração: 0.05 = 5%) que relaxa até a
+    # próxima. `beat_pulse_every` = a cada quantas batidas (2 = tempos fortes).
+    beat_pulse_amount: float = 0.05
+    beat_pulse_every: int = 2
+    # Build-up: a câmera fecha sem parar até a virada; zoom total do shot.
+    build_zoom: float = 0.16
+    # Trecho calmo: movimento lento (fração do `dynamic_drift` normal).
+    calm_drift_scale: float = 0.6
 
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
@@ -341,6 +354,9 @@ DYNAMIC_INTENSITY_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "dynamic_max_shots": 6,
         "dynamic_pan_max_speed": 0.07,
         "beat_punch_enabled": False,
+        "beat_pulse_amount": 0.025,
+        "beat_pulse_every": 4,
+        "build_zoom": 0.10,
     },
     "medium": {},
     "intense": {
@@ -357,5 +373,8 @@ DYNAMIC_INTENSITY_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "beat_punch_enabled": True,
         "beat_punch_anticip_frac": 0.55,
         "beat_punch_anticip_zoom_frac": 0.15,
+        "beat_pulse_amount": 0.08,
+        "beat_pulse_every": 1,
+        "build_zoom": 0.22,
     },
 }
