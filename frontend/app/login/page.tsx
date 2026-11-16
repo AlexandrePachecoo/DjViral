@@ -1,178 +1,65 @@
-"use client";
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { getSessionUser } from "@/lib/auth";
+import LoginForm from "./LoginForm";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+type PaidPlan = "pro" | "premium";
 
-type Mode = "login" | "register";
+type LoginSearch = {
+  signup?: string | string[];
+  mode?: string | string[];
+  plan?: string | string[];
+};
 
-export default function LoginPage() {
-  const t = useTranslations("login");
-  const router = useRouter();
-  const [mode, setMode] = useState<Mode>(() => {
-    // Permite abrir direto no cadastro (ex.: vindo do gerador da landing com
-    // /login?signup=1). Lê da URL sem useSearchParams p/ evitar Suspense.
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.has("signup") || params.get("mode") === "register") {
-        return "register";
-      }
-    }
-    return "login";
-  });
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body =
-        mode === "login" ? { email, password } : { name, email, password };
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? t("errors.somethingWrong"));
-      }
-      router.push("/app");
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("errors.unexpected"));
-    } finally {
-      setBusy(false);
-    }
-  }
+function paidPlan(value: string | undefined): PaidPlan | null {
+  return value === "pro" || value === "premium" ? value : null;
+}
 
+function wantsSignup(searchParams: LoginSearch, plan: PaidPlan | null): boolean {
+  // `signup` presente (mesmo vazio) ou mode=register abre direto no cadastro.
+  // Um plano pago vindo da landing também cai no cadastro: a conta vem antes
+  // do checkout que já existe na aba Plano.
   return (
-    <main style={mainStyle}>
-      <a href="/" style={backLink}>
-        ← DJviral
-      </a>
-
-      <div style={cardStyle}>
-        <h1 style={{ margin: 0, fontSize: 26 }}>
-          {mode === "login" ? t("titleLogin") : t("titleRegister")}
-        </h1>
-        <p style={{ opacity: 0.7, marginTop: 4 }}>
-          {mode === "login" ? t("subtitleLogin") : t("subtitleRegister")}
-        </p>
-
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 20 }}>
-          {mode === "register" && (
-            <input
-              placeholder={t("namePlaceholder")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={busy}
-              required
-              style={inputStyle}
-            />
-          )}
-          <input
-            type="email"
-            placeholder={t("emailPlaceholder")}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={busy}
-            required
-            autoComplete="email"
-            style={inputStyle}
-          />
-          <input
-            type="password"
-            placeholder={t("passwordPlaceholder")}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={busy}
-            required
-            minLength={6}
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            style={inputStyle}
-          />
-          <button type="submit" disabled={busy} style={buttonStyle}>
-            {busy ? t("submitBusy") : mode === "login" ? t("submitLogin") : t("submitRegister")}
-          </button>
-        </form>
-
-        {error && <p style={{ marginTop: 14, color: "#ff6b6b" }}>{error}</p>}
-
-        <p style={{ marginTop: 18, opacity: 0.8, fontSize: 14 }}>
-          {mode === "login" ? t("noAccount") : t("hasAccount")}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError("");
-            }}
-            style={linkButton}
-          >
-            {mode === "login" ? t("switchToRegister") : t("switchToLogin")}
-          </button>
-        </p>
-      </div>
-    </main>
+    searchParams.signup !== undefined ||
+    first(searchParams.mode) === "register" ||
+    plan !== null
   );
 }
 
-const mainStyle: React.CSSProperties = {
-  maxWidth: 420,
-  margin: "0 auto",
-  padding: "2rem 1rem",
-};
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: LoginSearch;
+}): Promise<Metadata> {
+  const t = await getTranslations("login");
+  const plan = paidPlan(first(searchParams.plan));
+  const signup = wantsSignup(searchParams, plan);
+  const title = signup ? t("metaTitleRegister") : t("metaTitleLogin");
+  const description = signup ? t("metaDescriptionRegister") : t("metaDescriptionLogin");
+  return {
+    title,
+    description,
+    robots: { index: false, follow: false },
+    alternates: { canonical: "/login" },
+    openGraph: { title, description, url: "/login" },
+  };
+}
 
-const backLink: React.CSSProperties = {
-  display: "inline-block",
-  marginBottom: 16,
-  fontSize: 14,
-  color: "#9d8cff",
-  textDecoration: "none",
-};
+// A query define o modo no HTML do servidor. Sem isso, /login?signup=1
+// saía como "Entrar" e só virava cadastro depois da hidratação.
+export const dynamic = "force-dynamic";
 
-const cardStyle: React.CSSProperties = {
-  padding: 24,
-  borderRadius: 16,
-  background: "#15151c",
-  border: "1px solid #2a2a35",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "12px",
-  borderRadius: 8,
-  border: "1px solid #2a2a35",
-  background: "#0f0f15",
-  color: "#e9e9f0",
-  // 16px impede o iOS de dar zoom ao focar o campo.
-  fontSize: 16,
-};
-
-const buttonStyle: React.CSSProperties = {
-  padding: "12px",
-  borderRadius: 8,
-  border: "none",
-  background: "#7c5cff",
-  color: "white",
-  fontWeight: 600,
-  fontSize: 16,
-  minHeight: 48,
-  cursor: "pointer",
-};
-
-const linkButton: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "#9d8cff",
-  cursor: "pointer",
-  fontSize: 14,
-  padding: 0,
-  textDecoration: "underline",
-};
+export default async function LoginPage({ searchParams }: { searchParams: LoginSearch }) {
+  const plan = paidPlan(first(searchParams.plan));
+  if (plan) {
+    const user = await getSessionUser();
+    if (user) redirect(`/app?checkout=${plan}`);
+  }
+  const signup = wantsSignup(searchParams, plan);
+  return <LoginForm initialMode={signup ? "register" : "login"} plan={plan} />;
+}

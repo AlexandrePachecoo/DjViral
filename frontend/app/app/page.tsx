@@ -23,6 +23,7 @@ type ApiFolder = {
 export default function Studio() {
   const [userName, setUserName] = useState("DJ");
   const [tab, setTab] = useState<Tab>("gerador");
+  const [checkoutPlan, setCheckoutPlan] = useState<"pro" | "premium" | null>(null);
 
   // Chave para resetar o Gerador (o botão "Novo set" a incrementa, remontando
   // o componente com estado limpo).
@@ -43,8 +44,14 @@ export default function Studio() {
       .catch(() => {});
 
     // Voltando do checkout da AbacatePay (?billing=...): abre a aba Plano,
-    // que mostra o status do pagamento.
-    if (new URLSearchParams(window.location.search).has("billing")) {
+    // que mostra o status do pagamento. ?checkout=pro|premium vem da landing
+    // (Assinar) e a aba dispara o checkout já existente.
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get("checkout");
+    if (checkout === "pro" || checkout === "premium") {
+      setCheckoutPlan(checkout);
+      setTab("plano");
+    } else if (params.has("billing")) {
       setTab("plano");
     }
   }, []);
@@ -147,7 +154,7 @@ export default function Studio() {
             onDeleteFolder={handleDeleteFolder}
           />
         )}
-        {tab === "plano" && <PlanView />}
+        {tab === "plano" && <PlanView checkoutPlan={checkoutPlan} />}
         {tab === "perfil" && (
           <ProfileView
             userName={userName}

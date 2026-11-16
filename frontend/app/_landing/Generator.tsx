@@ -79,33 +79,38 @@ export default function Generator() {
 
       <div className={styles.genBody}>
         {phase === "idle" && (
-          <label
-            htmlFor="djv-file"
+          <div
             onDragOver={onDragOver}
             onDrop={onDrop}
             className={styles.dropzone}
           >
-            <div className={styles.idleBars}>
-              {IDLE_BARS.map((b, i) => (
-                <span
-                  key={i}
-                  data-anim
-                  className={styles.idleBar}
-                  style={{ background: b.color, height: b.h, animationDelay: b.d }}
-                />
-              ))}
-            </div>
-            <div className={styles.dropTitle}>{t("dropTitle")}</div>
-            <div className={styles.dropHint}>{t("dropHint")}</div>
-            <span className={styles.dropCta}>{t("dropCta")}</span>
-            <input
-              id="djv-file"
-              type="file"
-              accept="video/*"
-              onChange={onFile}
-              className={styles.hiddenInput}
-            />
-          </label>
+            <label htmlFor="djv-file" className={styles.dropzoneLabel}>
+              <div className={styles.idleBars}>
+                {IDLE_BARS.map((b, i) => (
+                  <span
+                    key={i}
+                    data-anim
+                    className={styles.idleBar}
+                    style={{ background: b.color, height: b.h, animationDelay: b.d }}
+                  />
+                ))}
+              </div>
+              <div className={styles.dropTitle}>{t("dropTitle")}</div>
+              <span className={styles.dropCta}>{t("dropCta")}</span>
+              <input
+                id="djv-file"
+                type="file"
+                accept="video/*"
+                onChange={onFile}
+                className={styles.hiddenInput}
+              />
+            </label>
+            <p className={styles.dropHint}>
+              {t.rich("dropHint", {
+                privacy: (chunks) => <a href="/privacidade">{chunks}</a>,
+              })}
+            </p>
+          </div>
         )}
 
         {phase === "form" && (

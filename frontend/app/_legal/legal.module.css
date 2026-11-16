@@ -1,0 +1,136 @@
+.page {
+  min-height: 100vh;
+  background: #f4f2fb;
+  color: #18181b;
+  font-family: "Outfit", system-ui, sans-serif;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 28px 20px 0;
+}
+
+.brand {
+  color: #18181b;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+  text-decoration: none;
+}
+
+.brand :global(.wmDj) {
+  font-weight: 700;
+}
+
+.brand :global(.wmViral) {
+  font-weight: 300;
+}
+
+.topLinks {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.topLinks a {
+  color: #52525b;
+  text-decoration: none;
+}
+
+.topLinks a:hover {
+  color: #7c3aed;
+}
+
+.article {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 28px 20px 72px;
+}
+
+.kicker {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: #7c3aed;
+}
+
+.article h1 {
+  margin: 8px 0 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.updated {
+  margin: 10px 0 0;
+  color: #71717a;
+  font-size: 14px;
+}
+
+.draft {
+  margin: 22px 0 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #78350f;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.section {
+  margin-top: 28px;
+}
+
+.section h2 {
+  margin: 0 0 8px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.section p {
+  margin: 0 0 10px;
+  color: #3f3f46;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.placeholder {
+  background: #fde68a;
+  color: #1c1917;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.footer {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 0 20px 40px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: #71717a;
+  font-size: 14px;
+}
+
+.footer a {
+  color: #52525b;
+}
+
+@media (max-width: 640px) {
+  .article h1 {
+    font-size: 32px;
+  }
+}

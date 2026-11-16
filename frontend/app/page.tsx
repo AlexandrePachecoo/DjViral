@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { getTranslations } from "next-intl/server";
 import styles from "./page.module.css";
 import Generator from "./_landing/Generator";
@@ -5,8 +6,38 @@ import BeforeAfter from "./_landing/BeforeAfter";
 import { PLANS, priceLabel } from "@/lib/plans";
 
 const EQ_COLORS = ["#a855f7", "#d946ef", "#ec4899", "#22d3ee"];
-const TRIAL_HREF = "/login";
 const SIGNUP_HREF = "/login?signup=1";
+// O checkout da AbacatePay já existe na aba Plano (/api/billing/checkout).
+// A landing só preserva o plano até o cadastro/login; quem já tem sessão
+// cai direto em /app?checkout=...
+const PRO_HREF = "/login?signup=1&plan=pro";
+const PREMIUM_HREF = "/login?signup=1&plan=premium";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations("metadata");
+  const title = t("title");
+  const description = t("description");
+  return {
+    title,
+    description,
+    alternates: { canonical: "/" },
+    openGraph: {
+      title,
+      description,
+      url: "/",
+      type: "website",
+      locale: "pt_BR",
+      siteName: "DJviral",
+      images: [{ url: "/images/dj-preview.webp", alt: "DJ tocando um set ao pôr do sol" }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: ["/images/dj-preview.webp"],
+    },
+  };
+}
 
 function Check() {
   return (
@@ -68,7 +99,6 @@ function Logo() {
 
 export default async function Landing() {
   const t = await getTranslations("landing");
-  // Ambos os planos pagos levam ao cadastro; o checkout acontece dentro do app.
   const proPrice = priceLabel(PLANS.pro);
   const premiumPrice = priceLabel(PLANS.premium);
   const freePrice = "R$0";
@@ -100,7 +130,7 @@ export default async function Landing() {
             <a className={`${styles.navLink} ${styles.navLinksText}`} href="/login">
               {t("nav.login")}
             </a>
-            <a className={styles.navCta} href={TRIAL_HREF}>
+            <a className={styles.navCta} href={SIGNUP_HREF}>
               {t("nav.tryFree")}
             </a>
           </div>
@@ -252,7 +282,7 @@ export default async function Landing() {
                 <span><Check />{t("pricing.free.feature2")}</span>
                 <span><Check />{t("pricing.free.feature3")}</span>
               </div>
-              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+              <a className={styles.planCtaGhost} href={SIGNUP_HREF}>
                 {t("pricing.free.cta")}
               </a>
             </div>
@@ -269,7 +299,7 @@ export default async function Landing() {
                 <span><Check />{t("pricing.pro.feature3")}</span>
                 <span><Check />{t("pricing.pro.feature4")}</span>
               </div>
-              <a className={styles.planCtaFill} href={TRIAL_HREF}>
+              <a className={styles.planCtaFill} href={PRO_HREF}>
                 {t("pricing.pro.cta")}
               </a>
             </div>
@@ -285,7 +315,7 @@ export default async function Landing() {
                 <span><Check />{t("pricing.premium.feature3")}</span>
                 <span><Check />{t("pricing.premium.feature4")}</span>
               </div>
-              <a className={styles.planCtaGhost} href={TRIAL_HREF}>
+              <a className={styles.planCtaGhost} href={PREMIUM_HREF}>
                 {t("pricing.premium.cta")}
               </a>
             </div>
@@ -316,7 +346,7 @@ export default async function Landing() {
         <section className={styles.ctaFinal}>
           <h2 className={styles.ctaTitle}>{t("finalCta.title")}</h2>
           <p className={styles.ctaSub}>{t("finalCta.subtitle")}</p>
-          <a className={styles.ctaButton} href="#gerador">
+          <a className={styles.ctaButton} href={SIGNUP_HREF}>
             {t("finalCta.button")}
           </a>
           <div className={styles.ctaMicro}>{t("hero.trust1")} · {t("hero.trust2")}</div>
@@ -341,6 +371,11 @@ export default async function Landing() {
               <span className={styles.footerColTitle}>{t("footer.account")}</span>
               <a href="/login">{t("nav.login")}</a>
               <a href={SIGNUP_HREF}>{t("footer.signup")}</a>
+            </div>
+            <div className={styles.footerCol}>
+              <span className={styles.footerColTitle}>{t("footer.legal")}</span>
+              <a href="/privacidade">{t("footer.privacy")}</a>
+              <a href="/termos">{t("footer.terms")}</a>
             </div>
           </div>
           <div className={styles.footerBottom}>
