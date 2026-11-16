@@ -422,7 +422,7 @@ function FolderSection({
 
       {/* Cortes da pasta */}
       {expanded && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,260px))", gap: 20 }}>
           {folder.cuts.map((cut) => (
             <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
               <div style={{ position: "relative", background: "#000" }}>
@@ -431,7 +431,7 @@ function FolderSection({
                   controls
                   playsInline
                   preload="metadata"
-                  style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
+                  style={{ width: "100%", aspectRatio: "9 / 16", objectFit: "contain", display: "block", background: "#000" }}
                 />
                 {showScore && (
                   <div

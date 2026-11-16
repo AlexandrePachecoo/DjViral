@@ -686,3 +686,89 @@ def get_beat_times(
     finally:
         if os.path.exists(wav_path):
             os.remove(wav_path)
+
+
+# ---- Trocas de câmera da GRAVAÇÃO (set multicâmera / editado) ----
+# Amostragem (fps) e tamanho das miniaturas em cinza usadas na comparação.
+SCENE_FPS = 4.0
+SCENE_SIZE = (64, 36)
+# Correlação estrutural abaixo disto entre dois frames = composições diferentes.
+SCENE_CUT_CORR = 0.45
+# Janela (s) da comparação "antes × depois" que pega transições graduais
+# (crossfade, whip pan, efeito) que nenhum par de frames vizinhos acusa.
+SCENE_FADE_SPAN = 1.0
+# Trocas mais próximas que isto viram uma só (efeito/flash em rajada).
+SCENE_MIN_GAP = 1.0
+
+
+def _thumb_corr(a: np.ndarray, b: np.ndarray) -> float:
+    """Correlação entre duas miniaturas normalizadas (1 = mesma composição).
+
+    Normalizar por média/desvio deixa a medida cega a brilho e contraste — um
+    strobe ou uma troca de cor da iluminação preserva a ESTRUTURA da imagem e
+    continua com correlação alta; uma troca de câmera não. Frame liso (escuro
+    total, branco estourado) não tem estrutura: devolve 1.0 (não decide nada).
+    """
+    sa, sb = float(a.std()), float(b.std())
+    if sa < 4.0 or sb < 4.0:
+        return 1.0
+    return float(((a - a.mean()) * (b - b.mean())).mean() / (sa * sb))
+
+
+def detect_scene_cuts(video_path: str, start_sec: float, duration: float) -> list[float]:
+    """Instantes (s, relativos à janela) em que a GRAVAÇÃO troca de câmera.
+
+    Sets multicâmera e vídeos já editados cortam de um ângulo para outro; quem
+    reenquadra precisa saber disso (um box do DJ vale só na tomada em que foi
+    visto). Compara miniaturas em cinza a ``SCENE_FPS``:
+
+    - corte seco: o frame deixa de parecer com o anterior E o seguinte também
+      não parece com o anterior (um flash/strobe volta à mesma imagem e não
+      conta);
+    - transição gradual (crossfade, efeito): o frame não parece com o de
+      ``SCENE_FADE_SPAN`` s atrás, e o seguinte confirma.
+
+    Nunca levanta exceção: sem FFmpeg/frames devolve ``[]`` (tomada única).
+    """
+    w, h = SCENE_SIZE
+    cmd = [
+        "ffmpeg", "-v", "error",
+        "-ss", str(max(0.0, start_sec)),
+        "-i", video_path,
+        "-t", str(duration),
+        "-vf", f"fps={SCENE_FPS},scale={w}:{h}",
+        "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
+    ]
+    try:
+        raw = subprocess.run(cmd, capture_output=True, timeout=120).stdout
+    except Exception:  # noqa: BLE001 - detecção nunca derruba o job
+        logger.exception("Falha ao detectar trocas de câmera (%.1fs)", start_sec)
+        return []
+    n = len(raw) // (w * h)
+    if n < 3:
+        return []
+    thumbs = np.frombuffer(raw[: n * w * h], dtype=np.uint8).reshape(n, h, w)
+    thumbs = thumbs.astype(np.float32)
+    span = max(2, int(round(SCENE_FADE_SPAN * SCENE_FPS)))
+    min_gap = max(1, int(round(SCENE_MIN_GAP * SCENE_FPS)))
+    cuts: list[float] = []
+    last = -10**9  # índice do frame onde a última troca terminou
+    for i in range(1, n - 1):
+        if i - last < min_gap:
+            continue
+        if (
+            _thumb_corr(thumbs[i - 1], thumbs[i]) < SCENE_CUT_CORR
+            and _thumb_corr(thumbs[i - 1], thumbs[i + 1]) < SCENE_CUT_CORR
+        ):
+            cuts.append(round(i / SCENE_FPS, 2))
+            last = i
+        elif (
+            i >= span
+            and i - span > last  # o frame de referência já é da tomada atual
+            and _thumb_corr(thumbs[i - span], thumbs[i]) < SCENE_CUT_CORR
+            and _thumb_corr(thumbs[i - span], thumbs[i + 1]) < SCENE_CUT_CORR
+        ):
+            # O meio da transição é onde a tomada nova passa a dominar.
+            cuts.append(round((i - span / 2) / SCENE_FPS, 2))
+            last = i
+    return cuts

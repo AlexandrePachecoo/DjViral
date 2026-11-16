@@ -27,6 +27,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from . import visual
 from .config import settings
 from .visual import Box
 
@@ -112,6 +113,10 @@ class AIDirection:
     crowd_box: Box | None = None
     dancer_box: Box | None = None
     frames: list[tuple[float, str, Box | None]] = field(default_factory=list)
+    # Instantes (s) em que a GRAVAÇÃO troca de câmera dentro da janela
+    # (:func:`app.visual.detect_scene_cuts`). Um box só vale na tomada em que
+    # foi visto; o planejador nunca leva um enquadramento de uma para outra.
+    cuts: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -286,22 +291,61 @@ def _grab_frame(video_path: str, t_abs: float, width: int) -> str | None:
     return base64.b64encode(result.stdout).decode("ascii")
 
 
-def _sample_frames(
-    video_path: str, start_sec: float, duration: float, n: int, width: int | None = None
-) -> list[tuple[float, str]]:
-    """Amostra ``n`` keyframes espalhados na janela → ``[(t_rel, jpeg_b64)]``.
+# Teto de keyframes numa chamada de direção (gravação com muitas tomadas pede
+# mais frames que o padrão: cada tomada precisa de pelo menos um).
+MAX_DIRECTION_FRAMES = 24
+# Tomada mais curta que isto não ganha frame próprio (flash/efeito).
+MIN_TAKE_SECONDS = 1.0
 
-    Cada alvo é a fração (i+0.5)/n da duração (evita as bordas) e vira um grab
-    independente com seek rápido (:func:`_grab_frame`), alguns em paralelo.
-    ``width`` (px) escala o custo de tokens da chamada — a triagem usa frames
-    menores que a direção profunda. Frames que falharem ficam de fora; nunca
-    levanta exceção.
+
+def _frame_times(duration: float, cuts: list[float], n: int) -> list[float]:
+    """Instantes dos keyframes da direção, cientes das trocas de câmera.
+
+    Sem trocas: ``n`` instantes uniformes (fração (i+0.5)/n). Com trocas: toda
+    tomada com pelo menos :data:`MIN_TAKE_SECONDS` ganha um frame (no meio
+    dela) e o resto do orçamento vai para as tomadas mais longas — assim o
+    modelo vê TODOS os ângulos da janela, não só os que a grade uniforme
+    acertou por acaso.
     """
     n = max(1, n)
+    edges = [0.0] + sorted(c for c in cuts if 0.0 < c < duration) + [duration]
+    takes = [(a, b) for a, b in zip(edges, edges[1:]) if b - a >= MIN_TAKE_SECONDS]
+    if len(takes) <= 1:
+        return [duration * (i + 0.5) / n for i in range(n)]
+    takes = sorted(takes, key=lambda t: t[1] - t[0], reverse=True)[:MAX_DIRECTION_FRAMES]
+    counts = [1] * len(takes)
+    for _ in range(max(0, n - len(takes))):
+        i = max(range(len(takes)), key=lambda k: (takes[k][1] - takes[k][0]) / counts[k])
+        counts[i] += 1
+    times = [
+        a + (b - a) * (j + 0.5) / k
+        for (a, b), k in zip(takes, counts)
+        for j in range(k)
+    ]
+    return sorted(times)
+
+
+def _sample_frames(
+    video_path: str,
+    start_sec: float,
+    duration: float,
+    n: int,
+    width: int | None = None,
+    times: list[float] | None = None,
+) -> list[tuple[float, str]]:
+    """Amostra keyframes da janela → ``[(t_rel, jpeg_b64)]``.
+
+    Por padrão ``n`` instantes espalhados (fração (i+0.5)/n da duração, evita
+    as bordas); ``times`` (s relativos à janela) escolhe os instantes à mão.
+    Cada um vira um grab independente com seek rápido (:func:`_grab_frame`),
+    alguns em paralelo. ``width`` (px) escala o custo de tokens da chamada — a
+    triagem usa frames menores que a direção profunda. Frames que falharem
+    ficam de fora; nunca levanta exceção.
+    """
     frame_width = width or settings.ai_director_frame_width
-    targets = [duration * (i + 0.5) / n for i in range(n)]
+    targets = times or [duration * (i + 0.5) / max(1, n) for i in range(max(1, n))]
     try:
-        with ThreadPoolExecutor(max_workers=min(_GRAB_WORKERS, n)) as pool:
+        with ThreadPoolExecutor(max_workers=min(_GRAB_WORKERS, len(targets))) as pool:
             grabbed = list(
                 pool.map(
                     lambda t: _grab_frame(video_path, start_sec + t, frame_width),
@@ -594,24 +638,47 @@ def direct(
     if client is None:
         return None
 
-    frames = _sample_frames(video_path, start_sec, duration, settings.ai_director_frames)
+    cuts: list[float] = []
+    if settings.ai_scene_cuts_enabled:
+        cuts = visual.detect_scene_cuts(video_path, start_sec, duration)
+    frames = _sample_frames(
+        video_path,
+        start_sec,
+        duration,
+        settings.ai_director_frames,
+        times=_frame_times(duration, cuts, settings.ai_director_frames),
+    )
     if not frames:
         return None
 
+    def _take(t: float) -> int:
+        return 1 + sum(1 for c in cuts if c <= t)
+
     content: list[dict] = []
     for t, b64 in frames:
-        content.append({"type": "text", "text": f"Frame em t={t:.1f}s:"})
+        label = f"Frame em t={t:.1f}s"
+        if cuts:
+            label += f" (tomada {_take(t)})"
+        content.append({"type": "text", "text": label + ":"})
         content.append(
             {
                 "type": "image",
                 "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
             }
         )
+    hint = _hint(wv)
+    if cuts:
+        hint += (
+            "\nATENÇÃO: a GRAVAÇÃO troca de câmera nos instantes "
+            + ", ".join(f"{c:.1f}s" for c in cuts)
+            + " — cada frame vem rotulado com a tomada (ângulo) a que pertence. "
+            "Trate cada tomada como uma cena própria: escolha o focus pelo que "
+            "AQUELA tomada mostra e dê o box do alvo NAQUELE ângulo (a posição "
+            "do DJ muda de uma câmera para outra). Se a tomada já é um plano "
+            'fechado ou um efeito/transição, use "wide" com o box da ação.'
+        )
     content.append(
-        {
-            "type": "text",
-            "text": _PROMPT.format(duration=duration, hint=_hint(wv)),
-        }
+        {"type": "text", "text": _PROMPT.format(duration=duration, hint=hint)}
     )
 
     try:
@@ -639,7 +706,9 @@ def direct(
     if out is None:
         logger.warning("Diretor de IA: resposta sem JSON válido (janela %.1fs)", start_sec)
         return None
-    return _coerce(out, duration)
+    direction = _coerce(out, duration)
+    direction.cuts = cuts
+    return direction
 
 
 def triage_group(

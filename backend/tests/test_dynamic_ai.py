@@ -9,6 +9,14 @@ from app.visual import Box, FrameSample, WindowVisual
 from app.config import settings
 
 
+@pytest.fixture(autouse=True)
+def _no_upscale_cap(monkeypatch):
+    # Estes testes medem as regras de zoom do planejador legado numa fonte
+    # 1080p; o teto por resolução (`dynamic_max_upscale`) tem teste próprio.
+    monkeypatch.setattr(settings, "dynamic_max_upscale", 10.0)
+
+
+
 def _wv() -> WindowVisual:
     wv = WindowVisual()
     wv.detected = True

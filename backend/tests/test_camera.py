@@ -12,9 +12,9 @@ def _box(cx, cy=0.4, w=0.2, h=0.45):
     return Box(cx=cx, cy=cy, w=w, h=h, conf=0.5)
 
 
-def _direction(frames, moments=()):
+def _direction(frames, moments=(), cuts=()):
     return ai_director.AIDirection(
-        hype_score=0.7, frames=list(frames), moments=list(moments)
+        hype_score=0.7, frames=list(frames), moments=list(moments), cuts=list(cuts)
     )
 
 
@@ -74,8 +74,10 @@ def test_drop_and_moments_cut_to_a_tight_shot_on_the_artist():
     for t in (5.0, 20.0):
         punch = next(s for s in shots if s.t0 == t)
         assert punch.kind == "dj"
-        # Fechado = o box da IA sem folga, limitado ao zoom máximo.
-        assert punch.crop[1] == pytest.approx(H / settings.dynamic_zoom_max, abs=2)
+        # Fechado = o box da IA sem folga, limitado ao que a fonte 1080p
+        # aguenta sem borrar (ampliação máxima até a saída).
+        min_crop_h = settings.output_height / settings.dynamic_max_upscale
+        assert punch.crop[1] == pytest.approx(min_crop_h, abs=2)
 
 
 def test_cuts_snap_to_beats_and_respect_min_shot():
@@ -101,3 +103,61 @@ def test_camera_pans_when_the_subject_moves_inside_a_shot():
     shots = camera.build_ai_shot_plan(_direction(_frames(spec)), [], 60.0, W, H)
     _assert_valid(shots)
     assert any(s.path for s in shots)
+
+
+# ---- resolução: o zoom respeita o que a fonte aguenta ----
+
+def test_zoom_is_capped_by_source_resolution():
+    frames = _frames([("dj", _box(0.5, h=0.2))] * 12)
+    for src_w, src_h in ((1280, 720), (1920, 1080), (3840, 2160)):
+        shots = camera.build_ai_shot_plan(_direction(frames), [], 60.0, src_w, src_h, peak_at=5.0)
+        upscale = max(settings.output_height / s.crop[1] for s in shots)
+        assert upscale <= max(
+            settings.dynamic_max_upscale, settings.output_height / src_h
+        ) + 0.02
+    # 4K tem pixel de sobra: o plano fechado usa o zoom máximo configurado.
+    assert min(s.crop[1] for s in shots) == pytest.approx(
+        2160 / settings.dynamic_zoom_max, abs=2
+    )
+
+
+# ---- gravação multicâmera: cada tomada é planejada sozinha ----
+
+def test_source_camera_cuts_split_the_plan_and_boxes_stay_in_their_take():
+    # Câmera A (0-20 s): DJ à esquerda. Câmera B (20-60 s): DJ à direita.
+    spec = [("dj", _box(0.2))] * 4 + [("dj", _box(0.8))] * 8
+    shots = camera.build_ai_shot_plan(
+        _direction(_frames(spec), cuts=[20.0]), [], 60.0, W, H
+    )
+    _assert_valid(shots)
+    assert any(s.t1 == 20.0 for s in shots)  # nenhum shot atravessa a troca
+    for s in shots:
+        center = (s.crop[2] + s.crop[0] / 2) / W
+        assert center == pytest.approx(0.2 if s.t1 <= 20.0 else 0.8, abs=0.03)
+        # Nenhum pan viaja de um ângulo para o outro.
+        if s.path:
+            xs = [(x + s.crop[0] / 2) / W for _t, x, _y in s.path]
+            assert max(xs) - min(xs) < 0.1
+
+
+def test_take_the_ai_did_not_see_falls_back_to_a_wide_shot():
+    frames = _frames([("dj", _box(0.2))] * 4)  # só há frames até 17.5 s
+    shots = camera.build_ai_shot_plan(
+        _direction(frames, cuts=[20.0]), [], 60.0, W, H
+    )
+    _assert_valid(shots)
+    assert {s.kind for s in shots if s.t0 >= 20.0} == {"wide"}
+
+
+def test_heavily_edited_source_becomes_a_reframe_following_each_take():
+    # Um corte da gravação a cada 2 s: não cabem shots próprios.
+    cuts = [2.0 * i for i in range(1, 30)]
+    frames = [(2.0 * i + 1.0, "dj", _box(0.2 if i % 2 else 0.8)) for i in range(30)]
+    shots = camera.build_ai_shot_plan(_direction(frames, cuts=cuts), [], 60.0, W, H)
+    _assert_valid(shots)
+    assert len(shots) == 1 and shots[0].kind == "reframe"
+    assert shots[0].crop[1] == H and not shots[0].drift  # altura cheia, sem zoom
+    # O crop salta junto com cada troca (um frame de transição, não um pan).
+    path = shots[0].path
+    jumps = [(b[0] - a[0]) for a, b in zip(path, path[1:]) if a[1] != b[1]]
+    assert len(jumps) == 29 and max(jumps) <= 0.04

@@ -109,7 +109,7 @@ def cut(
     # ``setsar=1`` garante pixels quadrados. Filtrar já força re-encode, o que o
     # código abaixo já faz (libx264/aac).
     w, h = settings.output_width, settings.output_height
-    vf = f"crop='min(iw,ih*{w}/{h})':ih,scale={w}:{h},setsar=1"
+    vf = f"crop='min(iw,ih*{w}/{h})':ih,scale={w}:{h}:flags=lanczos,setsar=1"
 
     cmd = [
         "ffmpeg",
@@ -121,6 +121,8 @@ def cut(
         "-vf", vf,
         "-c:v", "libx264",
         "-preset", "veryfast",
+        "-crf", str(settings.output_crf),
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-movflags", "+faststart",  # bom para streaming/preview web
         output_path,
@@ -256,13 +258,13 @@ def cut_dynamic(
                 else:  # afasta
                     z_expr = f"max(1,{1 + drift:.4f}-{drift:.4f}*{smooth})"
             chain += (
-                f",scale={w * 2}:{h * 2}"
+                f",scale={w * 2}:{h * 2}:flags=lanczos"
                 f",zoompan=z='{z_expr}'"
                 f":x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2'"
                 f":d=1:s={w}x{h}:fps={fps:g}"
             )
         else:
-            chain += f",scale={w}:{h}"
+            chain += f",scale={w}:{h}:flags=lanczos"
         # setsar=1 POR BRANCH: crops de proporções diferentes deixam SARs
         # ligeiramente diferentes após o scale, e o concat exige SAR igual
         # em todas as entradas.
@@ -292,6 +294,8 @@ def cut_dynamic(
         "-map", "0:a?",
         "-c:v", "libx264",
         "-preset", "veryfast",
+        "-crf", str(settings.output_crf),
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-movflags", "+faststart",
         output_path,
