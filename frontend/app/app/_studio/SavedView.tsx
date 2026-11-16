@@ -12,8 +12,6 @@ type Props = {
   showScore: boolean;
   onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
   onDeleteFolder: (projectId: string) => Promise<boolean>;
-  // Abre um corte na aba Edição (timeline + zoom manual).
-  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 };
 
 // Botão de download (âncora real; o `?download=` do Supabase força o attachment).
@@ -294,13 +292,11 @@ function FolderSection({
   showScore,
   onDeleteCut,
   onDeleteFolder,
-  onEdit,
 }: {
   folder: SavedFolder;
   showScore: boolean;
   onDeleteCut: (projectId: string, cutId: string) => Promise<boolean>;
   onDeleteFolder: (projectId: string) => Promise<boolean>;
-  onEdit: (projectId: string, setName: string, cut: Cut) => void;
 }) {
   const t = useTranslations("studio.saved");
   const [shareOpen, setShareOpen] = useState(false);
@@ -426,7 +422,7 @@ function FolderSection({
 
       {/* Cortes da pasta */}
       {expanded && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,260px))", gap: 20 }}>
           {folder.cuts.map((cut) => (
             <div key={cut.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 14, overflow: "hidden", background: theme.surface }}>
               <div style={{ position: "relative", background: "#000" }}>
@@ -435,7 +431,7 @@ function FolderSection({
                   controls
                   playsInline
                   preload="metadata"
-                  style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
+                  style={{ width: "100%", aspectRatio: "9 / 16", objectFit: "contain", display: "block", background: "#000" }}
                 />
                 {showScore && (
                   <div
@@ -461,24 +457,6 @@ function FolderSection({
                   {cut.dur} · {t("folder.inSet")} · {cut.moment}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => onEdit(folder.projectId, folder.setName, cut)}
-                    style={{
-                      flex: 1,
-                      padding: 9,
-                      borderRadius: 8,
-                      fontSize: 13,
-                      color: theme.textSecondary,
-                      background: theme.surface,
-                      border: `1px solid ${theme.borderStrong}`,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      fontFamily: font.body,
-                    }}
-                  >
-                    {t("folder.edit")}
-                  </button>
                   <div style={{ flex: 1 }}>
                     <DownloadLink cut={cut} />
                   </div>
@@ -493,7 +471,7 @@ function FolderSection({
   );
 }
 
-export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onEdit }: Props) {
+export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder }: Props) {
   const t = useTranslations("studio.saved");
   if (folders.length === 0) {
     return (
@@ -533,7 +511,6 @@ export function SavedView({ folders, showScore, onDeleteCut, onDeleteFolder, onE
           showScore={showScore}
           onDeleteCut={onDeleteCut}
           onDeleteFolder={onDeleteFolder}
-          onEdit={onEdit}
         />
       ))}
     </div>

@@ -30,9 +30,9 @@ efêmero, sem FFmpeg nativo, sem worker de longa duração).
   A service role key do Supabase fica só no servidor (env vars), nunca no
   browser.
 - **`backend/` — worker FastAPI na Railway.** Onde rodam librosa + FFmpeg
-  (container com FFmpeg via Dockerfile). Processa em background com
-  `BackgroundTasks` (processo persistente).
-- **Supabase** — Postgres (tabelas `projects`, `sources`, `cuts`) + Storage
+  (container com FFmpeg via Dockerfile). Consome uma **fila durável de jobs**
+  (tabela `jobs`, ver "Fila de jobs" abaixo) em threads do próprio processo.
+- **Supabase** — Postgres (tabelas `projects`, `sources`, `cuts`, `jobs`) + Storage
   (bucket privado `sources` para os vídeos originais, bucket público `clips`
   para os cortes gerados).
 
@@ -45,27 +45,69 @@ Navegador (Vercel UI)
                                        (cut_style: 'basic' seco | 'dynamic' com zooms;
                                         cut_intensity: 'subtle'|'medium'|'intense'
                                         p/ o dinâmico; max_cuts: 1..30, clampado ao plano)
-  2. PUT do vídeo DIRETO no Supabase Storage (signed URL) — não passa pela Vercel
+  2. Upload RESUMÁVEL (TUS) do vídeo DIRETO no Supabase Storage — não passa pela Vercel
   3. POST /api/projects/{id}/process → Vercel chama o worker Railway
                                         max_cuts, cut_style, cut_intensity, ai_tier}
                                         (header X-Worker-Secret; ai_tier:
                                         'off'|'lite'|'full' conforme o plano)
-  4. Worker (background): baixa o mp4 do Supabase → analyzer (áudio) → visual
+  4. Worker (job da fila): baixa o mp4 do Supabase → analyzer (áudio) → visual
                           (re-rank + alvos de zoom) → clipper (seco ou dinâmico)
                           → upload dos clipes → insere cuts → project.status=done
   5. Navegador faz polling em GET /api/projects/{id} até status=done
 ```
 
 **Origem YouTube:** além do upload de arquivo, o usuário pode colar apenas um
-link do YouTube (aba "Link do YouTube" em `/app/novo`). Nesse caso
+link do YouTube (aba "Link do YouTube" do Gerador). Nesse caso
 `POST /api/projects` recebe `{name, youtube_url}` (validado em
 `frontend/lib/youtube.ts`; aceita watch/youtu.be/shorts/music.youtube), grava o
 link canônico em `sources.url` com `source_type='youtube'` e **pula** o upload
 (passos 2). No worker, `pipeline._fetch_source` vê o `source_type` e baixa o
 vídeo com **yt-dlp** (`backend/app/youtube.py`: mp4 até 1080p, duração checada
 contra `MAX_SOURCE_DURATION`, default 3h, antes do download). O restante do
-pipeline (análise, cortes, re-corte) é idêntico; o re-corte re-baixa do
-YouTube quando necessário.
+pipeline (análise, cortes) é idêntico.
+
+### Upload resumável (TUS)
+
+O vídeo vai do navegador direto para o bucket `sources` pelo endpoint
+resumável do Supabase Storage, em pedaços de 6 MB
+(`frontend/app/app/_studio/upload.ts`, com `tus-js-client`). Se a conexão cair,
+o cliente pergunta ao servidor até onde ele recebeu e continua dali — um set
+de vários GB não recomeça do zero.
+
+- `POST /api/projects` devolve, além da `signedUrl`, o `tusEndpoint`
+  (`https://<ref>.storage.supabase.co/storage/v1/upload/resumable/sign` em
+  projeto hospedado), o `token` da signed upload URL, o `bucket` e o
+  `storagePath`. O token vai no header `x-signature` — o navegador continua
+  sem nenhuma chave do Supabase.
+- **Reserva:** se o servidor recusar a CRIAÇÃO do upload resumável (antes de
+  aceitar qualquer pedaço), o cliente cai no PUT único na `signedUrl` (o fluxo
+  antigo). Depois de iniciado, erro é erro.
+- A retomada cobre quedas de conexão durante o envio (esperas de até 2 min
+  entre tentativas); fechar a aba ainda perde o upload, porque cada set cria
+  um projeto/caminho novo.
+
+### Fila de jobs (worker)
+
+O processamento não vive mais na memória do processo (`BackgroundTasks`), onde
+um redeploy ou crash perdia o job e deixava o projeto em `processing` para
+sempre. A fila fica no próprio Postgres do Supabase — sem Redis nem serviço
+novo (`backend/app/jobs.py`):
+
+- `POST /process` insere uma linha `queued` em `jobs` (os parâmetros do
+  processamento vão no `payload`) e responde 202. Um projeto só tem um job
+  vivo por vez.
+- Threads consumidoras (uma por `MAX_CONCURRENT_JOBS`, sobem no `lifespan` do
+  FastAPI) pegam o job mais antigo pela função SQL `claim_job` — um UPDATE com
+  `FOR UPDATE SKIP LOCKED`, então duas réplicas nunca pegam o mesmo job.
+- O job em andamento renova `heartbeat_at` (`JOB_HEARTBEAT_SECONDS`). Se o
+  worker morrer, o heartbeat envelhece (`JOB_STALE_SECONDS`) e o próximo
+  `claim_job` devolve o job à fila; ao retomar, `pipeline` apaga os cortes
+  parciais da tentativa anterior. Depois de `JOB_MAX_ATTEMPTS` interrupções o
+  job vira `error` junto com o projeto.
+- Falha do próprio set (vídeo inválido, cota estourada) NÃO é repetida: o
+  projeto vira `error` como antes.
+- Sem a migração aplicada (tabela/função ausentes) ou com
+  `JOB_QUEUE_ENABLED=false`, o `/process` cai no `BackgroundTasks` de antes.
 
 ### Pipeline de análise (worker)
 
@@ -108,9 +150,20 @@ YouTube quando necessário.
    `get_beat_times` detecta os beats da janela para alinhar os cortes do
    estilo dinâmico. Qualquer falha (modelo ausente, cv2 quebrado) degrada
    para score de movimento/sem rosto — a fase visual nunca derruba um job.
-3. **Score combinado** — o áudio gera mais candidatos que o pedido
-   (`min(2N, 45)`), cada janela ganha `score = 0.6*musical + 0.4*visual`
-   (pesos em config), re-ranqueia e ficam os N melhores. Um *time budget*
+3. **Score combinado / funil** (`pipeline._score_candidates`) — o áudio gera
+   mais candidatos que o pedido (`min(N * VISUAL_CANDIDATES_FACTOR,
+   VISUAL_CANDIDATES_CAP)`) e o funil vai do mais barato ao mais caro:
+   (a) **triagem da IA primeiro**, em TODOS os candidatos (segundos: grabs de
+   frame com seek rápido + lotes em paralelo, `AI_CONCURRENCY`); (b)
+   **shortlist** — com triagem, só as `N * VISUAL_SHORTLIST_FACTOR` (default
+   1.25) melhores por `música + hype` seguem para a análise visual pesada
+   (YOLO em janelas que seriam descartadas era o maior desperdício do job;
+   sem IA, todas seguem como antes); (c) na shortlist,
+   `score = 0.6*musical + 0.4*visual` (pesos em config), misturado ao hype da
+   triagem; (d) direção profunda nas top-K, em paralelo. **No tier `full`
+   com `AI_CAMERA_ENABLED` (default)** os passos (b)-(c) não existem: as N
+   melhores por `música + hype` recebem a direção profunda direto e o YOLO
+   não roda (`cuts.score_visual` fica NULL). Um *time budget*
    (`VISUAL_BUDGET_SECONDS`, default 900 s) limita a fase visual: estourou,
    as janelas restantes ficam só com o score musical. As parcelas são
    persistidas em `cuts.score_musical` / `cuts.score_visual`.
@@ -121,32 +174,33 @@ YouTube quando necessário.
    `ANTHROPIC_API_KEY` presente:
    - **Triagem** (`triage_group`, barata, modelo `AI_TRIAGE_MODEL` default
      Haiku; roda em `lite` e `full`) roda em LOTES (`AI_TRIAGE_GROUP_SIZE`
-     janelas por chamada, 1-2 keyframes pequenos cada) cobrindo **TODOS** os
+     janelas por chamada, `AI_TRIAGE_FRAMES_PER_WINDOW` keyframes pequenos cada) cobrindo **TODOS** os
      candidatos, não só um top-K — devolve só `hype`/`worthy` por janela e
      ajusta o score (`adjusted = (1-w)*base + w*hype_lite`,
      `SCORE_HYPE_LITE_WEIGHT`) ANTES de qualquer corte por top-K, o que deixa
      um trecho mal ranqueado pela heurística local mas bem avaliado
      visualmente sobreviver ao corte.
-   - **Títulos virais** (`title_group`, barata, mesmo modelo da triagem; roda
-     em `lite` e `full`) — depois da seleção final, uma chamada em lote gera um
-     **gancho/legenda de TikTok/Reels por corte** a partir de poucos keyframes
-     pequenos dos cortes JÁ escolhidos; vira `cuts.titulo` (fallback heurístico
+   - **Títulos virais** (roda em `lite` e `full`) — a PRÓPRIA triagem devolve
+     um **gancho/legenda de TikTok/Reels por janela** (`Triage.title`), sem
+     passada extra; `title_group` só cobre cortes selecionados que ficaram sem
+     título (lote de triagem que falhou). Vira `cuts.titulo` (fallback heurístico
      `Drop N · BPM` quando a IA não deu título; o BPM passa a viver em
      `cuts.bpm`). Saneado em `_coerce_title`.
    - **Direção profunda** (`direct`, só no `ai_tier=full`, modelo
-     `AI_DIRECTOR_MODEL` default
-     **Sonnet**) roda só nas TOP-K janelas pelo score já AJUSTADO (teto
-     `AI_DIRECTOR_MAX_CALLS` + budget de tempo próprio): amostra
-     `AI_DIRECTOR_FRAMES` keyframes (`AI_DIRECTOR_FRAME_WIDTH`px, reaproveita
-     `visual.iter_frames`), encoda em JPEG e pergunta ao modelo a **vibe do
-     público** (`hype`), o **protagonista** (`subject`: dj/crowd/wide), os
-     **momentos de auge** (`moments`), se a cena é digna de zoom (`worthy`),
-     o **roteiro de câmera** (`story`: até 6 passos `{t, subject}` com
-     subject dj/crowd/dancer/wide) e o **enquadramento** do DJ, do público e
-     da pessoa dançando em destaque (`dj_box`/`crowd_box`/`dancer_box`,
-     `[cx, cy, w, h]` em frações 0-1 do frame; saneados em `_coerce_box`). O
-     hype profundo refina o score final (`(1-w_hype)*adjusted + w_hype*hype`,
-     `SCORE_HYPE_WEIGHT`) e a direção alimenta o corte dinâmico (passo 4).
+     `AI_DIRECTOR_MODEL` default **Sonnet**) — a IA é a **diretora de câmera**:
+     recebe `AI_DIRECTOR_FRAMES` keyframes (default 12, `AI_DIRECTOR_FRAME_WIDTH`
+     px) da janela e devolve `hype`, `worthy`, `moments` (auges) e **`frames`**:
+     por keyframe, o `focus` (dj/crowd/dancer/wide — o que a câmera enquadra
+     naquele instante) e o `box` do alvo (`[cx, cy, w, h]` em frações 0-1;
+     saneados em `_coerce_frames`/`_coerce_box`). Antes de amostrar,
+     `visual.detect_scene_cuts` acha as **trocas de câmera da gravação** na
+     janela (set multicâmera/editado; correlação de miniaturas a 4 fps — pega
+     corte seco e transição gradual, ignora flash/strobe); `_frame_times`
+     garante pelo menos um keyframe por tomada, cada frame vai rotulado com a
+     sua tomada e as trocas ficam em `AIDirection.cuts`
+     (`AI_SCENE_CUTS_ENABLED`). `subject`/`story`/`*_box`
+     (lidos só pelo planejador legado) são derivados desses frames. O hype
+     profundo refina o score final (`SCORE_HYPE_WEIGHT`).
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
    job) — é a primeira dependência de API de IA do projeto; como o YOLO,
    **nunca derruba um job**: sem chave, sem o pacote `anthropic`, timeout ou
@@ -156,7 +210,36 @@ YouTube quando necessário.
    projeto (`projects.cut_style`):
    - **`basic` (seco)** — `clipper.cut()`: crop central 9:16 fixo + re-encode
      (comportamento original).
-   - **`dynamic`** — `dynamic.build_shot_plan()` monta uma timeline de shots
+   - **`dynamic` com câmera da IA** (`camera.build_ai_shot_plan`, tier `full`
+     quando a janela tem `AIDirection.frames`) — o caminho principal: os shots
+     saem direto da direção por frame. Cortes nas trocas de `focus` e nos auges
+     (drop + `moments`, sempre com punch-in fechado no artista), alinhados aos
+     beats; planos mais longos que `DYNAMIC_SHOT_MAX` são divididos e alternam
+     normal ↔ fechado; o crop é o `box` da IA com folga (justo no fechado) e o
+     pan segue as posições que ela deu. Sem YOLO, tracking, rosto nem guardas
+     de atividade. **Cada tomada da gravação é planejada sozinha**
+     (`AIDirection.cuts`): toda troca de câmera é fronteira de shot, o box só
+     vale na tomada em que foi visto e nenhum pan atravessa uma troca; tomada
+     que a IA não viu vira wide. Gravação picotada demais (mais tomadas que
+     `DYNAMIC_MAX_SHOTS`, ou tomada mediana menor que `DYNAMIC_SHOT_MIN`) vira
+     **reenquadramento**: um crop de altura cheia, sem zoom, que salta para a
+     ação a cada tomada. **Planos de reação do público:** a IA informa, por
+     frame, onde o público está (`AIDirection.crowd`, mesmo com o `focus` no
+     artista); depois de 2 shots seguidos sem pista (fora dos auges e do
+     build-up) o planejador corta para ela. **Zoom pela vibe da música**
+     (`music.get_music_profile`, `MUSIC_VIBE_ENABLED`): o envelope de GRAVES
+     do áudio do corte divide o trecho em `drop` (grave cheio), `build` (os
+     segundos sem grave antes de um drop) e `calm`; as viradas para o drop
+     viram punch-ins e cada shot se move conforme a vibe — no drop o zoom dá
+     um tranco na batida e relaxa (`Shot.pulse`, `BEAT_PULSE_AMOUNT`/
+     `BEAT_PULSE_EVERY`) e os planos encurtam; no build a câmera fecha
+     acelerando até a virada (`BUILD_ZOOM`), sempre no artista; no calmo a
+     deriva é lenta (`CALM_DRIFT_SCALE`). Usa os mesmos presets de `cut_intensity` e o mesmo
+     `clipper.cut_dynamic`. `AI_CAMERA_ENABLED=false` volta ao planejador
+     legado abaixo (para comparar lado a lado).
+   - **`dynamic` legado** (tiers `off`/`lite`, câmera da IA desligada, ou
+     janela cuja direção falhou — aí o YOLO roda sob demanda só nela, no
+     render) — `dynamic.build_shot_plan()` monta uma timeline de shots
      de 3–8s com um **arco narrativo**: abertura (wide/protagonista com
      push-in), punch-in apertado no protagonista exatamente no drop e, depois
      dele, rotação intencional protagonista ↔ dançarino/público com **wide de
@@ -232,24 +315,20 @@ YouTube quando necessário.
      (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
      plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
      leve em CPU/memória; o pan é barato e é MANTIDO nesse nível) → corte
-     seco. `clipper._run_ffmpeg` roda todo
+     seco. **Nitidez:** o zoom efetivo é limitado pela resolução da fonte
+     (`DYNAMIC_MAX_UPSCALE`, default 2.7× do crop até a saída — ~1.5× de zoom
+     em 1080p, nenhum em 720p, cheio em 4K), o scale usa lanczos e o encode
+     sai em `OUTPUT_CRF` (default 20). `clipper._run_ffmpeg` roda todo
      FFmpeg com timeout (evita job travado) e, se falhar, distingue erro real
      de filtro vs. processo morto por sinal externo (ex. OOM) na mensagem —
      o corte nunca é perdido por causa do zoom.
 5. `pipeline.py` — orquestra download → analyze → visual/re-rank → cut →
    upload → persiste `cuts`. O download do vídeo é em **streaming** (chunks
-   para disco, nunca o arquivo inteiro em RAM) e um semáforo limita jobs
-   pesados simultâneos (`MAX_CONCURRENT_JOBS`, default 1). O re-corte
-   (`POST /recut`) respeita o `cut_style` do projeto: num projeto dinâmico,
-   re-roda a análise visual só na janela nova e regenera os zooms. Quando o
-   `/recut` traz **`keyframes`** (direção manual do editor visual, ver "Editor
-   de cortes" abaixo), o render usa `clipper.cut_keyframed` no lugar do plano
-   automático: crop 9:16 com pan por expressão (x/y por frame no `crop`) na
-   janela do MENOR zoom + `zoompan` (supersample 2×) por cima com o zoom
-   residual interpolado com easing — pan e zoom do usuário ao mesmo tempo,
-   fallback em 2 níveis (sem zoompan → corte seco). Os keyframes são
-   persistidos em `cuts.crop_keyframes` (o editor reabre com eles; `[]` limpa
-   a direção manual).
+   para disco, nunca o arquivo inteiro em RAM). Quantos jobs pesados rodam ao
+   mesmo tempo é o nº de threads consumidoras da fila (`MAX_CONCURRENT_JOBS`,
+   default 1); `RENDER_CONCURRENCY` (default 1) renderiza vários clipes do
+   mesmo job em paralelo (mais rápido, mais memória). `pipeline.run_job` é o
+   handler da fila.
 
 ### Frontend / UI (`frontend/app/`)
 
@@ -264,63 +343,22 @@ A UI tem dois contextos visuais (ver [`design.md`](design.md)): **marketing**
   preços, CTA. Estilizada via CSS Modules.
 - `login/page.tsx` — login/cadastro (`/login`).
 - `app/` — área logada (`/app`), protegida por sessão:
-  - `app/page.tsx` — estúdio (Gerador / Edição / Cortes salvos). O Gerador
+  - `app/page.tsx` — estúdio (Gerador / Cortes salvos). O Gerador
     fica montado (só escondido) fora da aba, para trocar de aba não perder os
     cortes recém-gerados nem o polling de um set em processamento.
-  - `app/novo/page.tsx` — upload de um novo set (mesmo fluxo de polling do MVP).
   - `app/_studio/` — componentes do estúdio + `theme.ts` (tokens claros).
 - `s/[token]/page.tsx` — **página pública** de um set compartilhado (`/s/<token>`),
   **fora** de `app/` (não herda o guard de sessão). Ver "Compartilhamento
   público" abaixo.
 
-### Editor de cortes (aba "Edição")
+**Idioma:** o site é servido só em português, em qualquer host. O `next-intl`
+continua sendo a camada de textos (`frontend/messages/pt.json`); o locale é
+fixo em `frontend/i18n/config.ts`. `messages/en.json` ficou no repositório,
+fora do build, para o inglês voltar depois.
 
-Todo card de corte (Gerador e Cortes salvos) tem um botão **Editar** que abre
-o corte na aba "Edição" (`app/_studio/EditorView.tsx`); a aba sem corte aberto
-mostra um seletor dos cortes salvos (`EditPicker` em `app/page.tsx`). O editor
-é um workspace **escuro estilo CapCut** (paleta própria `dk` no componente —
-o resto do estúdio continua claro).
-
-- **Canvas 9:16 central = o resultado final** (modelo CapCut): o usuário
-  arrasta o PRÓPRIO VÍDEO dentro do quadro para reposicionar e dá zoom
-  (slider 1–4× ou scroll no canvas), com grade de terços durante o arrasto e
-  um **minimap** no canto (frame original + retângulo da janela; clicar/
-  arrastar nele move a câmera direto). O editor toca o set original via
-  `GET /api/projects/{id}/source` (signed URL de 1h do bucket privado
-  `sources`; origem YouTube não tem arquivo → `url: null` e o editor degrada
-  para trim-only com aviso). **O editor NÃO carrega o set inteiro:** trabalha
-  numa **janela de ±60 s** em volta do corte (`WINDOW_PAD`) — timeline, zoom
-  da régua e filmstrip ficam confinados a ela e, se o usuário estender o trim,
-  a janela acompanha — e os três `<video>` usam `preload="metadata"` + media
-  fragment `#t=<início do corte>` na URL, então o browser buferiza direto no
-  trecho do corte via range requests (o vídeo oculto do filmstrip usava
-  `preload="auto"`, que baixava o set INTEIRO em background). O canvas mostra
-  "Carregando o vídeo do set..." até o primeiro frame decodar e, se o
-  `<video>` do original falhar (`onError` — ex.: codec que o browser não
-  decodifica, como HEVC/MOV de iPhone ou MKV; o upload aceita `video/*` e o
-  editor toca o arquivo CRU, só os cortes são re-encodados em H.264), o aviso
-  explica o motivo (com o código do `MediaError`) e o editor degrada para o
-  MESMO modo trim-only do YouTube, com o player do corte já gerado no lugar
-  do canvas — antes ficava um quadro preto sem explicação.
-- **Timeline dock inferior** — régua de timecodes (passos "redondos"
-  calculados da janela visível), **filmstrip de miniaturas** do set (geradas
-  no cliente: um `<video>` oculto com `crossOrigin` + canvas → dataURLs; se o
-  CORS/seek falhar a trilha fica lisa), trecho selecionado com **alças de
-  trim** roxas (pode ir **além** do que a IA escolheu; a escolha original
-  fica marcada na trilha), scrub, loop do trecho, "início/fim aqui", zoom da
-  régua (+/−/ajustar/janela toda) e ajuste fino ±0.5s. Duração 3–180 s (rota
-  valida ≤ 600 s).
-- **Keyframes de câmera** — todo ajuste de enquadramento cria/edita um
-  keyframe `{t, cx, cy, zoom}` no playhead (botão ◆ adiciona/remove, estilo
-  CapCut); entre keyframes a câmera interpola com o MESMO smoothstep do
-  worker (o preview bate com o render). Keyframes aparecem como losangos na
-  trilha e numa lista no painel de propriedades (remover/limpar).
-- **Salvar** — título via `PATCH /api/projects/{id}/cuts/{cutId}`; trim e/ou
-  keyframes via `POST .../recut {inicio, fim, keyframes}` (keyframes com `t`
-  relativo ao início; o editor trabalha com `t` absoluto e converte). O worker
-  renderiza com `clipper.cut_keyframed` e grava `cuts.crop_keyframes`; o
-  editor reabre com os keyframes salvos via `GET .../cuts/{cutId}` (tolerante
-  a banco sem a migração, código 42703).
+**Sem editor de cortes:** o usuário não edita mais um corte (trim, keyframes
+de câmera, renomear) — só seleciona, salva, baixa, compartilha ou apaga. O
+editor, as rotas `/recut` e `/source` e o render com keyframes foram removidos.
 
 ### Compartilhamento público de sets
 
@@ -360,7 +398,9 @@ ganchos detalhados em [`design.md`](design.md).
 
 - **Worker (`backend/.env`):** `SUPABASE_URL`, `SUPABASE_KEY` (service role),
   `SUPABASE_BUCKET=clips`, `SOURCES_BUCKET=sources`, `WORKER_SECRET`,
-  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`. Análise de áudio
+  e opcionais `TOP_N`, `CLIP_DURATION`, `PRE_ROLL`. Fila de jobs (opcionais):
+  `MAX_CONCURRENT_JOBS`, `JOB_QUEUE_ENABLED`, `JOB_POLL_SECONDS`,
+  `JOB_HEARTBEAT_SECONDS`, `JOB_STALE_SECONDS`, `JOB_MAX_ATTEMPTS`. Análise de áudio
   (opcionais, default calibrados): `ANALYZER_WEIGHT_RMS/ONSET/CONTRAST`,
   `ANALYZER_MIN_GAP_SECONDS`, `ANALYZER_BASELINE_WINDOW_SECONDS`,
   `ANALYZER_PEAK_PROMINENCE`, `ANALYZER_DEDUP_WINDOW_SECONDS`,
@@ -394,10 +434,16 @@ ganchos detalhados em [`design.md`](design.md).
   em dois estágios + títulos (opcional; nível escolhido pelo `ai_tier` do
   `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
+  `AI_CAMERA_ENABLED` (a IA monta os shots do dinâmico no tier `full`; false =
+  planejador legado YOLO + heurísticas), `AI_SCENE_CUTS_ENABLED` (detecta as
+  trocas de câmera da gravação), `MUSIC_VIBE_ENABLED` + `BEAT_PULSE_AMOUNT` +
+  `BEAT_PULSE_EVERY` + `BUILD_ZOOM` + `CALM_DRIFT_SCALE` (zoom pela vibe da
+  música), `DYNAMIC_MAX_UPSCALE`, `OUTPUT_CRF`,
   `AI_TRIAGE_MODEL` (default
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,
   `AI_TRIAGE_FRAME_WIDTH`, `AI_TRIAGE_BUDGET_SECONDS`, `SCORE_HYPE_LITE_WEIGHT`,
+  `AI_CONCURRENCY` (chamadas à IA em paralelo), `VISUAL_SHORTLIST_FACTOR`,
   `AI_DIRECTOR_MODEL` (default `claude-sonnet-5`, só no top-K pelo score
   ajustado), `AI_DIRECTOR_MAX_CALLS`, `AI_DIRECTOR_FRAMES`,
   `AI_DIRECTOR_FRAME_WIDTH`, `AI_DIRECTOR_BUDGET_SECONDS`,
@@ -405,9 +451,7 @@ ganchos detalhados em [`design.md`](design.md).
 - **Frontend (`frontend/.env.local`):** `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_SOURCES_BUCKET`,
   `WORKER_URL`, `WORKER_SECRET`, `AUTH_SECRET` (assina os cookies de sessão),
-  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento no Brasil),
-  `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (legado: só para assinaturas
-  Stripe antigas — o pagamento internacional foi descontinuado) e
+  `ABACATEPAY_API_KEY`, `ABACATEPAY_WEBHOOK_SECRET` (pagamento) e
   `APP_URL` (opcional, origem pública para as URLs de retorno do checkout).
 
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
@@ -417,8 +461,7 @@ consegue disparar `POST /process` no worker.
 
 Três planos, com cota de **horas de set**, **nº de sets por mês** e limite de
 cortes por set. Só existe cobrança no Brasil, em BRL, via **AbacatePay** (PIX ou
-cartão), em qualquer locale — o preço internacional em USD/Stripe foi
-descontinuado. Cada plano pago tem ciclo **mensal** ou **anual** (~2 meses
+cartão). Cada plano pago tem ciclo **mensal** ou **anual** (~2 meses
 grátis):
 
 | Plano   | Mensal      | Anual    | Cota                            | Cortes por set |
@@ -444,11 +487,8 @@ quem já assinava continua no produto (preço) antigo.
 - `frontend/lib/abacatepay.ts` — cliente da AbacatePay (produtos com
   `cycle=MONTHLY|ANNUALLY` criados sob demanda, checkout de assinatura,
   verificação HMAC dos webhooks).
-- `frontend/lib/stripe.ts` — **legado**: só cancelamento e verificação da
-  assinatura `Stripe-Signature`, para assinaturas Stripe antigas que ainda
-  existam. Nenhum checkout novo usa o Stripe.
 - `frontend/lib/billing.ts` — `cancelProviderSubscription(provider, id)`
-  despacha o cancelamento para o provedor certo (usado no cancel + upgrade).
+  cancela na AbacatePay (usado no cancel + upgrade); falha para `stripe`.
 - `POST /api/billing/checkout {plan, cycle?}` — cria o checkout na AbacatePay
   (`cycle` = `monthly` default | `annual`) e a linha `subscriptions` (status
   `pending`, com `cycle`); devolve a URL de pagamento. Trocar só o ciclo do
@@ -460,10 +500,14 @@ quem já assinava continua no produto (preço) antigo.
   idempotência via tabela `webhook_events`). `subscription.completed`/`renewed`
   ativam o plano e o período (1 ou 12 meses, pelo `subscription.frequency` do
   payload); `payment_failed` marca `past_due`; `cancelled` rebaixa para `free`.
-- `POST /api/webhooks/stripe` — webhook **legado** do Stripe, mantido só para
-  as assinaturas antigas (renovação/cancelamento).
 
-O plano efetivo é espelhado em `users.plan` pelos webhooks.
+O Stripe (cobrança internacional em USD) foi removido junto com o inglês. A
+coluna `subscriptions.provider` continua existindo; linhas antigas com
+`provider='stripe'` não são mais atendidas por webhook e o cancelamento pelo
+app as recusa (HTTP 409) em vez de rebaixar só no banco — precisam ser
+canceladas no painel do Stripe.
+
+O plano efetivo é espelhado em `users.plan` pelo webhook.
 
 **Enforcement da cota:**
 1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do
@@ -481,13 +525,20 @@ O plano efetivo é espelhado em `users.plan` pelos webhooks.
 
 ## Evoluções planejadas (ainda não implementadas)
 
-- **Upload resumável (TUS):** o upload atual é um PUT único na signed URL,
-  frágil para vídeos de vários GB. Migrar para o upload resumável do Supabase.
-- **Fila dedicada:** trocar `BackgroundTasks` por Redis/BullMQ/Celery para
-  escala real (o corte dinâmico deixa os jobs mais longos; a fila serial do
-  semáforo cresce mais rápido).
+- **Aposentar o planejador legado:** depois de validar a câmera da IA em sets
+  reais, remover `dynamic.build_shot_plan` e a análise visual que só ele usa
+  (tracking, rosto, guardas de atividade) — exige decidir o que o tier `lite`
+  (free) recebe no estilo dinâmico.
 - **Tuning do corte dinâmico:** pesos do score visual, durações de shot e
   intensidade de zoom calibrados com sets reais de balada (pouca luz, laser).
+  Ainda não foi feito por falta de material real; a ferramenta para isso
+  existe: `python -m tools.calibrate set.mp4` (em `backend/`) roda a análise
+  do worker num vídeo local e mostra, por janela, pouca luz, persistência da
+  track do DJ, movimento e o plano de shots em cada intensidade.
+- **Retomar upload entre visitas:** o upload resumável sobrevive a quedas de
+  conexão, mas não a fechar a aba (cada set cria um projeto novo).
+- **Posição na fila na UI:** o projeto fica em `processing` enquanto espera a
+  vez; a tabela `jobs` já tem o dado para mostrar "na fila".
 
 ## Autenticação
 
@@ -513,7 +564,7 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - name
 - email
 - password
-- plan (`free | pro | premium`) — espelhado pelos webhooks da AbacatePay
+- plan (`free | pro | premium`) — espelhado pelo webhook da AbacatePay
 - date_create
 
 ### Subscription (assinatura AbacatePay)
@@ -552,13 +603,6 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - source_type (`upload | youtube`)
 - status_processo
 
-### Transcript
-- id
-- source_id
-- texto_completo
-- timestamp
-- palavra_chave
-
 ### Cuts / Clipe
 - id
 - projeto_id
@@ -577,9 +621,16 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
   direção profunda não rodou (tier != full, sem chave, ou janela fora do teto
   de chamadas)
 - url
-- status (`ready | processing | error`) — `processing` enquanto o worker
-  regenera o vídeo num re-corte (`POST /recut`)
-- crop_keyframes — direção manual de câmera do editor (JSON `[{t, cx, cy,
-  zoom}]`, `t` relativo ao início do corte, `cx`/`cy` frações 0-1 do frame da
-  fonte, `zoom` ≥ 1); NULL = sem direção manual (render automático), `[]` =
-  usuário limpou os keyframes
+- status (`ready | processing | error`) — hoje sempre `ready`
+- crop_keyframes — legado do editor de cortes removido; não é mais lida nem
+  escrita
+
+### Job (fila do worker)
+- id
+- project_id
+- kind (`process`)
+- payload — parâmetros do processamento (limites do plano, estilo, `ai_tier`)
+- status (`queued | running | done | error`)
+- attempts — quantas vezes o job foi pego (>1 = retomado após worker morrer)
+- worker_id / error
+- created_at / started_at / heartbeat_at / finished_at

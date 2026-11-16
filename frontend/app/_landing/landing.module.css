@@ -59,7 +59,7 @@
   background: linear-gradient(180deg, #ffffff, #fbfaff);
   box-shadow: 0 40px 90px -40px rgba(124, 58, 237, 0.42);
   overflow: hidden;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 96px;
 }
 
 .genHead {
@@ -86,12 +86,20 @@
   align-items: center;
   justify-content: center;
   gap: 16px;
-  padding: 52px 24px;
+  padding: 52px 24px 28px;
   border: 2px dashed rgba(168, 85, 247, 0.34);
   border-radius: 18px;
   background: radial-gradient(600px 200px at 50% 0%, rgba(168, 85, 247, 0.07), transparent 70%);
-  cursor: pointer;
   text-align: center;
+}
+
+.dropzoneLabel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  cursor: pointer;
 }
 
 .idleBars {
@@ -117,7 +125,16 @@
 
 .dropHint {
   font-size: 14px;
+  line-height: 1.45;
   color: #71717a;
+  max-width: 36em;
+}
+
+.dropHint a {
+  color: #7c3aed;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .dropCta {

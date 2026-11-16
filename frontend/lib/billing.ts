@@ -1,17 +1,18 @@
 import { cancelSubscription as cancelAbacatePay } from "@/lib/abacatepay";
-import { cancelStripeSubscription } from "@/lib/stripe";
 
-// Cancela uma assinatura no provedor certo (stripe no internacional,
-// abacatepay no Brasil), lendo o `provider` da linha de subscriptions. Best
-// effort: usado no downgrade/upgrade, onde a assinatura pode já não existir do
-// lado do provedor.
+// Cancela uma assinatura na AbacatePay (único provedor ativo). Linhas antigas
+// de `subscriptions` com provider 'stripe' (da época em que o internacional
+// cobrava em USD) NÃO podem ser canceladas daqui: o cliente do Stripe foi
+// removido, então falhamos alto em vez de mandar um id do Stripe para a
+// AbacatePay — quem chama decide o que fazer.
 export async function cancelProviderSubscription(
   provider: string | null | undefined,
   providerSubscriptionId: string
 ): Promise<void> {
   if (provider === "stripe") {
-    await cancelStripeSubscription(providerSubscriptionId);
-  } else {
-    await cancelAbacatePay(providerSubscriptionId);
+    throw new Error(
+      "assinatura criada no Stripe: cancele pelo painel do Stripe (integração removida)"
+    );
   }
+  await cancelAbacatePay(providerSubscriptionId);
 }

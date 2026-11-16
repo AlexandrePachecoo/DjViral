@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
+
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+  title: "Estúdio · DJviral",
+};
 
 // Lê o cookie de sessão a cada request — nunca prerenderizar estaticamente.
 export const dynamic = "force-dynamic";

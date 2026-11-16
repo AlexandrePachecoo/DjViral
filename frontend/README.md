@@ -7,9 +7,10 @@ sem FFmpeg).
 
 ## Fluxo
 
-1. `POST /api/projects` cria o projeto + source no Supabase e devolve uma
-   **signed upload URL**.
-2. O navegador envia o vídeo **direto ao Supabase Storage** (contorna o limite
+1. `POST /api/projects` cria o projeto + source no Supabase e devolve o
+   destino do upload (endpoint resumável + **signed upload URL**).
+2. O navegador envia o vídeo **direto ao Supabase Storage**, em upload
+   resumável (TUS, pedaços de 6 MB; contorna o limite
    de 4.5 MB da Vercel — o arquivo nunca passa por uma função).
 3. `POST /api/projects/[id]/process` dispara o worker na Railway (header
    `X-Worker-Secret`).
@@ -44,6 +45,6 @@ npm run dev
 
 ## Notas
 
-- Para vídeos muito grandes (GBs), o upload via PUT único da signed URL é
-  frágil. O caminho robusto é o **upload resumável (TUS)** do Supabase — fica
-  como evolução.
+- O upload é resumável (TUS): uma queda de conexão continua de onde parou. Se
+  o Storage recusar a criação do upload resumável, o navegador cai no PUT
+  único da signed URL.

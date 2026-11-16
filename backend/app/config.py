@@ -27,16 +27,38 @@ class Settings(BaseSettings):
     # a tela. Configurável via OUTPUT_WIDTH / OUTPUT_HEIGHT.
     output_width: int = 1080
     output_height: int = 1920
-    # Jobs pesados (process/recut) simultâneos. 1 = fila serial; suba apenas
-    # se o plano da Railway tiver memória de sobra (cada job usa ~centenas de
-    # MB entre FFmpeg e análise, mais o vídeo em disco).
+    # Qualidade do encode H.264 dos clipes (CRF: menor = melhor e maior). O
+    # default do x264 (23) deixa blocos visíveis em cena escura de balada.
+    output_crf: int = 20
+    # Jobs pesados simultâneos = nº de threads consumindo a fila. 1 = fila
+    # serial; suba apenas se o plano da Railway tiver memória de sobra (cada job
+    # usa ~centenas de MB entre FFmpeg e análise, mais o vídeo em disco).
     max_concurrent_jobs: int = 1
+    # ---- Fila durável de jobs (jobs.py, tabela `jobs` no Supabase) ----
+    # false = volta ao BackgroundTasks em memória (perde o job num redeploy).
+    job_queue_enabled: bool = True
+    # De quanto em quanto tempo um consumidor ocioso consulta a fila. Um job
+    # enfileirado por ESTE processo acorda o consumidor na hora; o polling só
+    # importa para jobs que voltaram à fila ou vieram de outra réplica.
+    job_poll_seconds: float = 5.0
+    # O job em andamento renova o heartbeat neste intervalo; passado
+    # `job_stale_seconds` sem renovar, o worker é dado como morto e o job volta
+    # para a fila (precisa ser bem maior que o heartbeat).
+    job_heartbeat_seconds: float = 30.0
+    job_stale_seconds: int = 180
+    # Quantas vezes um job interrompido (worker morto) é retomado antes de
+    # virar erro. Erro do próprio set (vídeo inválido, cota) nunca é repetido.
+    job_max_attempts: int = 3
     # Threads que o FFmpeg (x264) usa por corte. O container enxerga todos os
     # núcleos do host (~34 na Railway) e o x264 abre uma thread por núcleo,
     # segurando buffers de frame 1080p em cada uma: ~900 MB por corte, o que
     # estoura a memória. 2 threads derrubam isso para ~300 MB sem perda de
     # velocidade real (a CPU da VM é limitada de qualquer forma).
     ffmpeg_threads: int = 2
+    # Clipes renderizados ao mesmo tempo dentro de um job. O render é a etapa
+    # mais longa (~1/3 do job); 2 quase a divide pela metade, mas dobra o pico
+    # de memória/CPU do FFmpeg — suba só com folga no plano da Railway.
+    render_concurrency: int = 1
 
     # ---- Análise de áudio (analyzer.py) ----
     # Pesos dos três sinais no score combinado (RMS/onset/contraste). Somam 1.0
@@ -132,6 +154,12 @@ class Settings(BaseSettings):
     dynamic_shot_min: float = 3.0   # duração mínima de um shot (s)
     dynamic_shot_max: float = 8.0   # duração máxima de um shot (s)
     dynamic_zoom_max: float = 1.8   # zoom máximo sobre a fonte (evita pixelação)
+    # Teto de AMPLIAÇÃO do crop até a saída (altura da saída / altura do crop).
+    # O zoom efetivo nunca passa disto, qualquer que seja `dynamic_zoom_max`:
+    # numa fonte 1080p o crop 9:16 de altura cheia já é ampliado 1.78x; a 2.7x
+    # (zoom ~1.5) a imagem ainda segura, acima disso vira borrão. Fonte 720p
+    # fica sem zoom (só cortes e reenquadramento); 4K usa o zoom cheio.
+    dynamic_max_upscale: float = 2.7
     # Zoom-drift suave dentro dos shots de zoom (via zoompan). 0 desliga e os
     # shots ficam 100% estáticos (só a alternância wide/zoom nos beats).
     dynamic_drift: float = 0.06
@@ -150,7 +178,7 @@ class Settings(BaseSettings):
     # Teto de shots por clipe (largura do `split=N` no filtergraph). Motion
     # alto pode gerar até ~20 shots num clipe de 60s (shot_min=3s) — o teto
     # limita a complexidade/memória do filtro independente da cena.
-    dynamic_max_shots: int = 10
+    dynamic_max_shots: int = 12
     # Threads do FILTRO (split/scale/zoompan) do corte dinâmico, via
     # -filter_threads/-filter_complex_threads. Mesma razão do `ffmpeg_threads`
     # do encoder: sem limitar, o FFmpeg escalona por núcleo do host (~34 na
@@ -210,6 +238,19 @@ class Settings(BaseSettings):
     beat_punch_anticip_frac: float = 0.7
     beat_punch_anticip_zoom_frac: float = 0.3
 
+    # ---- Zoom pela vibe da música (câmera da IA) ----
+    # O áudio de cada corte é dividido em drop / build-up / calmo (`music.py`)
+    # e o zoom de cada shot segue a vibe do trecho. False = zoom igual em tudo.
+    music_vibe_enabled: bool = True
+    # Drop: tranco de zoom na batida (fração: 0.05 = 5%) que relaxa até a
+    # próxima. `beat_pulse_every` = a cada quantas batidas (2 = tempos fortes).
+    beat_pulse_amount: float = 0.05
+    beat_pulse_every: int = 2
+    # Build-up: a câmera fecha sem parar até a virada; zoom total do shot.
+    build_zoom: float = 0.16
+    # Trecho calmo: movimento lento (fração do `dynamic_drift` normal).
+    calm_drift_scale: float = 0.6
+
     # ---- Diretor de IA (visão / "vibe" do público) ----
     # Camada opcional de IA de visão (Claude), em DOIS estágios: uma triagem
     # barata cobre TODOS os candidatos (nenhum fica de fora só por causa do
@@ -218,6 +259,16 @@ class Settings(BaseSettings):
     # /process pede (planos pagos) E há chave da API. Qualquer falha degrada
     # para a heurística local (nunca derruba o job), igual à fase visual do YOLO.
     ai_director_enabled: bool = True
+    # A IA dirige a câmera do corte dinâmico (tier 'full'): a direção por frame
+    # (`AIDirection.frames`) vira o shot plan direto, sem YOLO/tracking — a
+    # análise visual local só roda como rede de segurança quando a direção de
+    # uma janela falha. False = comportamento anterior (YOLO + heurísticas
+    # montam os shots e a IA só dá dicas), útil para comparar lado a lado.
+    ai_camera_enabled: bool = True
+    # Detecta as trocas de câmera da GRAVAÇÃO (set multicâmera/editado) em cada
+    # janela dirigida: a IA recebe frames de todas as tomadas e o enquadramento
+    # nunca é levado de uma tomada para outra. Custa ~2-3 s de CPU por janela.
+    ai_scene_cuts_enabled: bool = True
     # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
     anthropic_api_key: str = ""
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
@@ -226,18 +277,18 @@ class Settings(BaseSettings):
     ai_director_model: str = "claude-sonnet-5"
     # Teto de chamadas da direção profunda por job (gasta o orçamento nas
     # janelas mais promissoras pelo score AJUSTADO pela triagem).
-    ai_director_max_calls: int = 20
+    ai_director_max_calls: int = 30
     # Quantos keyframes amostrar por janela para a direção profunda. Mais
     # frames dão à IA melhor noção espacial (boxes) e temporal (story/moments),
     # ao custo de mais tokens por chamada — mas só no top-K.
-    ai_director_frames: int = 7
+    ai_director_frames: int = 12
     # Largura (px) dos frames enviados à direção profunda.
-    ai_director_frame_width: int = 768
+    ai_director_frame_width: int = 512
     # Teto de tempo (s) da direção profunda por job; estourou, as janelas
     # restantes ficam só com o score ajustado da triagem.
-    ai_director_budget_seconds: int = 180
+    ai_director_budget_seconds: int = 300
     # Timeout (s) de cada chamada individual à API.
-    ai_director_timeout: float = 30.0
+    ai_director_timeout: float = 60.0
     # Peso do hype da direção profunda no score final: final = (1-peso)*ajustado
     # + peso*hype. Janela sem direção profunda fica só no score ajustado. Mais
     # alto = a leitura visual de auge da IA pesa mais que a energia do áudio.
@@ -251,9 +302,11 @@ class Settings(BaseSettings):
     ai_triage_group_size: int = 6
     # Keyframes por janela na triagem (bem menos que a direção profunda —
     # só precisa classificar hype/worthy, não localizar boxes).
-    ai_triage_frames_per_window: int = 2
+    # 4 frames de 512px custam centavos por job e dão ao modelo uma leitura bem
+    # mais confiável de um trecho de 60s do que 2 miniaturas.
+    ai_triage_frames_per_window: int = 4
     # Largura (px) dos frames da triagem (menor que a direção profunda).
-    ai_triage_frame_width: int = 256
+    ai_triage_frame_width: int = 512
     # Teto de tempo (s) da fase de triagem por job (separado do budget da
     # direção profunda).
     ai_triage_budget_seconds: int = 90
@@ -263,6 +316,14 @@ class Settings(BaseSettings):
     # visualmente sobreviver ao corte do top-K — por isso pesa relativamente
     # forte (a triagem é o único filtro de IA que vê TODOS os candidatos).
     score_hype_lite_weight: float = 0.30
+    # Chamadas à IA simultâneas (lotes de triagem e direções profundas rodam
+    # em paralelo — a espera é rede, não CPU). 1 = serial.
+    ai_concurrency: int = 6
+    # Com a triagem ligada, a análise visual pesada (YOLO) roda só nas
+    # `n_final * fator` melhores janelas pelo score música + triagem, em vez de
+    # em todos os candidatos — a maior parte deles seria descartada de qualquer
+    # forma. A folga acima de 1.0 deixa o score visual ainda reordenar a borda.
+    visual_shortlist_factor: float = 1.25
 
 
 settings = Settings()
@@ -293,6 +354,9 @@ DYNAMIC_INTENSITY_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "dynamic_max_shots": 6,
         "dynamic_pan_max_speed": 0.07,
         "beat_punch_enabled": False,
+        "beat_pulse_amount": 0.025,
+        "beat_pulse_every": 4,
+        "build_zoom": 0.10,
     },
     "medium": {},
     "intense": {
@@ -309,5 +373,8 @@ DYNAMIC_INTENSITY_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "beat_punch_enabled": True,
         "beat_punch_anticip_frac": 0.55,
         "beat_punch_anticip_zoom_frac": 0.15,
+        "beat_pulse_amount": 0.08,
+        "beat_pulse_every": 1,
+        "build_zoom": 0.22,
     },
 }

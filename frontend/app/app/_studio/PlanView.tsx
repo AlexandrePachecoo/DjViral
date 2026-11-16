@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { PLANS, priceLabel, type BillingCycle } from "@/lib/plans";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
@@ -41,9 +41,15 @@ function fmtHours(seconds: number): string {
   return `${Math.max(0, Math.round(seconds / 60))} min`;
 }
 
-export function PlanView() {
+// Sobrevive ao remount do Strict Mode para não abrir dois checkouts.
+const autoCheckoutGuard = { plan: "" };
+
+export function PlanView({
+  checkoutPlan = null,
+}: {
+  checkoutPlan?: "pro" | "premium" | null;
+}) {
   const t = useTranslations("studio.plan");
-  const locale = useLocale();
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const paidNote = cycle === "annual" ? t("cards.paidPriceNoteAnnual") : t("cards.paidPriceNote");
   const CARDS: {
@@ -111,6 +117,8 @@ export function PlanView() {
     }
   }
 
+  const upgradeRef = useRef<(plan: "pro" | "premium") => Promise<void>>(async () => {});
+
   async function upgrade(plan: "pro" | "premium") {
     setLoadingPlan(plan);
     setError("");
@@ -128,6 +136,22 @@ export function PlanView() {
       setLoadingPlan(null);
     }
   }
+
+  upgradeRef.current = upgrade;
+
+  // "Assinar Pro/Premium" na landing chega aqui com ?checkout= depois do
+  // login/cadastro e dispara o checkout que esta aba já usa.
+  useEffect(() => {
+    if (checkoutPlan !== "pro" && checkoutPlan !== "premium") return;
+    if (autoCheckoutGuard.plan === checkoutPlan) return;
+    autoCheckoutGuard.plan = checkoutPlan;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("checkout")) {
+      url.searchParams.delete("checkout");
+      window.history.replaceState(null, "", url.pathname + url.search);
+    }
+    void upgradeRef.current(checkoutPlan);
+  }, [checkoutPlan]);
 
   const usage = billing?.usage;
   const pct = usage && usage.limitSeconds > 0
@@ -206,9 +230,7 @@ export function PlanView() {
                 : ""}
               {usage.monthly && usage.periodEnd
                 ? t("renewsOn", {
-                    date: new Date(usage.periodEnd).toLocaleDateString(
-                      locale === "en" ? "en-US" : "pt-BR"
-                    ),
+                    date: new Date(usage.periodEnd).toLocaleDateString("pt-BR"),
                   })
                 : ""}
             </div>

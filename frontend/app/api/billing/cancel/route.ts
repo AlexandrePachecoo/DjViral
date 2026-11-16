@@ -3,9 +3,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { cancelProviderSubscription } from "@/lib/billing";
 
-// Cancela a assinatura ativa do usuário no provedor certo (Stripe ou
-// AbacatePay) e rebaixa para o plano free. Espelha o que os webhooks fazem num
-// downgrade (frontend/app/api/webhooks/{abacatepay,stripe}/route.ts).
+// Cancela a assinatura ativa do usuário na AbacatePay e rebaixa para o plano
+// free. Espelha o que o webhook faz num downgrade
+// (frontend/app/api/webhooks/abacatepay/route.ts).
 export async function POST() {
   const user = await getSessionUser();
   if (!user) {
@@ -24,6 +24,19 @@ export async function POST() {
     return NextResponse.json(
       { error: "nenhuma assinatura ativa" },
       { status: 400 }
+    );
+  }
+
+  // Assinatura antiga do Stripe: a integração foi removida, então não dá para
+  // cancelar a cobrança daqui. Rebaixar só no nosso banco deixaria o cartão
+  // sendo cobrado — recusa e manda para o suporte.
+  if (sub.provider === "stripe") {
+    return NextResponse.json(
+      {
+        error:
+          "Esta assinatura foi feita pelo Stripe e precisa ser cancelada pelo suporte.",
+      },
+      { status: 409 }
     );
   }
 

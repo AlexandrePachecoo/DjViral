@@ -247,8 +247,23 @@ def test_sample_frames_swallows_ffmpeg_failure(monkeypatch):
     def _boom(*a, **k):
         raise FileNotFoundError("ffprobe")
 
-    monkeypatch.setattr(ai_director.visual, "iter_frames", _boom)
+    monkeypatch.setattr(ai_director, "_grab_frame", _boom)
     assert ai_director._sample_frames("video.mp4", 0.0, 60.0, 5) == []
+
+
+def test_sample_frames_spreads_targets_and_skips_failed_grabs(monkeypatch):
+    # Um grab por alvo (fração (i+0.5)/n da janela), com seek absoluto; grab
+    # que falha (None) fica de fora sem derrubar os demais.
+    seen = []
+
+    def _grab(video_path, t_abs, width):
+        seen.append((t_abs, width))
+        return None if t_abs == 115.0 else "Zm9v"
+
+    monkeypatch.setattr(ai_director, "_grab_frame", _grab)
+    out = ai_director._sample_frames("video.mp4", 100.0, 60.0, 2, width=512)
+    assert sorted(seen) == [(115.0, 512), (145.0, 512)]
+    assert out == [(45.0, "Zm9v")]
 
 
 def test_direct_returns_none_when_sampling_raises(monkeypatch):
@@ -258,7 +273,7 @@ def test_direct_returns_none_when_sampling_raises(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("pipe morto")
 
-    monkeypatch.setattr(ai_director.visual, "iter_frames", _boom)
+    monkeypatch.setattr(ai_director, "_grab_frame", _boom)
     assert ai_director.direct("video.mp4", 0.0, 60.0) is None
 
 
@@ -287,7 +302,7 @@ def test_parse_json_array_garbage_returns_none():
 
 def test_triage_group_happy_path(monkeypatch):
     monkeypatch.setattr(ai_director, "_get_client", lambda: _fake_client(
-        '[{"window": 10, "hype": 0.8, "worthy": true}, '
+        '[{"window": 10, "hype": 0.8, "worthy": true, "title": "\\"o drop 🔥\\""}, '
         '{"window": 20, "hype": 0.1, "worthy": false}]'
     ))
     monkeypatch.setattr(
@@ -298,6 +313,8 @@ def test_triage_group_happy_path(monkeypatch):
     )
     assert out[10].hype == pytest.approx(0.8) and out[10].worthy is True
     assert out[20].hype == pytest.approx(0.1) and out[20].worthy is False
+    # O título vem na mesma chamada (saneado); ausente vira "".
+    assert out[10].title == "o drop 🔥" and out[20].title == ""
 
 
 def test_triage_group_no_windows_returns_empty(monkeypatch):
@@ -480,3 +497,102 @@ def test_usage_accumulates_and_resets():
 
     ai_director.reset_usage()
     assert ai_director.get_usage() == {"usd": 0.0, "calls": 0}
+
+
+# ---- direção por frame (câmera da IA) ----
+
+def test_coerce_parses_per_frame_direction_and_derives_legacy_fields():
+    out = {
+        "hype": 0.8,
+        "worthy": True,
+        "moments": [12.0],
+        "frames": [
+            {"t": 2.5, "focus": "wide", "box": None},
+            {"t": 7.5, "focus": "dj", "box": [0.3, 0.4, 0.2, 0.5]},
+            {"t": 12.5, "focus": "DJ", "box": [0.34, 0.4, 0.2, 0.5]},
+            {"t": 17.5, "focus": "dj", "box": [9, 9, 9, 9]},  # box inválido
+            {"t": 99.0, "focus": "dj", "box": [0.5, 0.5, 0.2, 0.2]},  # fora
+            {"t": 22.5, "focus": "drone", "box": None},  # foco desconhecido
+            "lixo",
+        ],
+    }
+    d = ai_director._coerce(out, 60.0)
+    assert [(t, f) for t, f, _b in d.frames] == [
+        (2.5, "wide"), (7.5, "dj"), (12.5, "dj"), (17.5, "dj")
+    ]
+    assert d.frames[1][2].cx == pytest.approx(0.3) and d.frames[3][2] is None
+    # Campos do planejador legado derivados dos frames.
+    assert d.subject == "dj"
+    assert d.dj_box is not None and d.crowd_box is None
+    assert d.story == [(0.0, "wide"), (7.5, "dj")]
+
+
+def test_coerce_without_frames_keeps_legacy_keys():
+    d = ai_director._coerce(
+        {"hype": 0.5, "subject": "crowd", "dj_box": [0.5, 0.4, 0.2, 0.4]}, 60.0
+    )
+    assert d.frames == [] and d.subject == "crowd" and d.dj_box is not None
+
+
+# ---- amostragem ciente das trocas de câmera ----
+
+def test_frame_times_uniform_without_cuts():
+    assert ai_director._frame_times(60.0, [], 4) == [7.5, 22.5, 37.5, 52.5]
+
+
+def test_frame_times_cover_every_take():
+    cuts = [5.0, 8.0, 40.0]  # tomadas: 0-5, 5-8, 8-40, 40-60
+    times = ai_director._frame_times(60.0, cuts, 8)
+    assert len(times) == 8 and times == sorted(times)
+    for a, b in ((0, 5), (5, 8), (8, 40), (40, 60)):
+        assert any(a < t < b for t in times)
+    # O orçamento extra vai para a tomada mais longa.
+    assert sum(1 for t in times if 8 < t < 40) >= 3
+
+
+def test_frame_times_skip_flash_takes_and_cap_the_total():
+    times = ai_director._frame_times(60.0, [10.0, 10.4], 4)
+    assert not any(10.0 < t < 10.4 for t in times)
+    many = ai_director._frame_times(60.0, [1.5 * i for i in range(1, 40)], 12)
+    assert len(many) == ai_director.MAX_DIRECTION_FRAMES
+
+
+def test_direct_labels_frames_with_their_take(monkeypatch):
+    calls: list = []
+    reply = types.SimpleNamespace(content=[types.SimpleNamespace(
+        type="text",
+        text='{"hype": 0.5, "frames": [{"t": 5, "focus": "wide", "box": null}]}',
+    )])
+    client = types.SimpleNamespace(messages=types.SimpleNamespace(
+        create=lambda **kw: calls.append(kw) or reply
+    ))
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director.visual, "detect_scene_cuts", lambda *a: [20.0])
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(5.0, "x"), (30.0, "y")]
+    )
+    d = ai_director.direct("video.mp4", 0.0, 60.0)
+    assert d.cuts == [20.0]
+    texts = [
+        b["text"]
+        for b in calls[0]["messages"][0]["content"]
+        if b["type"] == "text"
+    ]
+    assert "tomada 1" in texts[0] and "tomada 2" in texts[1]
+    assert "troca de câmera" in texts[-1]
+
+
+def test_coerce_reads_crowd_position_per_frame():
+    d = ai_director._coerce(
+        {
+            "hype": 0.7,
+            "frames": [
+                {"t": 5, "focus": "dj", "box": [0.5, 0.4, 0.2, 0.4], "crowd": [0.4, 0.8, 0.9, 0.3]},
+                {"t": 10, "focus": "crowd", "box": [0.6, 0.75, 0.8, 0.4]},  # o próprio box
+                {"t": 15, "focus": "dj", "box": [0.5, 0.4, 0.2, 0.4], "crowd": None},
+                {"t": 20, "focus": "wide", "box": None, "crowd": [9, 9, 9, 9]},  # inválido
+            ],
+        },
+        60.0,
+    )
+    assert [(t, round(b.cx, 2)) for t, b in d.crowd] == [(5.0, 0.4), (10.0, 0.6)]

@@ -86,6 +86,11 @@ class Shot:
     drift: float = 0.0
     path: list[tuple[float, int, int]] | None = None
     zoom_keys: list[tuple[float, float]] | None = None
+    # Pulso de zoom na batida: ``(período s, fase s, intensidade)``. A cada
+    # ``período`` a partir de ``fase`` (relativos ao shot) o zoom dá um tranco de
+    # ``intensidade`` e relaxa até a batida seguinte — o "soco" do drop. Soma-se
+    # à rampa/keys acima. ``None`` = sem pulso.
+    pulse: tuple[float, float, float] | None = None
 
 
 def _even(v: float) -> int:
@@ -128,7 +133,13 @@ def crop_for_box(
         x = min(max(cx * src_w - w / 2, 0), src_w - w)
         return w, h, _even_pos(x, src_w - w), 0
 
-    zoom = min(max(zoom, 1.0), cfg.dynamic_zoom_max)
+    # Teto de zoom: o configurado E o que a resolução da fonte aguenta sem a
+    # ampliação até a saída passar de `dynamic_max_upscale`.
+    zoom_cap = min(
+        cfg.dynamic_zoom_max,
+        max(1.0, src_h * cfg.dynamic_max_upscale / cfg.output_height),
+    )
+    zoom = min(max(zoom, 1.0), zoom_cap)
     if box.w <= 0 or box.h <= 0:
         h = src_h / zoom
     else:
