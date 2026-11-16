@@ -99,9 +99,11 @@ function Logo() {
 
 export default async function Landing() {
   const t = await getTranslations("landing");
+  // Só existe cobrança em BRL (AbacatePay), em qualquer locale. Os dois planos
+  // pagos levam ao cadastro; o checkout (mensal ou anual) acontece no app.
   const proPrice = priceLabel(PLANS.pro);
   const premiumPrice = priceLabel(PLANS.premium);
-  const freePrice = "R$0";
+  const freePrice = priceLabel(PLANS.free);
 
   return (
     <div className={styles.page}>

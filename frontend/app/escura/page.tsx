@@ -1,5 +1,6 @@
 import { getTranslations } from "next-intl/server";
 import styles from "./page.module.css";
+import { PLANS, priceLabel } from "@/lib/plans";
 
 // Deterministic waveform bars (layered sines) so the equalizers read like a
 // real audio waveform instead of random noise. `h` = base height, `d` = delay.
@@ -225,7 +226,7 @@ export default async function Landing() {
               <span className={styles.planBadge}>{t("pricing.popularBadge")}</span>
               <div className={styles.planName}>{t("pricing.pro.name")}</div>
               <div className={styles.planPrice}>
-                R$39,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
+                {priceLabel(PLANS.pro)}<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
               <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={`${styles.planFeatures} ${styles.planFeaturesPro}`}>
@@ -241,7 +242,7 @@ export default async function Landing() {
             <div className={styles.plan}>
               <div className={styles.planName}>{t("pricing.premium.name")}</div>
               <div className={styles.planPrice}>
-                R$59,90<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
+                {priceLabel(PLANS.premium)}<span className={styles.planPriceUnit}>{t("pricing.perMonth")}</span>
               </div>
               <div className={styles.planSub}>{t("pricing.paymentSub")}</div>
               <div className={styles.planFeatures}>

@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { PLANS, priceLabel } from "@/lib/plans";
+import { PLANS, priceLabel, type BillingCycle } from "@/lib/plans";
 import { theme, font, btnPrimary, btnGhost } from "./theme";
 
-// Aba "Plano": plano atual + uso do período + upgrade via checkout hospedado.
-// A cobrança é sempre pela AbacatePay (BRL, PIX ou cartão): a UI mostra o
-// preço em reais e abre a URL de pagamento que /api/billing/checkout devolver.
+// Aba "Plano": plano atual + uso do período + upgrade via checkout hospedado
+// da AbacatePay (BRL, PIX ou cartão — a única cobrança do produto). O usuário
+// escolhe o ciclo (mensal ou anual com ~2 meses grátis); a rota
+// /api/billing/checkout devolve a URL de pagamento.
 
 type Billing = {
   plan: "free" | "pro" | "premium" | "admin";
@@ -16,6 +17,9 @@ type Billing = {
     usedSeconds: number;
     limitSeconds: number;
     remainingSeconds: number;
+    maxSets: number | null;
+    usedSets: number;
+    remainingSets: number | null;
     maxCutsPerSet: number;
     periodEnd: string | null;
     monthly: boolean;
@@ -24,6 +28,7 @@ type Billing = {
     status: string;
     method: string | null;
     currentPeriodEnd: string | null;
+    cycle: BillingCycle;
   } | null;
 };
 
@@ -45,6 +50,8 @@ export function PlanView({
   checkoutPlan?: "pro" | "premium" | null;
 }) {
   const t = useTranslations("studio.plan");
+  const [cycle, setCycle] = useState<BillingCycle>("monthly");
+  const paidNote = cycle === "annual" ? t("cards.paidPriceNoteAnnual") : t("cards.paidPriceNote");
   const CARDS: {
     id: "free" | "pro" | "premium";
     name: string;
@@ -62,16 +69,26 @@ export function PlanView({
     {
       id: "pro",
       name: t("cards.pro.name"),
-      price: priceLabel(PLANS.pro),
-      priceNote: t("cards.paidPriceNote"),
-      features: [t("cards.pro.f1"), t("cards.pro.f2"), t("cards.pro.f3")],
+      price: priceLabel(PLANS.pro, cycle),
+      priceNote: paidNote,
+      features: [
+        t("cards.pro.f1"),
+        t("cards.sets", { n: PLANS.pro.maxSets ?? 0 }),
+        t("cards.pro.f2"),
+        t("cards.pro.f3"),
+      ],
     },
     {
       id: "premium",
       name: t("cards.premium.name"),
-      price: priceLabel(PLANS.premium),
-      priceNote: t("cards.paidPriceNote"),
-      features: [t("cards.premium.f1"), t("cards.premium.f2"), t("cards.premium.f3")],
+      price: priceLabel(PLANS.premium, cycle),
+      priceNote: paidNote,
+      features: [
+        t("cards.premium.f1"),
+        t("cards.sets", { n: PLANS.premium.maxSets ?? 0 }),
+        t("cards.premium.f2"),
+        t("cards.premium.f3"),
+      ],
     },
   ];
   const [billing, setBilling] = useState<Billing | null>(null);
@@ -109,7 +126,7 @@ export function PlanView({
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan }),
+        body: JSON.stringify({ plan, cycle }),
       });
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error(data.error ?? t("errors.checkoutFailed"));
@@ -208,6 +225,9 @@ export function PlanView({
             </div>
             <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 8 }}>
               {t("remaining", { remaining: fmtHours(usage.remainingSeconds), maxCuts: usage.maxCutsPerSet })}
+              {usage.maxSets !== null
+                ? t("setsUsed", { used: usage.usedSets, max: usage.maxSets })
+                : ""}
               {usage.monthly && usage.periodEnd
                 ? t("renewsOn", {
                     date: new Date(usage.periodEnd).toLocaleDateString("pt-BR"),
@@ -234,10 +254,54 @@ export function PlanView({
         </div>
       )}
 
+      {/* Ciclo de cobrança */}
+      <div
+        role="group"
+        aria-label={t("cycle.label")}
+        style={{
+          display: "inline-flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: theme.surfaceMuted,
+          border: `1px solid ${theme.border}`,
+          marginBottom: 18,
+        }}
+      >
+        {(["monthly", "annual"] as const).map((c) => (
+          <button
+            key={c}
+            type="button"
+            aria-pressed={cycle === c}
+            onClick={() => setCycle(c)}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 7,
+              border: "none",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 500,
+              background: cycle === c ? theme.surface : "transparent",
+              color: cycle === c ? theme.textPrimary : theme.textTertiary,
+              boxShadow: cycle === c ? "0 1px 2px rgba(0,0,0,.08)" : "none",
+            }}
+          >
+            {t(c === "monthly" ? "cycle.monthly" : "cycle.annual")}
+            {c === "annual" && (
+              <span style={{ color: theme.accent, marginLeft: 6 }}>{t("cycle.annualBadge")}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* Cards de plano */}
       <div className="dj-plan-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18 }}>
         {CARDS.map((card) => {
-          const isCurrent = billing?.plan === card.id;
+          // Pago: só é o "plano atual" no MESMO ciclo — assim um Pro mensal
+          // pode migrar para o Pro anual pelo próprio card.
+          const isCurrent =
+            billing?.plan === card.id &&
+            (card.id === "free" || (billing.subscription?.cycle ?? "monthly") === cycle);
           const isUpgrade = card.id !== "free" && !isCurrent;
           return (
             <div

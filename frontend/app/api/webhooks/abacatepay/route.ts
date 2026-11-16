@@ -23,6 +23,7 @@ type WebhookSubscription = {
   id: string; // subs_...
   method?: string | null;
   status?: string;
+  frequency?: string | null; // ciclo da assinatura: "MONTHLY" | "ANNUALLY" | ...
 };
 
 type WebhookBody = {
@@ -40,6 +41,15 @@ function addMonths(date: Date, months: number): Date {
   const d = new Date(date);
   d.setUTCMonth(d.getUTCMonth() + months);
   return d;
+}
+
+// Duração (meses) do período cobrado, lida do ciclo que o payload traz em
+// `subscription.frequency` (o webhook não traz as datas do período, então o
+// fim é calculado aqui). Não depende da coluna `subscriptions.cycle`, para a
+// ativação de um pagamento nunca falhar por causa de migração pendente. No
+// anual, a cota de horas/sets continua mensal (ver lib/plans.ts).
+function periodMonths(frequency: string | null | undefined): number {
+  return frequency === "ANNUALLY" ? 12 : 1;
 }
 
 export async function POST(req: NextRequest) {
@@ -123,7 +133,7 @@ export async function POST(req: NextRequest) {
         method: sub?.method ?? null,
         provider_subscription_id: sub?.id ?? null,
         current_period_start: now.toISOString(),
-        current_period_end: addMonths(now, 1).toISOString(),
+        current_period_end: addMonths(now, periodMonths(sub?.frequency)).toISOString(),
         updated_at: now.toISOString(),
       })
       .eq("id", row.id);
@@ -175,7 +185,7 @@ export async function POST(req: NextRequest) {
       .update({
         status: "active",
         current_period_start: now.toISOString(),
-        current_period_end: addMonths(now, 1).toISOString(),
+        current_period_end: addMonths(now, periodMonths(sub.frequency)).toISOString(),
         updated_at: now.toISOString(),
       })
       .eq("id", row.id);

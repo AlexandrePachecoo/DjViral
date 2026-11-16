@@ -18,21 +18,35 @@ export async function GET() {
     status: string;
     method: string | null;
     currentPeriodEnd: string | null;
+    cycle: "monthly" | "annual";
   } | null = null;
   if (isPaidPlan(user.plan)) {
-    const { data } = await supabaseAdmin
-      .from("subscriptions")
-      .select("status, method, current_period_end")
-      .eq("user_id", user.id)
-      .in("status", ["active", "past_due"])
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data) {
+    const fetchSub = (columns: string) =>
+      supabaseAdmin
+        .from("subscriptions")
+        .select(columns)
+        .eq("user_id", user.id)
+        .in("status", ["active", "past_due"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    let { data, error } = await fetchSub("status, method, current_period_end, cycle");
+    if (error) {
+      // Banco sem a migração de `subscriptions.cycle`: lê sem ela (= mensal).
+      ({ data, error } = await fetchSub("status, method, current_period_end"));
+    }
+    const row = data as {
+      status: string;
+      method: string | null;
+      current_period_end: string | null;
+      cycle?: string | null;
+    } | null;
+    if (row) {
       subscription = {
-        status: data.status,
-        method: data.method,
-        currentPeriodEnd: data.current_period_end,
+        status: row.status,
+        method: row.method,
+        currentPeriodEnd: row.current_period_end,
+        cycle: row.cycle === "annual" ? "annual" : "monthly",
       };
     }
   }
@@ -45,6 +59,9 @@ export async function GET() {
       usedSeconds: usage.usedSeconds,
       limitSeconds: usage.limitSeconds,
       remainingSeconds: usage.remainingSeconds,
+      maxSets: usage.maxSets,
+      usedSets: usage.usedSets,
+      remainingSets: usage.remainingSets,
       maxCutsPerSet: usage.maxCutsPerSet,
       periodStart: usage.periodStart,
       periodEnd: usage.periodEnd,

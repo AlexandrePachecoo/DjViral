@@ -134,6 +134,22 @@ export async function POST(req: NextRequest) {
       { status: 402 }
     );
   }
+  // Limite de SETS por mês nos pagos: o custo da IA é por set (teto fixo de
+  // chamadas por job), então muitos sets curtos custam mais que um longo.
+  if (usage.remainingSets !== null && usage.remainingSets <= 0) {
+    return NextResponse.json(
+      {
+        error:
+          `Você atingiu o limite de ${usage.maxSets} sets do plano neste mês. ` +
+          `Faça upgrade ou aguarde a renovação.`,
+        code: "plan_limit",
+        plan: usage.plan,
+        remaining_seconds: usage.remainingSeconds,
+        remaining_sets: 0,
+      },
+      { status: 402 }
+    );
+  }
 
   // 1. Cria o projeto (vinculado ao usuário autenticado)
   const { data: project, error: projErr } = await supabaseAdmin

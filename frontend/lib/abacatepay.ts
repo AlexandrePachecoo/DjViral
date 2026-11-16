@@ -1,11 +1,18 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { PLANS, type PlanDef } from "@/lib/plans";
+import {
+  PLANS,
+  cyclePriceCents,
+  productExternalId,
+  type BillingCycle,
+  type PlanDef,
+} from "@/lib/plans";
 
 // Cliente da API v2 da AbacatePay (https://docs.abacatepay.com).
 // Server-side apenas: usa a API key secreta (ABACATEPAY_API_KEY).
 //
 // Fluxo de assinatura:
-//   1. garantimos que o produto do plano existe na loja (ciclo MONTHLY);
+//   1. garantimos que o produto do plano+ciclo existe na loja (MONTHLY ou
+//      ANNUALLY);
 //   2. criamos um checkout de assinatura (POST /subscriptions/create) com
 //      methods ["PIX", "CARD"] — o cliente escolhe na página hospedada;
 //   3. redirecionamos o usuário para a `url` retornada;
@@ -69,36 +76,40 @@ type Billing = {
   status: string;
 };
 
-// Garante que o produto de assinatura do plano existe na loja AbacatePay e
-// retorna o id público (prod_...). Produtos são identificados pelo
-// `externalId` fixo do plano (ex.: djviral-pro-monthly) e criados com ciclo
-// MONTHLY na primeira vez.
-async function ensureProduct(plan: PlanDef): Promise<string> {
-  if (!plan.productExternalId || plan.priceCents <= 0) {
-    throw new Error(`plano ${plan.id} não é assinável`);
+// Garante que o produto de assinatura do plano+ciclo existe na loja AbacatePay
+// e retorna o id público (prod_...). Produtos são identificados pelo
+// `externalId` de `productExternalId` (ex.: djviral-pro-monthly-4990), que
+// embute o preço: a AbacatePay não deixa alterar o preço de um produto, então
+// um preço novo vira um produto novo, criado aqui na primeira compra.
+async function ensureProduct(plan: PlanDef, cycle: BillingCycle): Promise<string> {
+  const price = cyclePriceCents(plan, cycle);
+  if (price <= 0) {
+    throw new Error(`plano ${plan.id} não é assinável no ciclo ${cycle}`);
   }
+  const externalId = productExternalId(plan, cycle);
 
   const existing = await abacateFetch<Product[]>(
-    `/products/list?externalId=${encodeURIComponent(plan.productExternalId)}&limit=1`
+    `/products/list?externalId=${encodeURIComponent(externalId)}&limit=1`
   );
-  const found = existing.find((p) => p.externalId === plan.productExternalId);
+  const found = existing.find((p) => p.externalId === externalId);
   if (found) return found.id;
 
+  const sets = plan.maxSets !== null ? ` e ${plan.maxSets} sets` : "";
   const created = await abacateFetch<Product>("/products/create", {
     method: "POST",
     body: {
-      externalId: plan.productExternalId,
-      name: `DJviral ${plan.label}`,
-      description: `Plano ${plan.label} do DJviral — até ${plan.hours}h de set por mês`,
-      price: plan.priceCents,
+      externalId,
+      name: `DJviral ${plan.label}${cycle === "annual" ? " (anual)" : ""}`,
+      description: `Plano ${plan.label} do DJviral — até ${plan.hours}h de set${sets} por mês`,
+      price,
       currency: "BRL",
-      cycle: "MONTHLY",
+      cycle: cycle === "annual" ? "ANNUALLY" : "MONTHLY",
     },
   });
   return created.id;
 }
 
-// Cria um checkout de assinatura (PIX ou cartão com recorrência mensal) e
+// Cria um checkout de assinatura (PIX ou cartão, recorrência mensal ou anual) e
 // retorna a URL da página de pagamento + o id do checkout (bill_...).
 //
 // Os dois meios recorrentes são habilitados POR LOJA na AbacatePay: PIX
@@ -121,13 +132,14 @@ function unavailableMethodFallback(err: unknown): "PIX" | "CARD" | null {
 
 export async function createSubscriptionCheckout(opts: {
   planId: "pro" | "premium";
+  cycle: BillingCycle;
   externalId: string; // nosso id da assinatura (subscriptions.external_id)
   userId: string;
   userEmail: string;
   appUrl: string; // origem pública do site (para returnUrl/completionUrl)
 }): Promise<{ checkoutId: string; url: string }> {
   const plan = PLANS[opts.planId];
-  const productId = await ensureProduct(plan);
+  const productId = await ensureProduct(plan, opts.cycle);
 
   const body = {
     items: [{ id: productId, quantity: 1 }],
@@ -138,6 +150,7 @@ export async function createSubscriptionCheckout(opts: {
       user_id: opts.userId,
       user_email: opts.userEmail,
       plan: plan.id,
+      cycle: opts.cycle,
     },
   };
 

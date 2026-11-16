@@ -457,19 +457,49 @@ ganchos detalhados em [`design.md`](design.md).
 O `WORKER_SECRET` é compartilhado entre Vercel e Railway: só quem tem o segredo
 consegue disparar `POST /process` no worker.
 
-## Pagamento / planos (AbacatePay)
+## Pagamento / planos (AbacatePay, só BRL)
 
-Três planos, com cota de **horas de set** e limite de cortes por set:
+Três planos, com cota de **horas de set**, **nº de sets por mês** e limite de
+cortes por set. Só existe cobrança no Brasil, em BRL, via **AbacatePay** (PIX ou
+cartão). Cada plano pago tem ciclo **mensal** ou **anual** (~2 meses
+grátis):
 
-| Plano   | Preço       | Cota                    | Cortes por set |
-|---------|-------------|-------------------------|----------------|
-| free    | R$0         | 1 hora de set no TOTAL  | 10             |
-| pro     | R$39,90/mês | 5 horas de set por mês  | 30             |
-| premium | R$59,90/mês | 12 horas de set por mês | 30             |
+| Plano   | Mensal      | Anual    | Cota                            | Cortes por set |
+|---------|-------------|----------|---------------------------------|----------------|
+| free    | R$0         | —        | 1 hora de set no TOTAL          | 10             |
+| pro     | R$49,90/mês | R$499/ano | 5 horas e 8 sets por mês       | 30             |
+| premium | R$79,90/mês | R$799/ano | 12 horas e 20 sets por mês     | 30             |
 
-A cobrança é sempre pela **AbacatePay** (BRL, PIX ou cartão), com checkout de
-assinatura hospedado e renovação mensal automática. Os valores ficam em
-`frontend/lib/plans.ts` (`priceCents`) — trocar o preço é editar só isso.
+O limite de sets existe porque o custo da IA é por SET (teto fixo de chamadas
+do diretor por job), não por hora: 5 sets de 1h custam ~5× mais que 1 de 5h.
+No anual o período cobrado é de 12 meses, mas a cota continua **mensal** (janela
+ancorada em `current_period_start`). Os valores ficam em `frontend/lib/plans.ts`
+(`priceCents` / `annualPriceCents` / `maxSets`) — trocar o preço é editar só
+isso: o `externalId` do produto na AbacatePay embute o preço
+(`djviral-{plano}-{monthly|annual}-{centavos}`), porque a AbacatePay não deixa
+alterar o preço de um produto; um preço novo vira um produto novo sob demanda e
+quem já assinava continua no produto (preço) antigo.
+
+- `frontend/lib/plans.ts` — definição dos planos + cálculo de uso do período
+  (soma `sources.duracao` e conta os projetos não-`error` do usuário; janela =
+  mês da assinatura para pagos, desde sempre no free). Helpers
+  `priceLabel(plan, cycle)`, `formatBRL`, `productExternalId(plan, cycle)`.
+- `frontend/lib/abacatepay.ts` — cliente da AbacatePay (produtos com
+  `cycle=MONTHLY|ANNUALLY` criados sob demanda, checkout de assinatura,
+  verificação HMAC dos webhooks).
+- `frontend/lib/billing.ts` — `cancelProviderSubscription(provider, id)`
+  cancela na AbacatePay (usado no cancel + upgrade); falha para `stripe`.
+- `POST /api/billing/checkout {plan, cycle?}` — cria o checkout na AbacatePay
+  (`cycle` = `monthly` default | `annual`) e a linha `subscriptions` (status
+  `pending`, com `cycle`); devolve a URL de pagamento. Trocar só o ciclo do
+  mesmo plano é permitido (o webhook cancela a assinatura antiga).
+- `GET /api/billing` — plano atual + uso de horas e sets + ciclo da assinatura
+  (alimenta a aba "Plano" do estúdio, que tem o seletor mensal/anual).
+- `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook da AbacatePay
+  (assinatura HMAC no header `X-Webhook-Signature` + secret na query;
+  idempotência via tabela `webhook_events`). `subscription.completed`/`renewed`
+  ativam o plano e o período (1 ou 12 meses, pelo `subscription.frequency` do
+  payload); `payment_failed` marca `past_due`; `cancelled` rebaixa para `free`.
 
 O Stripe (cobrança internacional em USD) foi removido junto com o inglês. A
 coluna `subscriptions.provider` continua existindo; linhas antigas com
@@ -477,29 +507,12 @@ coluna `subscriptions.provider` continua existindo; linhas antigas com
 app as recusa (HTTP 409) em vez de rebaixar só no banco — precisam ser
 canceladas no painel do Stripe.
 
-- `frontend/lib/plans.ts` — definição dos planos + cálculo de uso do período
-  (soma `sources.duracao` dos projetos não-`error` do usuário; janela = mês da
-  assinatura para pagos, desde sempre no free). Helper `priceLabel(plan)`.
-- `frontend/lib/abacatepay.ts` — cliente da AbacatePay (produtos com
-  `cycle=MONTHLY` criados sob demanda com `externalId` fixo
-  `djviral-{plano}-monthly`, checkout de assinatura, verificação HMAC dos
-  webhooks).
-- `frontend/lib/billing.ts` — `cancelProviderSubscription(provider, id)`
-  cancela na AbacatePay (usado no cancel + upgrade); falha para `stripe`.
-- `POST /api/billing/checkout {plan}` — cria o checkout na AbacatePay e a
-  linha `subscriptions` (status `pending`); devolve a URL de pagamento.
-- `GET /api/billing` — plano atual + uso (alimenta a aba "Plano" do estúdio).
-- `POST /api/webhooks/abacatepay?webhookSecret=...` — webhook da AbacatePay
-  (assinatura HMAC no header `X-Webhook-Signature` + secret na query;
-  idempotência via tabela `webhook_events`). `subscription.completed`/`renewed`
-  ativam o plano e o período; `payment_failed` marca `past_due`; `cancelled`
-  rebaixa para `free`.
-
 O plano efetivo é espelhado em `users.plan` pelo webhook.
 
 **Enforcement da cota:**
 1. `POST /api/projects` valida a duração enviada pelo navegador (metadados do
-   arquivo) contra a cota restante → HTTP 402 com `code: "plan_limit"`; o
+   arquivo) contra a cota restante de horas e o nº de sets do mês (`maxSets`)
+   → HTTP 402 com `code: "plan_limit"`; o
    `max_cuts` escolhido pelo usuário (slider do formulário, 1..30) é clampado
    ao `maxCutsPerSet` do plano e persistido em `projects.max_cuts`.
 2. `POST /api/projects/{id}/process` envia `limit_seconds` (cota restante),
@@ -558,6 +571,7 @@ Login por email + senha, self-contained (sem Supabase Auth, sem libs externas):
 - id
 - user_id
 - plan (`pro | premium`)
+- cycle (`monthly | annual`) — ciclo escolhido no checkout
 - status (`pending | active | past_due | cancelled`)
 - method (`PIX | CARD`)
 - provider_checkout_id (`bill_...`) / provider_subscription_id (`subs_...`)
