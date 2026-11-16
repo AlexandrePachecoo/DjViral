@@ -192,7 +192,13 @@ novo (`backend/app/jobs.py`):
      px) da janela e devolve `hype`, `worthy`, `moments` (auges) e **`frames`**:
      por keyframe, o `focus` (dj/crowd/dancer/wide — o que a câmera enquadra
      naquele instante) e o `box` do alvo (`[cx, cy, w, h]` em frações 0-1;
-     saneados em `_coerce_frames`/`_coerce_box`). `subject`/`story`/`*_box`
+     saneados em `_coerce_frames`/`_coerce_box`). Antes de amostrar,
+     `visual.detect_scene_cuts` acha as **trocas de câmera da gravação** na
+     janela (set multicâmera/editado; correlação de miniaturas a 4 fps — pega
+     corte seco e transição gradual, ignora flash/strobe); `_frame_times`
+     garante pelo menos um keyframe por tomada, cada frame vai rotulado com a
+     sua tomada e as trocas ficam em `AIDirection.cuts`
+     (`AI_SCENE_CUTS_ENABLED`). `subject`/`story`/`*_box`
      (lidos só pelo planejador legado) são derivados desses frames. O hype
      profundo refina o score final (`SCORE_HYPE_WEIGHT`).
    Cada chamada acumula custo estimado (`ai_director.get_usage()`, log por
@@ -211,7 +217,13 @@ novo (`backend/app/jobs.py`):
      beats; planos mais longos que `DYNAMIC_SHOT_MAX` são divididos e alternam
      normal ↔ fechado; o crop é o `box` da IA com folga (justo no fechado) e o
      pan segue as posições que ela deu. Sem YOLO, tracking, rosto nem guardas
-     de atividade. Usa os mesmos presets de `cut_intensity` e o mesmo
+     de atividade. **Cada tomada da gravação é planejada sozinha**
+     (`AIDirection.cuts`): toda troca de câmera é fronteira de shot, o box só
+     vale na tomada em que foi visto e nenhum pan atravessa uma troca; tomada
+     que a IA não viu vira wide. Gravação picotada demais (mais tomadas que
+     `DYNAMIC_MAX_SHOTS`, ou tomada mediana menor que `DYNAMIC_SHOT_MIN`) vira
+     **reenquadramento**: um crop de altura cheia, sem zoom, que salta para a
+     ação a cada tomada. Usa os mesmos presets de `cut_intensity` e o mesmo
      `clipper.cut_dynamic`. `AI_CAMERA_ENABLED=false` volta ao planejador
      legado abaixo (para comparar lado a lado).
    - **`dynamic` legado** (tiers `off`/`lite`, câmera da IA desligada, ou
@@ -292,7 +304,10 @@ novo (`backend/app/jobs.py`):
      (`pipeline._cut_dynamic_tiered`): dinâmico com zoom-drift → mesmo shot
      plan sem zoompan/supersample (`cut_dynamic(force_static=True)`, bem mais
      leve em CPU/memória; o pan é barato e é MANTIDO nesse nível) → corte
-     seco. `clipper._run_ffmpeg` roda todo
+     seco. **Nitidez:** o zoom efetivo é limitado pela resolução da fonte
+     (`DYNAMIC_MAX_UPSCALE`, default 2.7× do crop até a saída — ~1.5× de zoom
+     em 1080p, nenhum em 720p, cheio em 4K), o scale usa lanczos e o encode
+     sai em `OUTPUT_CRF` (default 20). `clipper._run_ffmpeg` roda todo
      FFmpeg com timeout (evita job travado) e, se falhar, distingue erro real
      de filtro vs. processo morto por sinal externo (ex. OOM) na mensagem —
      o corte nunca é perdido por causa do zoom.
@@ -409,7 +424,8 @@ ganchos detalhados em [`design.md`](design.md).
   `/process`: `lite` no free = triagem + títulos, `full` nos pagos = + direção
   profunda): `ANTHROPIC_API_KEY` (vazio = IA desligada), `AI_DIRECTOR_ENABLED`,
   `AI_CAMERA_ENABLED` (a IA monta os shots do dinâmico no tier `full`; false =
-  planejador legado YOLO + heurísticas),
+  planejador legado YOLO + heurísticas), `AI_SCENE_CUTS_ENABLED` (detecta as
+  trocas de câmera da gravação), `DYNAMIC_MAX_UPSCALE`, `OUTPUT_CRF`,
   `AI_TRIAGE_MODEL` (default
   `claude-haiku-4-5`, cobre TODOS os candidatos em lotes),
   `AI_TRIAGE_GROUP_SIZE`, `AI_TRIAGE_FRAMES_PER_WINDOW`,

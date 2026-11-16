@@ -100,7 +100,7 @@ export default async function PublicSetPage({ params }: Props) {
                 {t("noCuts")}
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(224px,1fr))", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,260px))", gap: 20 }}>
                 {share.cuts.map(toStudioCut).map((cut) => (
                   <div
                     key={cut.id}
@@ -112,7 +112,7 @@ export default async function PublicSetPage({ params }: Props) {
                         controls
                         playsInline
                         preload="metadata"
-                        style={{ width: "100%", height: 270, objectFit: "cover", display: "block", background: "#000" }}
+                        style={{ width: "100%", aspectRatio: "9 / 16", objectFit: "contain", display: "block", background: "#000" }}
                       />
                       <div
                         style={{

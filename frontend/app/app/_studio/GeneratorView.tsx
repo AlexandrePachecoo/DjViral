@@ -313,7 +313,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill,minmax(248px,1fr))",
+          gridTemplateColumns: "repeat(auto-fill,minmax(200px,260px))",
           gap: 22,
         }}
       >
@@ -336,7 +336,7 @@ export function GeneratorView({ onSaved, onUpgrade }: Props) {
                   controls
                   playsInline
                   preload="metadata"
-                  style={{ width: "100%", height: 300, objectFit: "cover", display: "block", background: "#000" }}
+                  style={{ width: "100%", aspectRatio: "9 / 16", objectFit: "contain", display: "block", background: "#000" }}
                 />
                 {/* Seleção (canto superior esquerdo) */}
                 {c.saved ? (

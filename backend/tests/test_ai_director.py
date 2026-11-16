@@ -532,3 +532,51 @@ def test_coerce_without_frames_keeps_legacy_keys():
         {"hype": 0.5, "subject": "crowd", "dj_box": [0.5, 0.4, 0.2, 0.4]}, 60.0
     )
     assert d.frames == [] and d.subject == "crowd" and d.dj_box is not None
+
+
+# ---- amostragem ciente das trocas de câmera ----
+
+def test_frame_times_uniform_without_cuts():
+    assert ai_director._frame_times(60.0, [], 4) == [7.5, 22.5, 37.5, 52.5]
+
+
+def test_frame_times_cover_every_take():
+    cuts = [5.0, 8.0, 40.0]  # tomadas: 0-5, 5-8, 8-40, 40-60
+    times = ai_director._frame_times(60.0, cuts, 8)
+    assert len(times) == 8 and times == sorted(times)
+    for a, b in ((0, 5), (5, 8), (8, 40), (40, 60)):
+        assert any(a < t < b for t in times)
+    # O orçamento extra vai para a tomada mais longa.
+    assert sum(1 for t in times if 8 < t < 40) >= 3
+
+
+def test_frame_times_skip_flash_takes_and_cap_the_total():
+    times = ai_director._frame_times(60.0, [10.0, 10.4], 4)
+    assert not any(10.0 < t < 10.4 for t in times)
+    many = ai_director._frame_times(60.0, [1.5 * i for i in range(1, 40)], 12)
+    assert len(many) == ai_director.MAX_DIRECTION_FRAMES
+
+
+def test_direct_labels_frames_with_their_take(monkeypatch):
+    calls: list = []
+    reply = types.SimpleNamespace(content=[types.SimpleNamespace(
+        type="text",
+        text='{"hype": 0.5, "frames": [{"t": 5, "focus": "wide", "box": null}]}',
+    )])
+    client = types.SimpleNamespace(messages=types.SimpleNamespace(
+        create=lambda **kw: calls.append(kw) or reply
+    ))
+    monkeypatch.setattr(ai_director, "_get_client", lambda: client)
+    monkeypatch.setattr(ai_director.visual, "detect_scene_cuts", lambda *a: [20.0])
+    monkeypatch.setattr(
+        ai_director, "_sample_frames", lambda *a, **k: [(5.0, "x"), (30.0, "y")]
+    )
+    d = ai_director.direct("video.mp4", 0.0, 60.0)
+    assert d.cuts == [20.0]
+    texts = [
+        b["text"]
+        for b in calls[0]["messages"][0]["content"]
+        if b["type"] == "text"
+    ]
+    assert "tomada 1" in texts[0] and "tomada 2" in texts[1]
+    assert "troca de câmera" in texts[-1]

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # a tela. Configurável via OUTPUT_WIDTH / OUTPUT_HEIGHT.
     output_width: int = 1080
     output_height: int = 1920
+    # Qualidade do encode H.264 dos clipes (CRF: menor = melhor e maior). O
+    # default do x264 (23) deixa blocos visíveis em cena escura de balada.
+    output_crf: int = 20
     # Jobs pesados simultâneos = nº de threads consumindo a fila. 1 = fila
     # serial; suba apenas se o plano da Railway tiver memória de sobra (cada job
     # usa ~centenas de MB entre FFmpeg e análise, mais o vídeo em disco).
@@ -151,6 +154,12 @@ class Settings(BaseSettings):
     dynamic_shot_min: float = 3.0   # duração mínima de um shot (s)
     dynamic_shot_max: float = 8.0   # duração máxima de um shot (s)
     dynamic_zoom_max: float = 1.8   # zoom máximo sobre a fonte (evita pixelação)
+    # Teto de AMPLIAÇÃO do crop até a saída (altura da saída / altura do crop).
+    # O zoom efetivo nunca passa disto, qualquer que seja `dynamic_zoom_max`:
+    # numa fonte 1080p o crop 9:16 de altura cheia já é ampliado 1.78x; a 2.7x
+    # (zoom ~1.5) a imagem ainda segura, acima disso vira borrão. Fonte 720p
+    # fica sem zoom (só cortes e reenquadramento); 4K usa o zoom cheio.
+    dynamic_max_upscale: float = 2.7
     # Zoom-drift suave dentro dos shots de zoom (via zoompan). 0 desliga e os
     # shots ficam 100% estáticos (só a alternância wide/zoom nos beats).
     dynamic_drift: float = 0.06
@@ -243,6 +252,10 @@ class Settings(BaseSettings):
     # uma janela falha. False = comportamento anterior (YOLO + heurísticas
     # montam os shots e a IA só dá dicas), útil para comparar lado a lado.
     ai_camera_enabled: bool = True
+    # Detecta as trocas de câmera da GRAVAÇÃO (set multicâmera/editado) em cada
+    # janela dirigida: a IA recebe frames de todas as tomadas e o enquadramento
+    # nunca é levado de uma tomada para outra. Custa ~2-3 s de CPU por janela.
+    ai_scene_cuts_enabled: bool = True
     # Chave da API da Claude (via ambiente; NUNCA commitar). Vazia = IA desligada.
     anthropic_api_key: str = ""
     # Modelo da DIREÇÃO PROFUNDA (boxes/story) — a etapa mais cara, mas só
